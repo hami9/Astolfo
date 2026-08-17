@@ -1,4 +1,4 @@
-"""ساخت و راه‌اندازی اپلیکیشن تلگرام."""
+"""Application wiring and lifecycle."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from telegram import BotCommand, Update
+from telegram import Update
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -18,105 +18,104 @@ from telegram.ext import (
     filters,
 )
 
-from . import handlers, media
-from .ai import AIClient
-from .config import Settings
-from .memory import ChatStore
+from . import chat, commands, media, runtime
+from .config import ConfigError, Settings
+from .runtime import Runtime
 
-log = logging.getLogger("astolfo.app")
+log = logging.getLogger(__name__)
 
-COMMANDS = [
-    BotCommand("start", "سلام کن به آستولفو"),
-    BotCommand("help", "راهنما"),
-    BotCommand("chance", "احتمال ورود خودکار به بحث"),
-    BotCommand("mode", "auto | fast | think | search"),
-    BotCommand("status", "وضعیت فعلی"),
-    BotCommand("reset", "پاک کردن حافظهٔ این چت"),
-    BotCommand("mute", "ساکت شو"),
-    BotCommand("unmute", "برگرد"),
-]
+AUTOSAVE_INTERVAL = 120
 
 
-# ---------------------------------------------------------------------------
-# سرور کوچک زنده‌نگه‌دار (برای Replit / سرویس‌های پینگ)
-# ---------------------------------------------------------------------------
 class _AliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
-        body = "Astolfo is alive~ 🐰".encode()
+        body = b"Astolfo is alive~"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *args):  # لاگ HTTP را ساکت می‌کنیم
+    def log_message(self, *args):
         return
 
 
 def start_keepalive(port: int) -> None:
-    def run() -> None:
+    """Tiny HTTP endpoint so uptime pingers can keep a free host awake."""
+
+    def serve() -> None:
         try:
             HTTPServer(("0.0.0.0", port), _AliveHandler).serve_forever()
-        except Exception as exc:  # pragma: no cover
-            log.warning("سرور زنده‌نگه‌دار بالا نیامد: %s", exc)
+        except Exception as exc:
+            log.warning("keepalive server did not start: %s", exc)
 
-    threading.Thread(target=run, daemon=True, name="keepalive").start()
-    log.info("سرور زنده‌نگه‌دار روی پورت %s بالا آمد.", port)
+    threading.Thread(target=serve, daemon=True, name="keepalive").start()
+    log.info("keepalive server listening on port %s", port)
 
 
-# ---------------------------------------------------------------------------
-# چرخهٔ عمر
-# ---------------------------------------------------------------------------
-async def _autosave(store: ChatStore) -> None:
+async def _autosave(rt: Runtime) -> None:
     while True:
-        await asyncio.sleep(120)
-        store.save()
+        await asyncio.sleep(AUTOSAVE_INTERVAL)
+        rt.save()
 
 
 async def post_init(app: Application) -> None:
     settings: Settings = app.bot_data["settings"]
-    ai = AIClient(settings)
-    app.bot_data["ai"] = ai
-    app.bot_data["store"] = ChatStore(settings)
+    rt = Runtime.build(settings)
+    app.bot_data[runtime.KEY] = rt
 
-    await ai.load_model_catalog()
+    await rt.llm.load_catalog()
     for label, model in (
-        ("سریع", settings.model_fast),
-        ("تفکر", settings.model_think),
-        ("سرچ", settings.model_search),
-        ("رسانه", settings.model_media),
-        ("مسیریاب", settings.model_router),
+        ("fast", settings.model_fast),
+        ("think", settings.model_think),
+        ("search", settings.model_search),
+        ("media", settings.model_media),
+        ("router", settings.model_router),
     ):
-        log.info("مدل %s → %s", label, ai.resolve_model(model))
+        log.info("model[%s] -> %s", label, rt.llm.resolve(model))
 
     if not media.ffmpeg_available():
-        log.warning(
-            "ffmpeg پیدا نشد: ویس تحلیل نمی‌شود و از ویدیو فقط تصویر بندانگشتی دیده می‌شود."
+        log.warning("ffmpeg not found: voice is skipped and videos fall back to thumbnails")
+    if settings.daily_budget_usd > 0:
+        log.info(
+            "daily budget $%.2f, spent today $%.4f",
+            settings.daily_budget_usd,
+            rt.budget.today_cost(),
         )
 
     with contextlib.suppress(Exception):
-        await app.bot.set_my_commands(COMMANDS)
+        await app.bot.set_my_commands(commands.COMMANDS)
 
     me = await app.bot.get_me()
-    log.info("ربات @%s (%s) بالا آمد.", me.username, me.id)
-
-    # asyncio مستقیم، چون هنوز اپلیکیشن در حالت running نیست
-    app.bot_data["autosave_task"] = asyncio.create_task(_autosave(app.bot_data["store"]))
+    log.info("started as @%s (%s)", me.username, me.id)
+    app.bot_data["autosave"] = asyncio.create_task(_autosave(rt))
 
 
 async def post_shutdown(app: Application) -> None:
-    task = app.bot_data.get("autosave_task")
+    task = app.bot_data.get("autosave")
     if task:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
-    store: ChatStore = app.bot_data.get("store")
-    if store:
-        store.save(force=True)
-    ai: AIClient = app.bot_data.get("ai")
-    if ai:
-        await ai.aclose()
-    log.info("خاموش شد. 👋")
+    rt: Runtime = app.bot_data.get(runtime.KEY)
+    if rt:
+        await rt.aclose()
+    log.info("shutdown complete")
+
+
+CONTENT_FILTER = (
+    filters.TEXT
+    | filters.PHOTO
+    | filters.Sticker.ALL
+    | filters.ANIMATION
+    | filters.VIDEO
+    | filters.VIDEO_NOTE
+    | filters.VOICE
+    | filters.AUDIO
+    | filters.Document.IMAGE
+    | filters.Document.VIDEO
+    | filters.Document.AUDIO
+)
 
 
 def build_application(settings: Settings) -> Application:
@@ -127,45 +126,38 @@ def build_application(settings: Settings) -> Application:
         .post_init(post_init)
         .post_shutdown(post_shutdown)
     )
-    with contextlib.suppress(Exception):  # نیازمند اکسترای rate-limiter
+    with contextlib.suppress(Exception):  # needs the rate-limiter extra
         builder = builder.rate_limiter(AIORateLimiter())
 
     app = builder.build()
     app.bot_data["settings"] = settings
 
-    app.add_handler(CommandHandler("start", handlers.cmd_start))
-    app.add_handler(CommandHandler("help", handlers.cmd_help))
-    app.add_handler(CommandHandler("reset", handlers.cmd_reset))
-    app.add_handler(CommandHandler("chance", handlers.cmd_chance))
-    app.add_handler(CommandHandler("mode", handlers.cmd_mode))
-    app.add_handler(CommandHandler("mute", handlers.cmd_mute))
-    app.add_handler(CommandHandler("unmute", handlers.cmd_unmute))
-    app.add_handler(CommandHandler("status", handlers.cmd_status))
+    for name, handler in (
+        ("start", commands.start),
+        ("help", commands.help_),
+        ("reset", commands.reset),
+        ("chance", commands.chance),
+        ("mode", commands.mode),
+        ("mute", commands.mute),
+        ("unmute", commands.unmute),
+        ("status", commands.status),
+        ("usage", commands.usage),
+    ):
+        app.add_handler(CommandHandler(name, handler))
 
-    content = (
-        filters.TEXT
-        | filters.PHOTO
-        | filters.Sticker.ALL
-        | filters.ANIMATION
-        | filters.VIDEO
-        | filters.VIDEO_NOTE
-        | filters.VOICE
-        | filters.AUDIO
-        | filters.Document.IMAGE
-        | filters.Document.VIDEO
-        | filters.Document.AUDIO
-    )
-    app.add_handler(MessageHandler(content & ~filters.COMMAND, handlers.handle_message))
-    app.add_error_handler(handlers.on_error)
+    app.add_handler(MessageHandler(CONTENT_FILTER & ~filters.COMMAND, chat.handle_message))
+    app.add_error_handler(chat.on_error)
     return app
 
 
 def run() -> None:
-    settings = Settings.from_env()
+    try:
+        settings = Settings.from_env()
+    except ConfigError as exc:
+        raise SystemExit(f"configuration error: {exc}") from None
+
     if settings.keepalive:
         start_keepalive(settings.keepalive_port)
-    app = build_application(settings)
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
+    build_application(settings).run_polling(
+        drop_pending_updates=True, allowed_updates=Update.ALL_TYPES
     )

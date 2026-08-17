@@ -1,152 +1,128 @@
-# 🎀 Astolfo — ربات چت تلگرام با شخصیت آستولفو
+# Astolfo
 
-ربات تلگرامی که در گروه‌ها و پی‌وی مثل یک عضو واقعی وارد بحث می‌شود، با شخصیت
-**آستولفو** (سرونت Rider از سری Fate). خودش تصمیم می‌گیرد کِی **سریع** جواب بدهد،
-کِی **فکر کند** و کِی **وب را سرچ کند** — و عکس، استیکر، گیف، ویدیو و ویس را هم
-می‌بیند/می‌شنود. خروجی **فقط متن** است (چیزی تولید یا ارسال نمی‌کند).
+A Telegram bot that behaves like a member of your group chat instead of an assistant.
+It decides for itself whether a message deserves an instant reply, real reasoning, or a
+web search, it reads photos, stickers, GIFs, videos and voice messages, and it keeps its
+own spending under control.
 
----
+Text in, text out — the bot never generates images or audio.
 
-## ✨ چه چیزی دارد
+```
+message ──▶ participation ──▶ budget ──▶ cache ──▶ router ──▶ model ──▶ reply
+             (addressed?)      (caps)     (hit?)    (mode)     (per-mode)
+```
 
-**۱) پرامپت چندلایهٔ شخصیت** (`astolfo/persona.py`)
-لایه‌ها به‌ترتیب: هویت روایی → صدا و لحن → لنگرهای کانن → رفتار گروه/پی‌وی → زبان →
-ممنوعیت‌ها → پاسخ به «تو رباتی؟» → **قواعد راستگویی** → بلوک مخصوص حالت پاسخ →
-لایهٔ رسانه → نمونه‌های چندشات.
-صفات به‌شکل *هویت و پیشینه* نوشته شده‌اند نه *دستور* — چون مدل به دلیل نیاز دارد، نه به فرمان.
+## Features
 
-**۲) مسیریاب سریع/تفکر/سرچ** (`astolfo/router.py`)
-- اول قواعد سریع (بدون هزینه و تأخیر): گپ کوتاه → `fast`، سؤال فنی → `think`،
-  چیز به‌روز و قابل‌راستی‌آزمایی → `search`، حال بد و ناراحتی → `serious`.
-- اگر قاعده‌ها مطمئن نبودند، یک فراخوانی کوچک به مدل سبک تصمیم نهایی را می‌گیرد.
-- خروجی مسیریاب مدل، دما، سقف توکن، بودجهٔ تفکر و روشن/خاموش‌بودن سرچ را تعیین می‌کند.
+**Layered persona.** The system prompt is built from ordered layers: narrative identity,
+voice markers, canon anchors, group behaviour, language mirroring, banned assistant-isms,
+an in-character answer to "are you a bot?", and a highest-priority truthfulness layer.
+Traits are written as identity rather than commands, with few-shot examples in four moods
+and a slim reminder re-injected periodically so the voice does not flatten in long chats.
 
-**۳) کمترین توهم**
-- لایهٔ `<truthfulness priority="highest">` بالاتر از بازیگوشی: عدد/تاریخ/لینک/نقل‌قول از خود درنیاور.
-- سؤال‌های به‌روز به جست‌وجوی وب می‌روند و پاسخ فقط از نتایج واقعی ساخته می‌شود (دمای ۰٫۲۵).
-- منابع زیر پاسخ می‌آیند.
-- «نمی‌دونم» گفتن برای این شخصیت طبیعی است، پس مدل هزینه‌ای برای صادق بودن نمی‌دهد.
-- لنگرهای کانن جلوی ساختن لور جعلی دربارهٔ خود آستولفو را می‌گیرند.
+**Adaptive routing.** Regex heuristics classify most messages for free — small talk goes
+to `fast`, technical questions to `think`, time-sensitive facts to `search`, and distress
+to `serious`. Only ambiguous messages reach a small LLM dispatcher, and its verdicts are
+cached. The chosen mode drives the model, temperature, token ceiling, reasoning budget and
+whether web search runs.
 
-**۴) تحلیل رسانه** (`astolfo/media.py`) — فقط ورودی
-| نوع | چه اتفاقی می‌افتد |
-|---|---|
-| عکس / عکس‌های سند | فشرده‌سازی و ارسال به مدل بینایی |
-| استیکر ثابت / ویدیویی | تصویر یا فریم‌ها + ایموجی استیکر |
-| گیف و ویدیو و ویدیو-پیام | چند فریم نمونه با ffmpeg (اگر ffmpeg نبود: تصویر بندانگشتی) |
-| ویس و فایل صوتی | تبدیل به mp3 مونو و ارسال به مدل صوتی |
+**Grounded answers.** Search-mode replies run at low temperature over live web results and
+cite their sources. Canon anchors keep the persona from inventing its own lore, and the
+truthfulness layer makes "I don't know" the in-character answer rather than a failure.
 
-**۵) رفتار گروهی درست**
-احتمال ورود خودکار + کول‌داون، جواب حتمی به ریپلای/منشن/صدا زدن اسم، صدا زدن افراد
-با اسم، حافظهٔ کوتاه‌مدت + یادداشت بلندمدت از شوخی‌های جاری گروه، و تزریق دوره‌ای
-یادآور شخصیت تا لحن در چت‌های طولانی خشک نشود.
+**Multimodal input.** Photos and stickers are downscaled and encoded, GIFs, videos and
+video notes are sampled into frames with ffmpeg (falling back to Telegram thumbnails),
+and voice messages are transcoded to mono mp3.
 
----
+**Credit controls.** Per-call cost is recorded from OpenRouter and persisted. As spend
+approaches the daily cap the bot degrades instead of dying: cheap model only, then replies
+only when addressed, then a polite stop. See [docs/COST.md](docs/COST.md).
 
-## 🚀 راه‌اندازی روی Replit
+**Group manners.** Reply chance with a cooldown, guaranteed answers on mention or reply,
+per-chat settings, long-term notes about running jokes, and admin-gated commands.
 
-1. **ساخت Repl**: در Replit → `Create Repl` → تب **Import from GitHub** → آدرس این ریپو را بده.
-   (یا Repl خالی از نوع Python بساز و فایل‌ها را داخلش بریز.)
-
-2. **گذاشتن کلیدها در Secrets** (آیکون 🔒 در نوار کناری) — نه در کد:
-
-   | Key | Value |
-   |---|---|
-   | `TELEGRAM_BOT_TOKEN` | توکنی که BotFather داد |
-   | `OPENROUTER_API_KEY` | کلید `sk-or-v1-...` از openrouter.ai |
-
-3. **Run** را بزن. اسکریپت `start.sh` خودش وابستگی‌ها را نصب و ربات را اجرا می‌کند.
-   `ffmpeg` از طریق `replit.nix` نصب می‌شود (لازم برای ویس و ویدیو).
-
-4. **مهم — خاموش کردن Group Privacy** تا ربات پیام‌های عادی گروه را ببیند:
-   در BotFather → `/mybots` → ربات را انتخاب کن → `Bot Settings` → `Group Privacy` → **Turn off**.
-   بعد ربات را از گروه بیرون کن و دوباره اضافه کن.
-
-5. **زنده نگه داشتن**: ربات یک وب‌سرور کوچک روی پورت ۸۰۸۰ بالا می‌آورد. برای اینکه
-   Repl نخوابد یا از **Reserved VM Deployment** استفاده کن (بهترین گزینه برای ربات
-   ۲۴ساعته) یا آدرس Repl را به یک سرویس پینگ مثل UptimeRobot بده.
-
-### اجرای محلی
+## Quick start
 
 ```bash
-git clone <repo> && cd Astolfo
+git clone https://github.com/hami9/Astolfo && cd Astolfo
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env       # و کلیدها را داخلش بگذار
+cp .env.example .env      # add your two keys
 python main.py
 ```
 
-برای تحلیل ویس/ویدیو در اجرای محلی `ffmpeg` هم لازم است
-(`apt install ffmpeg` یا `brew install ffmpeg`).
+Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew install ffmpeg`).
 
----
+**Turn off Group Privacy** in BotFather so the bot can see normal group messages:
+`/mybots` → your bot → *Bot Settings* → *Group Privacy* → **Turn off**, then remove and
+re-add the bot to the group.
 
-## 🎛 دستورها
+Deployment on Replit, Docker or a plain VPS is covered in
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-| دستور | کار |
-|---|---|
-| `/start` | معرفی |
-| `/help` | راهنما |
-| `/chance 40` | چند درصد مواقع خودش وارد بحث شود (فقط ادمین) |
-| `/mode auto\|fast\|think\|search` | حالت جواب دادن (فقط ادمین) |
-| `/status` | وضعیت فعلی، مدل‌ها، مصرف توکن |
-| `/reset` | پاک کردن حافظه و یادداشت‌های این چت (فقط ادمین) |
-| `/mute` و `/unmute` | ساکت کردن و برگرداندن (فقط ادمین) |
+## Commands
 
----
+| Command | Description |
+| --- | --- |
+| `/start`, `/help` | introduction and usage |
+| `/chance 0-100` | how often the bot joins conversations unprompted (admin) |
+| `/mode auto\|fast\|think\|search` | pin a response mode (admin) |
+| `/usage` | today's cost, tokens, cache hits and budget state |
+| `/status` | current settings and capabilities |
+| `/reset` | clear this chat's history and notes (admin) |
+| `/mute`, `/unmute` | silence the bot or bring it back (admin) |
 
-## ⚙️ تنظیمات
+## Configuration
 
-همهٔ کلیدهای `.env.example` با متغیر محیطی قابل تغییرند. مهم‌ترین‌ها:
+Every setting is an environment variable; see [.env.example](.env.example) for the full
+list with defaults. The ones worth knowing:
 
-| متغیر | پیش‌فرض | کار |
-|---|---|---|
-| `MODEL_FAST` | `google/gemini-2.5-flash` | گپ روزمره |
-| `MODEL_THINK` | `google/gemini-2.5-pro` | سؤال‌های سخت (با reasoning) |
-| `MODEL_SEARCH` | `google/gemini-2.5-flash` | پاسخ مبتنی بر جست‌وجو |
-| `MODEL_MEDIA` | `google/gemini-2.5-flash` | عکس/ویدیو/ویس |
-| `MODEL_ROUTER` | `google/gemini-2.5-flash-lite` | تصمیم‌گیرندهٔ حالت |
-| `GROUP_REPLY_CHANCE` | `0.30` | احتمال ورود خودکار به بحث |
-| `REPLY_COOLDOWN` | `20` | حداقل فاصلهٔ دو پاسخ خودکار (ثانیه) |
-| `WEB_SEARCH` | `1` | جست‌وجوی وب |
-| `ROUTER_LLM` | `1` | مسیریاب مدلی (خاموشش کنی فقط قواعد سریع کار می‌کنند) |
-| `PERSONA_REINJECT` | `8` | هر چند نوبت یادآور شخصیت تزریق شود |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MODEL_FAST` | `google/gemini-2.5-flash` | everyday chatter |
+| `MODEL_THINK` | `google/gemini-2.5-pro` | reasoning-heavy turns |
+| `MODEL_ROUTER` | `google/gemini-2.5-flash-lite` | the dispatcher |
+| `GROUP_REPLY_CHANCE` | `0.30` | unprompted participation |
+| `DAILY_BUDGET_USD` | `0` (off) | spend cap with graceful degradation |
+| `RESPONSE_CACHE` | `1` | reuse answers to identical recent messages |
+| `WEB_SEARCH` | `1` | ground factual answers in live results |
+| `BOT_LANG` | `en` | language of command replies (`en` or `fa`) |
 
-اگر شناسهٔ مدلی در OpenRouter نبود، هنگام بالا آمدن لاگ می‌شود و خودکار از
-`FALLBACK_MODELS` استفاده می‌شود.
+Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 
----
-
-## 🧪 تست
+## Development
 
 ```bash
-python -m tests.test_offline   # پرامپت، مسیریاب، حافظه، ابزارها
-python -m tests.test_flow      # جریان کامل پاسخ‌دهی با اشیای جعلی
+pip install -r requirements-dev.txt
+pytest -q          # 104 tests, fully offline
+ruff check .
 ```
 
-هر دو کاملاً آفلاین‌اند و به توکن یا شبکه نیاز ندارند.
+Tests use a mocked HTTP transport, so the exact OpenRouter request body is asserted
+without any network access or credentials.
 
----
-
-## 🗂 ساختار
+## Layout
 
 ```
-main.py                 نقطهٔ شروع
-astolfo/config.py       تنظیمات از متغیرهای محیطی
-astolfo/persona.py      پرامپت چندلایهٔ شخصیت + نمونه‌های چندشات
-astolfo/router.py       تصمیم سریع / تفکر / سرچ / جدی
-astolfo/ai.py           کلاینت OpenRouter (retry، فالبک، reasoning، پلاگین وب)
-astolfo/media.py        عکس، استیکر، گیف، ویدیو، ویس
-astolfo/memory.py       تاریخچهٔ کوتاه‌مدت + یادداشت بلندمدت + ذخیره روی دیسک
-astolfo/handlers.py     هندلرهای تلگرام و جریان اصلی
-astolfo/app.py          ساخت اپلیکیشن، چرخهٔ عمر، سرور زنده‌نگه‌دار
+main.py                 entry point
+astolfo/config.py       environment-driven settings
+astolfo/persona.py      layered prompt, few-shot examples, locale detection
+astolfo/routing.py      fast / think / search / serious dispatcher
+astolfo/llm.py          OpenRouter client with retries and fallbacks
+astolfo/budget.py       cost accounting and degradation ladder
+astolfo/cache.py        TTL + LRU caches
+astolfo/media.py        images, stickers, GIFs, video, audio
+astolfo/memory.py       history, long-term notes, persistence
+astolfo/chat.py         the message pipeline
+astolfo/commands.py     command handlers
+astolfo/app.py          wiring, lifecycle, keepalive server
+docs/                   architecture, deployment, cost control
 ```
 
----
+## Notes
 
-## 📌 نکته‌ها
+Astolfo and the Fate series belong to TYPE-MOON; this is a non-commercial fan persona and
+it is worth saying so in the bot's Telegram bio. Keep your keys in Replit Secrets or a
+local `.env` (git-ignored) and never in the repository.
 
-- آستولفو و سری Fate متعلق به TYPE-MOON هستند؛ این یک شخصیت **فن‌میدِ غیرتجاری** است.
-  بهتر است در بیوی ربات هم بنویسی که یک پرسونای فن‌میده.
-- ربات فقط متن می‌فرستد و عکس/ویس/ویدیو تولید نمی‌کند.
-- کلیدها را هرگز داخل کد یا ریپو نگذار — فقط Secrets یا `.env` (که در `.gitignore` هست).
+MIT licensed.

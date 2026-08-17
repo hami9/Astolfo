@@ -1,56 +1,51 @@
-"""حافظهٔ گفت‌وگو: تاریخچهٔ کوتاه‌مدت + یادداشت‌های بلندمدت (شوخی‌های جاری گروه)."""
+"""Per-chat state: short-term history, long-term notes, and disk persistence."""
 
 from __future__ import annotations
 
 import asyncio
-import collections
 import json
 import logging
 import os
 import time
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, List, Optional
 
-from .ai import AIClient
 from .config import Settings
+from .llm import LLMClient, Usage
 
-log = logging.getLogger("astolfo.memory")
+log = logging.getLogger(__name__)
 
 MAX_NOTES_CHARS = 900
 SUMMARY_BATCH = 8
+MAX_PARTICIPANTS = 20
 
 
 @dataclass
 class ChatState:
     chat_id: int
-    history: Deque[dict]
+    history: deque[dict]
     notes: str = ""
-    participants: "collections.OrderedDict[str, float]" = field(
-        default_factory=collections.OrderedDict
-    )
+    participants: OrderedDict[str, float] = field(default_factory=OrderedDict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    last_reply_at: float = 0.0
+    # -inf, not 0.0: time.monotonic() starts near zero on a freshly booted host,
+    # which would make "never happened" look recent.
+    last_reply_at: float = float("-inf")
     last_seen: float = field(default_factory=time.monotonic)
-    reply_chance: Optional[float] = None
-    forced_mode: Optional[str] = None
+    budget_notice_at: float = float("-inf")
+    reply_chance: float | None = None
+    forced_mode: str | None = None
     muted: bool = False
     turn_count: int = 0
     replies_sent: int = 0
     summarizing: bool = False
     title: str = ""
+    locale: str | None = None
 
     def touch_participant(self, name: str) -> None:
         self.participants[name] = time.time()
         self.participants.move_to_end(name)
-        while len(self.participants) > 20:
+        while len(self.participants) > MAX_PARTICIPANTS:
             self.participants.popitem(last=False)
-
-    def recent_texts(self, count: int = 6) -> List[str]:
-        return [
-            str(turn.get("content", ""))
-            for turn in list(self.history)[-count:]
-            if isinstance(turn.get("content"), str)
-        ]
 
     def add_user(self, name: str, text: str) -> None:
         self.history.append({"role": "user", "content": f"{name}: {text}"})
@@ -62,32 +57,59 @@ class ChatState:
         self.turn_count += 1
         self.replies_sent += 1
 
+    def recent_texts(self, count: int = 6) -> list[str]:
+        return [
+            turn["content"]
+            for turn in list(self.history)[-count:]
+            if isinstance(turn.get("content"), str)
+        ]
+
+    def prompt_history(self, char_budget: int, *, skip_last: bool = True) -> list[dict]:
+        """Newest turns that fit the character budget, in chronological order.
+
+        Trimming by size instead of a fixed count keeps input cost predictable when
+        people paste long messages.
+        """
+        turns = list(self.history)
+        if skip_last and turns:
+            turns = turns[:-1]
+
+        selected: list[dict] = []
+        used = 0
+        for turn in reversed(turns):
+            content = turn.get("content")
+            if not isinstance(content, str):
+                continue
+            cost = len(content) + 8
+            if used + cost > char_budget and selected:
+                break
+            selected.append(turn)
+            used += cost
+        selected.reverse()
+        return selected
+
 
 class ChatStore:
-    """نگهدارندهٔ وضعیت چت‌ها با پاک‌سازی TTL/LRU و ذخیرهٔ تنظیمات روی دیسک."""
+    """TTL + LRU store. Only settings and notes are persisted, never message text."""
 
     def __init__(self, settings: Settings) -> None:
         self._s = settings
-        self._chats: "collections.OrderedDict[int, ChatState]" = collections.OrderedDict()
+        self._chats: OrderedDict[int, ChatState] = OrderedDict()
         self._path = os.path.join(settings.data_dir, "state.json")
         self._dirty = False
         self._load()
 
-    # ------------------------------------------------------------------
     def get(self, chat_id: int) -> ChatState:
         state = self._chats.get(chat_id)
         if state is None:
-            state = ChatState(
-                chat_id=chat_id,
-                history=collections.deque(maxlen=self._s.max_history_len),
-            )
+            state = ChatState(chat_id=chat_id, history=deque(maxlen=self._s.max_history))
             self._chats[chat_id] = state
         state.last_seen = time.monotonic()
         self._chats.move_to_end(chat_id)
         self._evict()
         return state
 
-    def all_states(self) -> List[ChatState]:
+    def all_states(self) -> list[ChatState]:
         return list(self._chats.values())
 
     def mark_dirty(self) -> None:
@@ -95,32 +117,28 @@ class ChatStore:
 
     def _evict(self) -> None:
         now = time.monotonic()
-        stale = [
+        for chat_id in [
             cid
-            for cid, st in self._chats.items()
-            if now - st.last_seen > self._s.chat_ttl_sec and not st.lock.locked()
-        ]
-        for cid in stale:
-            self._chats.pop(cid, None)
+            for cid, state in self._chats.items()
+            if now - state.last_seen > self._s.chat_ttl and not state.lock.locked()
+        ]:
+            self._chats.pop(chat_id, None)
 
         while len(self._chats) > self._s.max_chats:
-            cid, st = self._chats.popitem(last=False)
-            if st.lock.locked():  # چتی که وسط تولید پاسخ است دور ریخته نمی‌شود
-                self._chats[cid] = st
-                self._chats.move_to_end(cid)
+            chat_id, state = self._chats.popitem(last=False)
+            if state.lock.locked():  # never drop a chat mid-reply
+                self._chats[chat_id] = state
+                self._chats.move_to_end(chat_id)
                 break
 
-    # ------------------------------------------------------------------
-    # ذخیره‌سازی (فقط تنظیمات و یادداشت‌ها؛ متن پیام‌ها روی دیسک نمی‌رود)
-    # ------------------------------------------------------------------
     def _load(self) -> None:
         try:
-            with open(self._path, "r", encoding="utf-8") as fh:
+            with open(self._path, encoding="utf-8") as fh:
                 data = json.load(fh)
         except FileNotFoundError:
             return
         except Exception as exc:
-            log.warning("خواندن حافظهٔ ذخیره‌شده شکست خورد: %s", exc)
+            log.warning("could not read persisted state: %s", exc)
             return
 
         for raw_id, blob in (data.get("chats") or {}).items():
@@ -128,17 +146,17 @@ class ChatStore:
                 chat_id = int(raw_id)
             except ValueError:
                 continue
-            state = ChatState(
+            self._chats[chat_id] = ChatState(
                 chat_id=chat_id,
-                history=collections.deque(maxlen=self._s.max_history_len),
+                history=deque(maxlen=self._s.max_history),
                 notes=str(blob.get("notes") or "")[:MAX_NOTES_CHARS],
                 reply_chance=blob.get("reply_chance"),
                 forced_mode=blob.get("forced_mode"),
                 muted=bool(blob.get("muted")),
                 title=str(blob.get("title") or ""),
+                locale=blob.get("locale"),
             )
-            self._chats[chat_id] = state
-        log.info("تنظیمات %d چت از دیسک بازیابی شد.", len(self._chats))
+        log.info("restored settings for %d chats", len(self._chats))
 
     def save(self, force: bool = False) -> None:
         if not (self._dirty or force):
@@ -146,71 +164,70 @@ class ChatStore:
         payload = {
             "chats": {
                 str(cid): {
-                    "notes": st.notes,
-                    "reply_chance": st.reply_chance,
-                    "forced_mode": st.forced_mode,
-                    "muted": st.muted,
-                    "title": st.title,
+                    "notes": state.notes,
+                    "reply_chance": state.reply_chance,
+                    "forced_mode": state.forced_mode,
+                    "muted": state.muted,
+                    "title": state.title,
+                    "locale": state.locale,
                 }
-                for cid, st in self._chats.items()
-                if st.notes or st.reply_chance is not None or st.forced_mode or st.muted
+                for cid, state in self._chats.items()
+                if state.notes
+                or state.reply_chance is not None
+                or state.forced_mode
+                or state.muted
             }
         }
         try:
             os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
-            tmp = self._path + ".tmp"
+            tmp = f"{self._path}.tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=1)
             os.replace(tmp, self._path)
             self._dirty = False
         except Exception as exc:
-            log.warning("ذخیرهٔ حافظه شکست خورد: %s", exc)
+            log.warning("could not persist state: %s", exc)
 
 
-# ---------------------------------------------------------------------------
-# خلاصه‌سازی چرخشی: تبدیل پیام‌های قدیمی به «چیزهایی که یادم مونده»
-# ---------------------------------------------------------------------------
 SUMMARY_PROMPT = """\
 You maintain the long-term memory notes of a persona bot inside a Telegram chat.
-Merge the OLD NOTES with the NEW MESSAGES into updated notes.
+Merge OLD NOTES with NEW MESSAGES into updated notes.
 
-Keep only what would help a member of this chat sound like they belong later:
-who the regulars are and what they're into, running jokes, ongoing situations,
-stated preferences, plans, and anything the bot promised.
-Drop small talk, greetings, and one-off chatter.
+Keep only what helps a member of this chat sound like they belong later: who the
+regulars are and what they are into, running jokes, ongoing situations, stated
+preferences, plans, and anything the bot promised. Drop small talk and greetings.
 
-Hard rules: write in the chat's own language, plain short lines (max 8 lines,
-under 700 characters total), no markdown, and never invent anything that was not
-actually said. If nothing is worth remembering, return the old notes unchanged.
+Rules: write in the chat's own language, plain short lines, at most 8 lines and 700
+characters, no markdown, and never invent anything that was not actually said. If
+nothing is worth remembering, return the old notes unchanged.
 
-Answer ONLY as JSON: {"notes": "..."}"""
+Reply with JSON only: {"notes": "..."}"""
 
 
-async def update_notes(ai: AIClient, settings: Settings, state: ChatState) -> None:
-    """پیام‌های قدیمی را به یادداشت بلندمدت تبدیل می‌کند (در پس‌زمینه)."""
-    if not settings.summary_enabled or state.summarizing:
-        return
-    if len(state.history) < state.history.maxlen:
-        return
+async def update_notes(llm: LLMClient, settings: Settings, state: ChatState) -> Usage:
+    """Fold the oldest turns into long-term notes. Runs in the background."""
+    if not settings.summaries or state.summarizing:
+        return Usage()
+    if len(state.history) < (state.history.maxlen or 0):
+        return Usage()
 
     state.summarizing = True
     try:
         batch = [
-            str(turn.get("content", ""))
+            turn["content"]
             for turn in list(state.history)[:SUMMARY_BATCH]
             if isinstance(turn.get("content"), str)
         ]
         if not batch:
-            return
-        data = await ai.json_call(
+            return Usage()
+
+        data, usage = await llm.json_chat(
             [
                 {"role": "system", "content": SUMMARY_PROMPT},
                 {
                     "role": "user",
-                    "content": (
-                        f"OLD NOTES:\n{state.notes or '(empty)'}\n\n"
-                        f"NEW MESSAGES:\n" + "\n".join(batch)
-                    ),
+                    "content": f"OLD NOTES:\n{state.notes or '(empty)'}\n\nNEW MESSAGES:\n"
+                    + "\n".join(batch),
                 },
             ],
             model=settings.model_summary,
@@ -220,9 +237,9 @@ async def update_notes(ai: AIClient, settings: Settings, state: ChatState) -> No
             notes = data["notes"].strip()[:MAX_NOTES_CHARS]
             if notes:
                 state.notes = notes
-                log.debug("یادداشت چت %s به‌روزرسانی شد.", state.chat_id)
-                return
-    except Exception as exc:  # pragma: no cover
-        log.warning("خلاصه‌سازی شکست خورد: %s", exc)
+        return usage
+    except Exception as exc:
+        log.warning("summary failed for chat %s: %s", state.chat_id, exc)
+        return Usage()
     finally:
         state.summarizing = False

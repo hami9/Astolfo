@@ -1,0 +1,90 @@
+# Credit control
+
+Every optimisation here is on by default. `/usage` reports what they are saving.
+
+## Where the money goes
+
+A group bot's cost is dominated by **input tokens**, not output: the persona prompt plus
+chat history is sent on every single turn, while replies are two lines long. The design
+follows from that.
+
+## 1. Route cheap turns to cheap models
+
+Most group messages are banter. Regex heuristics classify them for free and send them to
+`MODEL_FAST` with reasoning disabled (`reasoning: {"max_tokens": 0}`), so no thinking
+tokens are billed for "lol". Only genuinely hard turns reach `MODEL_THINK`, and only
+verifiable ones pay for web search.
+
+## 2. Do not pay to decide
+
+The LLM dispatcher is the routing safety net, not the routing mechanism:
+
+- it is skipped entirely when the heuristics are confident (`>= 0.85`),
+- it is skipped for messages shorter than `ROUTER_MIN_WORDS`,
+- it runs on `MODEL_ROUTER` with an 80-token ceiling,
+- its verdicts are cached by normalised text for `ROUTER_CACHE_TTL`,
+- it is disabled automatically when the budget is tight.
+
+## 3. Keep the prompt prefix cacheable
+
+The persona block is byte-identical across turns, so providers serve it from their prompt
+cache at a large discount. Anything that varies per turn — mode, participants, notes —
+lives in a second, much smaller system message after it. Anthropic models get an explicit
+`cache_control` breakpoint; Gemini and OpenAI cache stable prefixes implicitly.
+`/usage` shows the resulting cache hit rate.
+
+## 4. Bound the history
+
+History is trimmed by `HISTORY_CHAR_BUDGET` characters rather than a message count, so one
+pasted wall of text cannot multiply the cost of every following turn. Attachments are kept
+in history as placeholders, never as base64.
+
+## 5. Never answer the same thing twice
+
+An identical message in the same chat within `RESPONSE_CACHE_TTL` is answered from cache
+with no model call. Only `fast`, non-media, non-search replies are cached, so time-
+sensitive answers never go stale.
+
+## 6. Shrink media before sending it
+
+Images are downscaled to `IMAGE_MAX_DIM` and re-encoded as JPEG at `IMAGE_QUALITY`.
+Videos and GIFs are reduced to `VIDEO_FRAMES` sampled frames; audio becomes 16 kHz mono
+48 kbps mp3, capped at `MAX_AUDIO_SECONDS`.
+
+## 7. Talk less
+
+`GROUP_REPLY_CHANCE` and `REPLY_COOLDOWN` bound unprompted participation, `MAX_TOKENS_FAST`
+keeps replies short, and one reply is generated per chat at a time.
+
+## Budgets and degradation
+
+Set a cap and the bot manages itself:
+
+```bash
+DAILY_BUDGET_USD=0.50
+MONTHLY_BUDGET_USD=10
+CHAT_DAILY_CALL_LIMIT=200   # optional per-chat cap
+```
+
+| Spend | State | Behaviour |
+| --- | --- | --- |
+| < 80% | `full` | everything enabled |
+| 80–100% | `cheap` | fast model only, no web search, no dispatcher |
+| 100–120% | `addressed_only` | answers only when mentioned or replied to, cheap |
+| ≥ 120% | `stopped` | no model calls; one in-character notice per hour |
+
+Costs come from OpenRouter's `usage.cost` field, so `TRACK_COST=1` is required for budgets
+to work. Totals are stored in `data/usage.json` and survive restarts, so a restart loop
+cannot reset the cap.
+
+## Tuning for a very small budget
+
+```bash
+MODEL_THINK=google/gemini-2.5-flash    # skip the expensive tier entirely
+ROUTER_LLM=0                           # heuristics only
+GROUP_REPLY_CHANCE=0.15
+HISTORY_CHAR_BUDGET=3000
+MAX_TOKENS_FAST=180
+SUMMARIES=0
+PROVIDER_SORT=price
+```

@@ -1,3 +1,3 @@
-"""ربات تلگرامی آستولفو — شخصیت چندلایه، مسیریاب سریع/تفکر/جست‌وجو، ورودی چندرسانه‌ای."""
+"""Astolfo: a Telegram persona bot with adaptive routing and multimodal input."""
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
