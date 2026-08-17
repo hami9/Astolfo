@@ -1,0 +1,15 @@
+.env
+.env.local
+data/state.json
+.deps_installed
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.replit_history
+.upm/
+.config/
+.pythonlibs/
+*.log
+
+!data/.gitkeep
