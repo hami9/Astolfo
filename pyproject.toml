@@ -27,6 +27,7 @@ packages = ["astolfo"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # so `pytest` works without an editable install
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
 
