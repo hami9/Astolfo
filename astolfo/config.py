@@ -1,188 +1,179 @@
-"""پیکربندی ربات آستولفو — همه‌چیز از متغیرهای محیطی (Replit Secrets) خوانده می‌شود."""
+"""Environment-driven configuration."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass, field, fields
+from typing import Any
 
-try:  # اختیاری: خواندن فایل .env در اجرای محلی
+try:
     from dotenv import load_dotenv
 
     load_dotenv()
-except Exception:  # pragma: no cover - نبود dotenv نباید اجرا را متوقف کند
+except ImportError:
     pass
 
 
-def _env(name: str, default: str = "") -> str:
-    return (os.getenv(name) or default).strip()
+def _env(name: str, **kwargs: Any):
+    """Declare a settings field bound to an environment variable."""
+    metadata = {"env": name}
+    if "default_factory" in kwargs:
+        return field(default_factory=kwargs["default_factory"], metadata=metadata)
+    return field(default=kwargs["default"], metadata=metadata)
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(_env(name) or default)
-    except ValueError:
-        return default
+def _coerce(annotation: str, raw: str) -> Any:
+    value = raw.strip()
+    if annotation.startswith("bool"):
+        return value.lower() in {"1", "true", "yes", "on", "y"}
+    if annotation.startswith("int"):
+        return int(float(value))
+    if annotation.startswith("float"):
+        return float(value)
+    lowered = annotation.lower().replace(" ", "")
+    if "list[str]" in lowered:
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if "list[int]" in lowered:
+        numbers = []
+        for item in value.split(","):
+            try:
+                numbers.append(int(item.strip()))
+            except ValueError:
+                continue
+        return numbers
+    return value or None if "none" in lowered else value
 
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(float(_env(name) or default))
-    except ValueError:
-        return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name).lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on", "y"}
-
-
-def _env_list(name: str, default: List[str]) -> List[str]:
-    raw = _env(name)
-    if not raw:
-        return list(default)
-    return [item.strip() for item in raw.split(",") if item.strip()]
+class ConfigError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
 class Settings:
-    # --- اعتبارنامه‌ها ---
-    telegram_token: str
-    api_key: str
-    api_base: str = "https://openrouter.ai/api/v1"
+    """All tunables. Every field maps to an environment variable."""
 
-    # --- مدل‌ها (شناسه‌های OpenRouter) ---
-    model_fast: str = "google/gemini-2.5-flash"
-    model_think: str = "google/gemini-2.5-pro"
-    model_router: str = "google/gemini-2.5-flash-lite"
-    model_media: str = "google/gemini-2.5-flash"
-    model_search: str = "google/gemini-2.5-flash"
-    model_summary: str = "google/gemini-2.5-flash-lite"
-    fallback_models: List[str] = field(
-        default_factory=lambda: ["openai/gpt-4o-mini", "anthropic/claude-3.5-haiku"]
+    # --- credentials -------------------------------------------------
+    telegram_token: str = _env("TELEGRAM_BOT_TOKEN", default="")
+    api_key: str = _env("OPENROUTER_API_KEY", default="")
+    api_base: str = _env("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
+
+    # --- models ------------------------------------------------------
+    model_fast: str = _env("MODEL_FAST", default="google/gemini-2.5-flash")
+    model_think: str = _env("MODEL_THINK", default="google/gemini-2.5-pro")
+    model_search: str = _env("MODEL_SEARCH", default="google/gemini-2.5-flash")
+    model_media: str = _env("MODEL_MEDIA", default="google/gemini-2.5-flash")
+    model_router: str = _env("MODEL_ROUTER", default="google/gemini-2.5-flash-lite")
+    model_summary: str = _env("MODEL_SUMMARY", default="google/gemini-2.5-flash-lite")
+    fallback_models: list[str] = _env(
+        "FALLBACK_MODELS",
+        default_factory=lambda: ["openai/gpt-4o-mini", "anthropic/claude-3.5-haiku"],
     )
+    provider_sort: str | None = _env("PROVIDER_SORT", default=None)  # price | throughput
 
-    # --- پارامترهای تولید ---
-    temperature_fast: float = 0.95      # گپ‌وگفت بازیگوش
-    temperature_think: float = 0.55     # وقتی دقت مهم است
-    temperature_grounded: float = 0.25  # پاسخ مبتنی بر جست‌وجو
-    max_tokens_fast: int = 260
-    max_tokens_think: int = 900
-    think_reasoning_effort: str = "medium"   # low | medium | high
-    fast_reasoning_budget: int = 0           # 0 = خاموش‌کردن تفکر برای پاسخ سریع
+    # --- generation --------------------------------------------------
+    temperature_fast: float = _env("TEMPERATURE_FAST", default=0.95)
+    temperature_think: float = _env("TEMPERATURE_THINK", default=0.55)
+    temperature_grounded: float = _env("TEMPERATURE_GROUNDED", default=0.25)
+    max_tokens_fast: int = _env("MAX_TOKENS_FAST", default=260)
+    max_tokens_think: int = _env("MAX_TOKENS_THINK", default=900)
+    think_effort: str = _env("THINK_EFFORT", default="medium")  # low | medium | high
+    fast_reasoning_budget: int = _env("FAST_REASONING_BUDGET", default=0)
 
-    # --- جست‌وجوی وب (کاهش توهم) ---
-    web_search_enabled: bool = True
-    web_max_results: int = 4
-    show_sources: bool = True
+    # --- retrieval ---------------------------------------------------
+    web_search: bool = _env("WEB_SEARCH", default=True)
+    web_max_results: int = _env("WEB_MAX_RESULTS", default=4)
+    show_sources: bool = _env("SHOW_SOURCES", default=True)
 
-    # --- مسیریاب هوشمند ---
-    router_llm_enabled: bool = True
-    router_max_tokens: int = 80
+    # --- routing -----------------------------------------------------
+    router_llm: bool = _env("ROUTER_LLM", default=True)
+    router_max_tokens: int = _env("ROUTER_MAX_TOKENS", default=80)
+    router_min_words: int = _env("ROUTER_MIN_WORDS", default=4)
 
-    # --- رفتار گروه ---
-    group_reply_chance: float = 0.30
-    media_reply_chance: float = 0.75
-    reply_cooldown_sec: float = 20.0
-    max_history_len: int = 24
-    max_chars_per_message: int = 1200
-    persona_reinject_every: int = 8
+    # --- chat behaviour ----------------------------------------------
+    group_reply_chance: float = _env("GROUP_REPLY_CHANCE", default=0.30)
+    media_reply_chance: float = _env("MEDIA_REPLY_CHANCE", default=0.75)
+    reply_cooldown: float = _env("REPLY_COOLDOWN", default=20.0)
+    max_history: int = _env("MAX_HISTORY", default=24)
+    history_char_budget: int = _env("HISTORY_CHAR_BUDGET", default=6000)
+    max_input_chars: int = _env("MAX_INPUT_CHARS", default=1200)
+    persona_reinject_every: int = _env("PERSONA_REINJECT", default=8)
+    locale: str = _env("BOT_LANG", default="en")  # en | fa
+    persona_locale: str = _env("PERSONA_LOCALE", default="auto")  # auto | en | fa
 
-    # --- حافظه ---
-    chat_ttl_sec: float = 12 * 3600
-    max_chats: int = 800
-    summary_enabled: bool = True
-    data_dir: str = "data"
+    # --- memory ------------------------------------------------------
+    chat_ttl: float = _env("CHAT_TTL", default=12 * 3600)
+    max_chats: int = _env("MAX_CHATS", default=800)
+    summaries: bool = _env("SUMMARIES", default=True)
+    data_dir: str = _env("DATA_DIR", default="data")
 
-    # --- شبکه ---
-    request_timeout: float = 90.0
-    max_retries: int = 4
+    # --- cost control ------------------------------------------------
+    daily_budget_usd: float = _env("DAILY_BUDGET_USD", default=0.0)  # 0 = unlimited
+    monthly_budget_usd: float = _env("MONTHLY_BUDGET_USD", default=0.0)
+    chat_daily_call_limit: int = _env("CHAT_DAILY_CALL_LIMIT", default=0)
+    response_cache: bool = _env("RESPONSE_CACHE", default=True)
+    response_cache_ttl: float = _env("RESPONSE_CACHE_TTL", default=600.0)
+    router_cache_ttl: float = _env("ROUTER_CACHE_TTL", default=3600.0)
+    prompt_cache_control: bool = _env("PROMPT_CACHE_CONTROL", default=True)
+    track_cost: bool = _env("TRACK_COST", default=True)
 
-    # --- رسانه ---
-    media_enabled: bool = True
-    max_media_bytes: int = 20 * 1024 * 1024   # سقف دانلود Bot API
-    image_max_dim: int = 1152
-    video_frames: int = 5
-    max_audio_seconds: int = 240
+    # --- network -----------------------------------------------------
+    request_timeout: float = _env("REQUEST_TIMEOUT", default=90.0)
+    max_retries: int = _env("MAX_RETRIES", default=4)
 
-    # --- متفرقه ---
-    app_title: str = "Astolfo Telegram Bot"
-    app_url: str = "https://github.com/hami9/astolfo"
-    keepalive: bool = True
-    keepalive_port: int = 8080
-    admin_ids: List[int] = field(default_factory=list)
+    # --- media -------------------------------------------------------
+    media_enabled: bool = _env("MEDIA_ENABLED", default=True)
+    max_media_bytes: int = _env("MAX_MEDIA_BYTES", default=20 * 1024 * 1024)
+    image_max_dim: int = _env("IMAGE_MAX_DIM", default=1024)
+    image_quality: int = _env("IMAGE_QUALITY", default=82)
+    video_frames: int = _env("VIDEO_FRAMES", default=4)
+    max_audio_seconds: int = _env("MAX_AUDIO_SECONDS", default=240)
+
+    # --- runtime -----------------------------------------------------
+    app_title: str = _env("APP_TITLE", default="Astolfo Telegram Bot")
+    app_url: str = _env("APP_URL", default="https://github.com/hami9/Astolfo")
+    keepalive: bool = _env("KEEPALIVE", default=True)
+    keepalive_port: int = _env("PORT", default=8080)
+    admin_ids: list[int] = _env("ADMIN_IDS", default_factory=list)
+    log_level: str = _env("LOG_LEVEL", default="INFO")
 
     @classmethod
-    def from_env(cls) -> "Settings":
-        token = _env("TELEGRAM_BOT_TOKEN")
-        api_key = _env("OPENROUTER_API_KEY") or _env("AI_API_KEY")
+    def from_env(cls) -> Settings:
+        values = {}
+        for f in fields(cls):
+            env_name = f.metadata.get("env")
+            raw = os.getenv(env_name) if env_name else None
+            if raw is None or not raw.strip():
+                continue
+            try:
+                values[f.name] = _coerce(str(f.type), raw)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(f"invalid value for {env_name}: {raw!r} ({exc})") from exc
 
+        settings = cls(**values)
         missing = [
             name
-            for name, value in (("TELEGRAM_BOT_TOKEN", token), ("OPENROUTER_API_KEY", api_key))
+            for name, value in (
+                ("TELEGRAM_BOT_TOKEN", settings.telegram_token),
+                ("OPENROUTER_API_KEY", settings.api_key),
+            )
             if not value
         ]
         if missing:
-            raise SystemExit(
-                "متغیرهای محیطی زیر تعریف نشده‌اند: "
+            raise ConfigError(
+                "missing required environment variables: "
                 + ", ".join(missing)
-                + "\nدر Replit از بخش Secrets و در اجرای محلی از فایل .env استفاده کن."
+                + " (set them in Replit Secrets or a local .env file)"
             )
-
-        admin_ids: List[int] = []
-        for chunk in _env_list("ADMIN_IDS", []):
-            try:
-                admin_ids.append(int(chunk))
-            except ValueError:
-                continue
-
-        return cls(
-            telegram_token=token,
-            api_key=api_key,
-            api_base=_env("AI_API_BASE", cls.api_base).rstrip("/"),
-            model_fast=_env("MODEL_FAST", cls.model_fast),
-            model_think=_env("MODEL_THINK", cls.model_think),
-            model_router=_env("MODEL_ROUTER", cls.model_router),
-            model_media=_env("MODEL_MEDIA", cls.model_media),
-            model_search=_env("MODEL_SEARCH", cls.model_search),
-            model_summary=_env("MODEL_SUMMARY", cls.model_summary),
-            fallback_models=_env_list(
-                "FALLBACK_MODELS", ["openai/gpt-4o-mini", "anthropic/claude-3.5-haiku"]
-            ),
-            temperature_fast=_env_float("TEMPERATURE_FAST", cls.temperature_fast),
-            temperature_think=_env_float("TEMPERATURE_THINK", cls.temperature_think),
-            temperature_grounded=_env_float("TEMPERATURE_GROUNDED", cls.temperature_grounded),
-            max_tokens_fast=_env_int("MAX_TOKENS_FAST", cls.max_tokens_fast),
-            max_tokens_think=_env_int("MAX_TOKENS_THINK", cls.max_tokens_think),
-            think_reasoning_effort=_env("THINK_EFFORT", cls.think_reasoning_effort),
-            fast_reasoning_budget=_env_int("FAST_REASONING_BUDGET", cls.fast_reasoning_budget),
-            web_search_enabled=_env_bool("WEB_SEARCH", cls.web_search_enabled),
-            web_max_results=_env_int("WEB_MAX_RESULTS", cls.web_max_results),
-            show_sources=_env_bool("SHOW_SOURCES", cls.show_sources),
-            router_llm_enabled=_env_bool("ROUTER_LLM", cls.router_llm_enabled),
-            group_reply_chance=_env_float("GROUP_REPLY_CHANCE", cls.group_reply_chance),
-            media_reply_chance=_env_float("MEDIA_REPLY_CHANCE", cls.media_reply_chance),
-            reply_cooldown_sec=_env_float("REPLY_COOLDOWN", cls.reply_cooldown_sec),
-            max_history_len=_env_int("MAX_HISTORY", cls.max_history_len),
-            persona_reinject_every=_env_int("PERSONA_REINJECT", cls.persona_reinject_every),
-            chat_ttl_sec=_env_float("CHAT_TTL", cls.chat_ttl_sec),
-            summary_enabled=_env_bool("SUMMARY_ENABLED", cls.summary_enabled),
-            data_dir=_env("DATA_DIR", cls.data_dir),
-            request_timeout=_env_float("REQUEST_TIMEOUT", cls.request_timeout),
-            media_enabled=_env_bool("MEDIA_ENABLED", cls.media_enabled),
-            image_max_dim=_env_int("IMAGE_MAX_DIM", cls.image_max_dim),
-            video_frames=_env_int("VIDEO_FRAMES", cls.video_frames),
-            keepalive=_env_bool("KEEPALIVE", cls.keepalive),
-            keepalive_port=_env_int("PORT", cls.keepalive_port),
-            admin_ids=admin_ids,
-        )
+        return settings
 
     @property
     def chat_url(self) -> str:
-        return f"{self.api_base}/chat/completions"
+        return f"{self.api_base.rstrip('/')}/chat/completions"
 
     @property
     def models_url(self) -> str:
-        return f"{self.api_base}/models"
+        return f"{self.api_base.rstrip('/')}/models"
+
+    def replace(self, **overrides: Any) -> Settings:
+        """Return a copy with overrides applied (used by tests)."""
+        return Settings(**{**self.__dict__, **overrides})
