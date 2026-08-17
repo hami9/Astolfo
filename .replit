@@ -1,0 +1,19 @@
+run = "bash start.sh"
+entrypoint = "main.py"
+
+hidden = [".venv", "__pycache__", ".config"]
+
+[env]
+PYTHONUNBUFFERED = "1"
+PYTHONPATH = "${REPL_HOME}"
+
+[deployment]
+run = ["bash", "start.sh"]
+deploymentTarget = "vm"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[unitTest]
+language = "python3"
