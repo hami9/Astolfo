@@ -247,3 +247,78 @@ async def test_a_refused_key_steps_aside_for_the_next_service(settings, monkeypa
     seen.clear()
     await client.chat([{"role": "user", "content": "two"}], model="anything")
     assert all(host != "openrouter.ai" for host, _ in seen), "a bad key stays bad"
+
+
+# -- model ids ------------------------------------------------------------
+def _listing(models_by_host: dict[str, list[str]], seen: list[tuple[str, str]]):
+    """A service that publishes its own model list and 404s on anything else."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        offered = models_by_host.get(host)
+        if request.url.path.endswith("/models"):
+            if offered is None:
+                return httpx.Response(200, json=CATALOG)
+            return httpx.Response(200, json={"data": [{"id": m} for m in offered]})
+
+        model = json.loads(request.content)["model"]
+        seen.append((host, model))
+        if offered is not None and model not in offered:
+            return httpx.Response(404, json={"error": {"message": f"{model} is not found"}})
+        return httpx.Response(
+            200,
+            json={
+                "model": model,
+                "choices": [{"message": {"content": "ehehe~"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "cost": 0},
+            },
+        )
+
+    return handler
+
+
+async def test_models_a_service_no_longer_offers_are_dropped(settings, monkeypatch):
+    """Preset ids go stale; the service's own listing is the authority."""
+    seen: list[tuple[str, str]] = []
+    listing = {"generativelanguage.googleapis.com": ["gemini-2.5-flash-lite"]}
+    client = _multi(settings, monkeypatch, _listing(listing, seen), order=("google",))
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert result.ok
+    assert [model for _, model in seen] == ["gemini-2.5-flash-lite"], "retired ids never asked"
+
+
+async def test_a_service_that_lists_nothing_useful_keeps_its_configured_ids(
+    settings, monkeypatch
+):
+    """An unreadable or unrelated listing must not leave the service with no models."""
+    seen: list[tuple[str, str]] = []
+    client = _multi(settings, monkeypatch, _router({}, seen), order=("google",))
+    await client.load_catalog()
+
+    provider = client.providers[0]
+    assert provider.models, "still usable"
+
+
+async def test_a_missing_model_moves_down_the_list(settings, monkeypatch):
+    """404 means this id is gone, not that the service is unusable."""
+    seen: list[tuple[str, str]] = []
+    handler = _listing({"generativelanguage.googleapis.com": []}, seen)
+
+    def stale(request: httpx.Request) -> httpx.Response:
+        # The listing agrees with the preset, but a model 404s when called.
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=CATALOG)
+        return handler(request)
+
+    client = _multi(settings, monkeypatch, stale, order=("google",))
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert not result.ok
+    assert result.error_kind == "rejected"
+    tried = [model for _, model in seen]
+    assert len(tried) == len(set(tried)) >= 2, "every configured id was tried once"
