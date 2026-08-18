@@ -267,15 +267,21 @@ async def test_media_is_dropped_honestly_without_a_vision_model(rt, monkeypatch)
     assert message.sent
 
 
-def test_status_reports_the_pool(rt):
+def test_status_reports_the_services_and_the_pool(rt):
+    from types import SimpleNamespace
+
     from astolfo.commands import _billing_label
 
-    assert _billing_label(rt) == "paid models"
+    assert _billing_label(rt) == "paid models via openrouter"
 
     rt.settings = rt.settings.replace(free_mode=True)
+    rt.llm.providers = [SimpleNamespace(name="openrouter"), SimpleNamespace(name="google")]
     rt.llm.free_pool = lambda **kw: ["a", "b"]
     rt.llm.supports_free_vision = lambda: True
-    assert _billing_label(rt) == "free models (2 available, with images)"
+
+    label = _billing_label(rt)
+    assert "openrouter, google" in label, "the stacked services are visible"
+    assert "2 available, with images" in label
 
 
 def test_locale_is_forgiving_but_not_silent(caplog):
