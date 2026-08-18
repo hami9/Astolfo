@@ -114,7 +114,9 @@ def export_secrets(db: Database, box: SecretBox) -> list[str]:
             os.environ[name] = value
             exported.append(name)
     if exported:
-        log.info("loaded %d stored key(s): %s", len(exported), ", ".join(exported))
+        # A count, not the names: anything derived from a decrypted value stays
+        # out of the log entirely. The panel lists which services have a key.
+        log.info("loaded %d stored key(s) from the database", len(exported))
     return exported
 
 

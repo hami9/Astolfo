@@ -149,7 +149,6 @@ async def test_a_typed_setting_is_validated(owned):
 
 
 async def test_a_setting_can_be_reset_to_the_env_value(owned):
-    _query, context = await _press(owned, "ap:cfg:flip:group_reply_chance")  # not a toggle
     _query, context = await _press(owned, "ap:cfg:edit:group_reply_chance")
     await _say(owned, "0.9", context)
     assert owned.settings.group_reply_chance == 0.9

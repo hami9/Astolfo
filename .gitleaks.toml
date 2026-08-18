@@ -1,0 +1,18 @@
+# Secret scanning configuration.
+#
+# The default ruleset does the work. The only addition is the handful of obvious
+# placeholders the tests use, which have to look key-shaped to be worth testing.
+# They are listed one by one on purpose: an allowlist for "tests/" would be the
+# easy version, and would also be the version that misses a real key pasted into
+# a test - which is very nearly how one slipped in here.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder keys in the test suite. Not credentials, never were."
+regexes = [
+  '''sk-or-v1-abcdefghijklmnop''',
+  '''sk-or-v1-0000000000secret''',
+  '''sk-or-v1-000000000000abcd''',
+]
