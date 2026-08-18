@@ -39,6 +39,7 @@ EN: dict[str, str] = {
     "unmuted": "I'm baaack! 🎉 You missed me, right?",
     "error_reply": "Ugh... my brain flew to the Moon and didn't come back 😵‍💫 say that again?",
     "budget_stopped": "I've burned through today's allowance~ back tomorrow! 💸",
+    "no_credit": "my magic ran out of credit 😭 someone needs to top up the API account!",
     "status": (
         "My status:\n"
         "• mode: {mode}   • muted: {muted}\n"
@@ -102,6 +103,7 @@ FA: dict[str, str] = {
     "unmuted": "برگشتممم! 🎉 دلتون تنگ شده بود نه؟",
     "error_reply": "اوه... مغزم یه لحظه رفت رو ماه و برنگشت 😵‍💫 یه بار دیگه بگو؟",
     "budget_stopped": "سهمیهٔ امروزم تموم شد~ فردا برمی‌گردم! 💸",
+    "no_credit": "کردیت جادوم ته کشید 😭 یکی حساب OpenRouter رو شارژ کنه!",
     "status": (
         "وضعیت من:\n"
         "• حالت: {mode}   • ساکت: {muted}\n"

@@ -247,10 +247,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply = polish(result.text or "")
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
-            now = time.monotonic()
-            if addressed and now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
-                state.error_notice_at = now
-                await send_reply(message, rt.strings("error_reply"))
+            if addressed:
+                await _announce_failure(rt, state, message, result)
             return
 
         state.add_assistant(reply)
@@ -265,6 +263,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if settings.summaries:
         context.application.create_task(_summarize(rt, state))
+
+
+async def _announce_failure(rt: Runtime, state: ChatState, message, result: ChatResult) -> None:
+    """Say what went wrong, rarely enough that an outage cannot flood the chat."""
+    now = time.monotonic()
+    if result.error_kind == "payment":
+        # Nothing the chat can do about it, and it will not clear on its own.
+        if now - state.budget_notice_at > 3600:
+            state.budget_notice_at = now
+            await send_reply(message, rt.strings("no_credit"))
+        return
+    if now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
+        state.error_notice_at = now
+        await send_reply(message, rt.strings("error_reply"))
 
 
 def _should_join(rt: Runtime, state: ChatState, kind: str) -> bool:

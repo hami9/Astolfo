@@ -337,3 +337,32 @@ async def test_apology_returns_after_the_window(rt, llm):
     await run(rt, second)
 
     assert first.sent and second.sent
+
+
+async def test_out_of_credit_says_so_instead_of_the_generic_apology(rt, llm):
+    from astolfo.llm import ChatResult
+
+    async def broke(messages, **kwargs):
+        llm.calls.append({"messages": messages, **kwargs})
+        return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
+
+    llm.chat = broke
+    message = FakeMessage("astolfo hi")
+    await run(rt, message)
+
+    assert message.sent == [rt.strings("no_credit")]
+    assert rt.strings("no_credit") != rt.strings("error_reply")
+
+
+async def test_out_of_credit_notice_is_rare(rt, llm):
+    from astolfo.llm import ChatResult
+
+    async def broke(messages, **kwargs):
+        return ChatResult(error="HTTP 402", error_kind="payment")
+
+    llm.chat = broke
+    first, second = FakeMessage("astolfo hi"), FakeMessage("astolfo hello")
+    await run(rt, first)
+    await run(rt, second)
+
+    assert first.sent and not second.sent, "credit runs out once, not every message"
