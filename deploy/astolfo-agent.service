@@ -1,0 +1,8 @@
+[Unit]
+Description=Astolfo privileged helper (restart and update)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/astolfo/deploy/astolfo-agent.sh
+TimeoutStartSec=300

@@ -331,6 +331,18 @@ class Database:
     def clear_override(self, key: str) -> None:
         self.execute("DELETE FROM settings WHERE key = ?", (key,))
 
+    # The bot's own bookkeeping shares the settings table, under names that start
+    # with an underscore so the settings layer knows to leave them alone.
+    def set_note(self, key: str, value: str) -> None:
+        self.set_override(f"_{key}", value)
+
+    def note(self, key: str) -> str:
+        row = self.one("SELECT value FROM settings WHERE key = ?", (f"_{key}",))
+        return str(row["value"]) if row else ""
+
+    def clear_note(self, key: str) -> None:
+        self.clear_override(f"_{key}")
+
     # -- secrets ----------------------------------------------------------
     def secret(self, name: str) -> bytes | None:
         row = self.one("SELECT value FROM secrets WHERE name = ?", (name,))

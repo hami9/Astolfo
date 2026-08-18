@@ -21,7 +21,17 @@ from telegram.ext import (
     filters,
 )
 
-from . import admin, chat, commands, donate, media, membership, runtime, settings_store
+from . import (
+    admin,
+    chat,
+    commands,
+    donate,
+    media,
+    membership,
+    runtime,
+    server_ops,
+    settings_store,
+)
 from .config import ConfigError, Settings
 from .runtime import Runtime
 
@@ -94,7 +104,22 @@ async def post_init(app: Application) -> None:
 
     me = await app.bot.get_me()
     log.info("started as @%s (%s)", me.username, me.id)
+    await _report_restart(app, rt)
     app.bot_data["autosave"] = asyncio.create_task(_autosave(rt))
+
+
+async def _report_restart(app: Application, rt: Runtime) -> None:
+    """Tell whoever asked for an update how it went, once the bot is back."""
+    who = rt.db.note("report_to")
+    if not who:
+        return
+    rt.db.clear_note("report_to")
+
+    outcome = server_ops.last_result(rt.settings.data_dir) or "back up"
+    with contextlib.suppress(Exception):
+        await app.bot.send_message(
+            chat_id=int(who), text=f"✅ back up~\n{outcome}\nrunning {server_ops.commit()}"
+        )
 
 
 async def post_shutdown(app: Application) -> None:

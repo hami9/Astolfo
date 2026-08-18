@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from telegram import Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from .. import runtime, settings_store
+from .. import runtime, server_ops, settings_store
 from ..config import ConfigError
 from ..crypto import SecretsUnavailable
 from ..providers import PRESETS
-from . import sections
+from . import sections, server
 from .guard import allowed, audit
 from .sections import View
 from .ui import PREFIX
@@ -147,6 +147,16 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
         if len(rest) > 2 and rest[1] == "block":
             return sections.person_block(ctx, user_id, blocked=rest[2] == "1")
         return sections.person_detail(ctx, user_id)
+
+    if head == "srv":
+        action = rest[0] if rest else ""
+        if action == "check":
+            return server.check(ctx)
+        if action == "log":
+            return server.log(ctx)
+        if action.rstrip("!") in server_ops.ACTIONS:
+            return server.job(ctx, action.rstrip("!"), confirmed=action.endswith("!"))
+        return server.overview(ctx)
 
     if head == "data":
         action = rest[0] if rest else ""

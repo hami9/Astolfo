@@ -105,8 +105,15 @@ else
 fi
 
 chmod 600 "$ENV_FILE"
-mkdir -p "$APP_DIR/data"
+mkdir -p "$APP_DIR/data/control"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+chmod 700 "$APP_DIR/data"
+
+# The panel shows the service log. Reading the journal needs group membership,
+# which is a good deal cheaper than running the bot with more privileges.
+if getent group systemd-journal >/dev/null; then
+  usermod -aG systemd-journal "$APP_USER"
+fi
 
 echo "==> installing the systemd service"
 cat > "$SERVICE" <<EOF
@@ -132,7 +139,18 @@ ProtectHome=true
 WantedBy=multi-user.target
 EOF
 
+echo "==> installing the privileged helper"
+# The bot cannot restart or update itself: it runs unprivileged, and it stays
+# that way. It leaves one word in data/control/request and this helper, started
+# by the path unit below, is the only thing that acts on it.
+chmod 755 "$APP_DIR/deploy/astolfo-agent.sh"
+sed "s#/opt/astolfo#$APP_DIR#g" "$APP_DIR/deploy/astolfo-agent.service" \
+  > /etc/systemd/system/astolfo-agent.service
+sed "s#/opt/astolfo#$APP_DIR#g" "$APP_DIR/deploy/astolfo-agent.path" \
+  > /etc/systemd/system/astolfo-agent.path
+
 systemctl daemon-reload
+systemctl enable --now astolfo-agent.path
 systemctl enable astolfo
 # restart, not `enable --now`: --now only starts a stopped service, so re-running
 # this script would pull new code and leave the old process serving it.

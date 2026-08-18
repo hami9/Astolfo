@@ -67,7 +67,7 @@ def home(ctx) -> View:
         keyboard(
             [button("🔑 keys", "keys"), button("⚙️ settings", "cfg")],
             [button("💬 groups", "chats"), button("👤 people", "ppl")],
-            [button("🗄 data", "data")],
+            [button("🖥 server", "srv"), button("🗄 data", "data")],
         ),
     )
 

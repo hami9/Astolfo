@@ -23,9 +23,11 @@ log = logging.getLogger(__name__)
 # database out from under itself, or hand the panel to somebody else.
 LOCKED = frozenset({"telegram_token", "data_dir", "master_id", "master_username"})
 
-# Keys live in the secrets table, encrypted, never in the settings table.
+# What every setting is worth before anyone touches it, used to tell an explicit
+# choice apart from a value that simply was never set.
 _DEFAULTS = Settings()
 
+# Keys live in the secrets table, encrypted, never in the settings table.
 SECRET_ENV = (
     "OPENROUTER_API_KEY",
     "GOOGLE_API_KEY",
@@ -66,6 +68,8 @@ def apply(settings: Settings, overrides: dict[str, str]) -> Settings:
     allowed = editable()
     values: dict[str, Any] = {}
     for key, raw in overrides.items():
+        if key.startswith("_"):
+            continue  # the bot's own bookkeeping, not a setting
         if key not in allowed:
             log.warning("ignoring stored setting %r: not a setting the bot has", key)
             continue
