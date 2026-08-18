@@ -189,7 +189,7 @@ class _VisionLLM:
         self.vision = vision
         self.calls: list[dict] = []
 
-    def resolve(self, model, *, vision=False):
+    def resolve(self, model, *, vision=False, audio=False):
         return model
 
     def supports_free_vision(self) -> bool:
@@ -455,4 +455,20 @@ async def test_startup_log_names_the_model_that_reads_media(settings):
     assert client.resolve("anything", vision=True) == "free/vision"
     assert client.resolve("anything", audio=True) == "free/omni-audio"
     assert client.resolve("anything") == "free/text-large"
+    await client.aclose()
+
+
+async def test_fallback_chain_respects_the_api_limit(settings):
+    """OpenRouter rejects a `models` array longer than three entries."""
+    bodies: list[dict] = []
+    client = _catalog_client(free_settings(settings), chat_body=bodies)
+    await client.load_catalog()
+
+    assert len(client.free_pool()) > 3, "the pool must be longer than the cap to matter"
+    await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    chain = bodies[0]["models"]
+    assert len(chain) <= 3
+    assert chain[0] == bodies[0]["model"]
+    assert len(set(chain)) == len(chain), "no duplicates in the chain"
     await client.aclose()

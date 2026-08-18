@@ -21,6 +21,9 @@ NOT_CONVERSATIONAL = ("content-safety", "guard", "moderation", "embed", "rerank"
 
 # How long a free model is skipped after it turns us away. A per-minute limit
 # clears quickly; an exhausted daily quota does not.
+# OpenRouter rejects a longer `models` chain outright.
+MAX_FALLBACKS = 3
+
 RATE_LIMIT_COOLDOWN = 600.0
 QUOTA_COOLDOWN = 6 * 3600.0
 
@@ -255,10 +258,12 @@ class LLMClient:
         }
         if fallbacks:
             # OpenRouter tries these in order when the first is rate limited or
-            # errors, which is what keeps a rationed free model usable.
+            # errors, which is what keeps a rationed free model usable. The API
+            # rejects more than MAX_FALLBACKS entries, counting the primary.
             alternatives = self.free_pool() if self._s.free_mode else self._s.fallback_models
             if alternatives:
-                payload["models"] = [model] + [m for m in alternatives if m != model][:5]
+                chain = [model] + [m for m in alternatives if m != model]
+                payload["models"] = chain[:MAX_FALLBACKS]
         if reasoning:
             payload["reasoning"] = reasoning
         if web and self._s.web_search:
