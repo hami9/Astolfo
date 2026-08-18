@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger(__name__)
+
 EN: dict[str, str] = {
     "greeting": (
         "Yahoo! 👋 I'm Astolfo, legendary rider, strongest... okay fine, weakest paladin, "
@@ -135,9 +139,20 @@ FA: dict[str, str] = {
 TABLES = {"en": EN, "fa": FA}
 
 
+def normalize_locale(raw: str | None) -> str:
+    """Accept sloppy values like "fa en", " FA " or "fa_IR" and warn on the rest."""
+    token = (raw or "").strip().lower().replace("_", "-").split()
+    candidate = token[0].split("-")[0] if token else ""
+    if candidate in TABLES:
+        return candidate
+    if raw and raw.strip():
+        log.warning("BOT_LANG=%r is not a supported language, falling back to en", raw)
+    return "en"
+
+
 class Strings:
     def __init__(self, locale: str = "en") -> None:
-        self.locale = locale if locale in TABLES else "en"
+        self.locale = normalize_locale(locale)
         self._table = TABLES[self.locale]
 
     def __call__(self, key: str, **kwargs) -> str:

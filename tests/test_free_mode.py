@@ -238,3 +238,20 @@ def test_status_reports_the_pool(rt):
     rt.llm.free_pool = lambda **kw: ["a", "b"]
     rt.llm.supports_free_vision = lambda: True
     assert _billing_label(rt) == "free models (2 available, with images)"
+
+
+def test_locale_is_forgiving_but_not_silent(caplog):
+    from astolfo.strings import Strings, normalize_locale
+
+    assert normalize_locale("fa") == "fa"
+    assert normalize_locale("fa en") == "fa", "a stray second word must not lose Persian"
+    assert normalize_locale("  FA  ") == "fa"
+    assert normalize_locale("fa_IR") == "fa"
+    assert normalize_locale("") == "en"
+    assert normalize_locale(None) == "en"
+
+    with caplog.at_level("WARNING"):
+        assert normalize_locale("klingon") == "en"
+    assert "not a supported language" in caplog.text
+
+    assert Strings("fa en").locale == "fa"
