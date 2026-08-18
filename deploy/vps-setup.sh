@@ -25,6 +25,21 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq git ffmpeg python3 python3-venv python3-pip ca-certificates
 
+# A 1 GB box has little headroom once apt, pip and ffmpeg run; a small swapfile
+# keeps the OOM killer away. Containerised VPS types often forbid this, so any
+# failure here is reported and ignored rather than aborting the install.
+RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+if [ "$RAM_MB" -lt 2048 ] && [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
+  echo "==> adding a 1 GB swapfile (detected ${RAM_MB} MB of RAM)"
+  if { fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none; } \
+     && chmod 600 /swapfile && mkswap -q /swapfile && swapon /swapfile; then
+    grep -q "^/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
+  else
+    rm -f /swapfile
+    echo "    could not enable swap on this server type, continuing without it"
+  fi
+fi
+
 echo "==> creating service user"
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
 
