@@ -12,6 +12,10 @@ from astolfo.admin import server as server_section
 from tests.conftest import FakeBot
 
 
+def _no_network(settings, registry=None):
+    return SimpleNamespace(providers=[])
+
+
 def _ctx(rt):
     return SimpleNamespace(rt=rt, user=SimpleNamespace(id=4242), bot=FakeBot())
 
@@ -59,7 +63,7 @@ async def test_restarting_takes_a_second_press(settings, monkeypatch):
     from astolfo import runtime as runtime_mod
     from astolfo.runtime import Runtime
 
-    monkeypatch.setattr(runtime_mod, "LLMClient", lambda s: SimpleNamespace(providers=[]))
+    monkeypatch.setattr(runtime_mod, "LLMClient", _no_network)
     rt = Runtime.build(settings)
     ctx = _ctx(rt)
 
@@ -77,7 +81,7 @@ async def test_an_update_leaves_a_note_to_report_back(settings, monkeypatch):
     from astolfo import runtime as runtime_mod
     from astolfo.runtime import Runtime
 
-    monkeypatch.setattr(runtime_mod, "LLMClient", lambda s: SimpleNamespace(providers=[]))
+    monkeypatch.setattr(runtime_mod, "LLMClient", _no_network)
     rt = Runtime.build(settings)
 
     server_section.job(_ctx(rt), "update", confirmed=True)

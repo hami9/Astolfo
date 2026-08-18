@@ -86,12 +86,17 @@ def cacheable_system(text: str, model: str, enabled: bool) -> dict[str, Any]:
 
 class LLMClient:
     def __init__(
-        self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None
+        self,
+        settings: Settings,
+        transport: httpx.AsyncBaseTransport | None = None,
+        registry=None,
     ) -> None:
         self._s = settings
         self._transport = transport
+        self._registry = registry
+        stored = registry.rows() if registry else None
         self.providers = providers_mod.discover(
-            settings.providers, fallback_key=settings.api_key
+            settings.providers, fallback_key=settings.api_key, stored=stored
         )
         if not self.providers:
             # Nothing named a key, so fall back to the plain single-service setup.
@@ -99,13 +104,14 @@ class LLMClient:
                 providers_mod.Provider(
                     name="openrouter",
                     base_url=settings.api_base,
-                    api_key=settings.api_key,
+                    credentials=[providers_mod.Credential(value=settings.api_key)],
                     key_env="OPENROUTER_API_KEY",
                     discovers_free_models=True,
                     openrouter_extensions=True,
                 )
             ]
-        for unknown in providers_mod.unknown_names(settings.providers):
+        self._restore_rests(stored)
+        for unknown in providers_mod.unknown_names(settings.providers, stored):
             log.warning("unknown provider %r in PROVIDERS, ignoring", unknown)
         if len(self.providers) > 1:
             log.info("providers: %s", ", ".join(p.name for p in self.providers))
@@ -121,11 +127,12 @@ class LLMClient:
         self._pace_lock = asyncio.Lock()
 
     def _build_client(self, provider: providers_mod.Provider) -> httpx.AsyncClient:
+        # No Authorization here: a service can hold several keys, so the header
+        # belongs to the request rather than to the connection pool.
         return httpx.AsyncClient(
             transport=self._transport,
             timeout=httpx.Timeout(self._s.request_timeout, connect=20.0),
             headers={
-                "Authorization": f"Bearer {provider.api_key}",
                 "Content-Type": "application/json",
                 "HTTP-Referer": self._s.app_url,
                 "X-Title": self._s.app_title,
@@ -133,12 +140,64 @@ class LLMClient:
             limits=httpx.Limits(max_connections=40, max_keepalive_connections=15),
         )
 
+    @staticmethod
+    def _auth(credential: providers_mod.Credential) -> dict[str, str]:
+        return {"Authorization": f"Bearer {credential.value}"}
+
+    def _rest_credential(
+        self, credential: providers_mod.Credential, seconds: float, error: str
+    ) -> None:
+        credential.rested_until = time.time() + seconds
+        credential.last_error = error
+        if self._registry:
+            self._registry.rest_credential(credential.id, seconds, error)
+            self._registry.note_use(credential.id, failed=True)
+
+    def _note_result(
+        self,
+        provider: providers_mod.Provider,
+        credential: providers_mod.Credential,
+        result: ChatResult,
+    ) -> None:
+        """Book the call against the key that made it and the service it went to."""
+        if not self._registry:
+            return
+        credential.last_error = ""
+        self._registry.note_use(credential.id)
+        self._registry.note_ok(credential.id)
+        self._registry.record_call(
+            provider.name, tokens=result.usage.total_tokens, cost=result.usage.cost
+        )
+
+    def _restore_rests(self, stored: list[dict] | None) -> None:
+        """Carry stored rest windows into this run.
+
+        They are kept as wall clock and compared here against the monotonic clock
+        the rest of the client uses, so a quota that runs until tomorrow is still
+        known after a restart tonight.
+        """
+        if not stored:
+            return
+        now, monotonic = time.time(), time.monotonic()
+        by_name = {row["name"]: row for row in stored}
+        for provider in self.providers:
+            remaining = float(by_name.get(provider.name, {}).get("rested_until") or 0.0) - now
+            if remaining > 0:
+                provider.paused_until = monotonic + remaining
+                log.info(
+                    "%s is still resting for %.0f minutes", provider.name, remaining / 60
+                )
+
     def _live_providers(self) -> list[providers_mod.Provider]:
         now = time.monotonic()
         return [p for p in self.providers if p.paused_until <= now]
 
-    def _pause_provider(self, provider: providers_mod.Provider, seconds: float) -> None:
+    def _pause_provider(
+        self, provider: providers_mod.Provider, seconds: float, error: str = ""
+    ) -> None:
         provider.paused_until = max(provider.paused_until, time.monotonic() + seconds)
+        if self._registry:
+            self._registry.rest_service(provider.name, seconds, error)
         others = [p.name for p in self._live_providers()]
         log.warning(
             "%s is out of allowance, resting it for %.0fs%s",
@@ -222,7 +281,11 @@ class LLMClient:
         listing is the cheapest way to find out at startup instead.
         """
         try:
-            resp = await self._clients[provider.name].get(provider.models_url, timeout=20.0)
+            credential = provider.pick(time.time())
+            headers = self._auth(credential) if credential else {}
+            resp = await self._clients[provider.name].get(
+                provider.models_url, timeout=20.0, headers=headers
+            )
             resp.raise_for_status()
             offered = {m["id"] for m in resp.json().get("data", []) if m.get("id")}
         except Exception as exc:
@@ -265,7 +328,12 @@ class LLMClient:
             return
         client = self._clients[discovering.name]
         try:
-            resp = await client.get(discovering.models_url, timeout=25.0)
+            credential = discovering.pick(time.time())
+            resp = await client.get(
+                discovering.models_url,
+                timeout=25.0,
+                headers=self._auth(credential) if credential else {},
+            )
             resp.raise_for_status()
             entries = resp.json().get("data", [])
         except Exception as exc:
@@ -611,9 +679,17 @@ class LLMClient:
             retries = max(retries, min(len(self._all_free(vision=vision, audio=audio)), 5))
         # A short retry budget must not cut a service's model list short.
         retries = max(retries, len(self._candidates(provider, model, vision=vision, audio=audio)))
+        # Every key at this service is worth an attempt of its own.
+        retries = max(retries, len(provider.credentials))
         tried: set[str] = set()
         delay = 1.5
         last_error = "unknown"
+
+        credential = provider.pick(time.time())
+        if credential is None:
+            return ChatResult(
+                error=f"{provider.name} has no usable key right now", error_kind="auth"
+            )
 
         for attempt in range(1, retries + 1):
             tried.add(model)
@@ -630,7 +706,9 @@ class LLMClient:
                 fallbacks=fallbacks,
             )
             try:
-                resp = await client.post(provider.chat_url, json=payload)
+                resp = await client.post(
+                    provider.chat_url, json=payload, headers=self._auth(credential)
+                )
 
                 if resp.status_code == 429 or resp.status_code >= 500:
                     last_error = f"HTTP {resp.status_code}"
@@ -685,21 +763,27 @@ class LLMClient:
                     return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
 
                 if resp.status_code in (401, 403):
-                    # A key that is refused now will be refused all evening, so the
-                    # service steps aside for the rest of the run.
+                    detail = f"HTTP {resp.status_code}: the key was refused"
                     log.error(
-                        "%s refused the key (%s), check %s",
+                        "%s refused a key (%s)%s",
                         provider.name,
                         resp.status_code,
-                        provider.key_env or "the API key",
+                        f" [{credential.label}]" if credential.label else "",
                     )
+                    self._rest_credential(credential, AUTH_COOLDOWN, detail)
+
+                    spare = provider.next_key(credential, time.time())
+                    if spare is not None:
+                        log.info("%s: trying the next key", provider.name)
+                        credential = spare
+                        continue
+
                     if len(self.providers) > 1:
                         # With nothing else to fall back on, keep trying: a lone
                         # service silenced for a day is worse than a wasted call.
-                        self._pause_provider(provider, AUTH_COOLDOWN)
-                    return ChatResult(
-                        error=f"HTTP {resp.status_code}: invalid API key", error_kind="auth"
-                    )
+                        self._pause_provider(provider, AUTH_COOLDOWN, detail)
+                    log.error("check %s or set a key from the panel", provider.key_env)
+                    return ChatResult(error=detail, error_kind="auth")
 
                 if resp.status_code == 404:
                     # Model ids differ between services and change over time, so
@@ -737,6 +821,7 @@ class LLMClient:
 
                 result = self._parse(data)
                 if result.ok:
+                    self._note_result(provider, credential, result)
                     self._scores[model] = min(self._scores.get(model, 0) + 1, 3)
                     if self._s.free_mode and attempt > 1:
                         log.info("answered by %s after %d attempts", model, attempt)

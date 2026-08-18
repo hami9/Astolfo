@@ -17,11 +17,13 @@ from tests.conftest import FakeBot, FakeContext, FakeMessage, make_update
 MASTER = 4242
 
 
+def _no_network(settings, registry=None):
+    return SimpleNamespace(providers=[], resolve=lambda model, **kwargs: model)
+
+
 @pytest.fixture
 def owned(settings, monkeypatch) -> Runtime:
-    monkeypatch.setattr(
-        runtime_mod, "LLMClient", lambda s: SimpleNamespace(providers=[], resolve=lambda m, **k: m)
-    )
+    monkeypatch.setattr(runtime_mod, "LLMClient", _no_network)
     monkeypatch.setenv("MASTER_ID", str(MASTER))
     return Runtime.build(settings.replace(master_id=MASTER))
 

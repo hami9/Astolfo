@@ -142,3 +142,77 @@ def test_message_text_never_reaches_the_database(settings):
             continue
         with open(os.path.join(settings.data_dir, name), "rb") as fh:
             assert b"4111" not in fh.read(), f"message text leaked into {name}"
+
+
+# -- services and credentials --------------------------------------------
+def test_a_service_can_hold_more_than_one_key(settings):
+    db = open_database(settings.data_dir)
+    first = db.add_credential("google", b"cipher-one", label="old")
+    second = db.add_credential("google", b"cipher-two", label="new")
+
+    rows = db.credentials("google")
+    assert [row["id"] for row in rows] == [first, second], "in the order they were added"
+    assert [row["position"] for row in rows] == [0, 1]
+    assert db.credential(second)["label"] == "new"
+
+
+def test_a_key_carries_its_own_state(settings):
+    db = open_database(settings.data_dir)
+    key = db.add_credential("google", b"cipher")
+
+    db.count_credential_use(key)
+    db.count_credential_use(key, failed=True)
+    db.update_credential(key, last_error="the key was refused", enabled=0)
+
+    row = db.credential(key)
+    assert (row["requests"], row["failures"]) == (1, 1)
+    assert row["last_error"] == "the key was refused"
+    assert row["enabled"] == 0
+    assert row["last_used"] > 0
+
+
+def test_deleting_a_service_takes_its_keys_with_it(settings):
+    db = open_database(settings.data_dir)
+    db.save_service("together", base_url="https://api.together.xyz/v1", custom=1)
+    db.add_credential("together", b"cipher")
+
+    db.delete_service("together")
+    assert db.service("together") is None
+    assert db.credentials("together") == []
+
+
+def test_services_keep_the_order_they_were_given(settings):
+    db = open_database(settings.data_dir)
+    for name in ("openrouter", "google", "groq"):
+        db.save_service(name)
+    db.save_service("groq", position=0)
+
+    assert [row["name"] for row in db.services()][0] == "groq"
+
+
+def test_usage_is_added_up_per_service_per_day(settings):
+    db = open_database(settings.data_dir)
+    db.add_service_usage("2026-08-18", "google", requests=1, tokens=100, cost=0.001)
+    db.add_service_usage("2026-08-18", "google", requests=1, failures=1, tokens=50)
+    db.add_service_usage("2026-08-19", "google", requests=1)
+
+    today = db.service_usage("2026-08-18")["google"]
+    assert (today["requests"], today["failures"], today["tokens"]) == (2, 1, 150)
+    assert today["cost"] == 0.001
+    assert db.service_usage("2026-08-19")["google"]["requests"] == 1
+
+
+def test_keys_saved_under_the_old_scheme_are_carried_over(settings, monkeypatch):
+    """An install from before this change must not lose its keys."""
+    db = open_database(settings.data_dir)
+    db.execute("PRAGMA user_version=1")
+    db.set_secret("OPENROUTER_API_KEY", b"cipher-or")
+    db.set_secret("GOOGLE_API_KEY", b"cipher-g")
+    db.set_secret("SOMETHING_ELSE", b"not-a-provider-key")
+    db.close()
+
+    upgraded = open_database(settings.data_dir)
+    assert upgraded.query("PRAGMA user_version")[0][0] == SCHEMA_VERSION
+    assert upgraded.credentials("openrouter")[0]["value"] == b"cipher-or"
+    assert upgraded.credentials("google")[0]["value"] == b"cipher-g"
+    assert upgraded.credentials("something_else") == []

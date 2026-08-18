@@ -19,8 +19,9 @@ MASTER = 4242
 class _Client:
     """No network during a reconfigure."""
 
-    def __init__(self, settings) -> None:
+    def __init__(self, settings, registry=None) -> None:
         self.settings = settings
+        self.registry = registry
         self.providers = [SimpleNamespace(name="openrouter")]
         self.probed: list[str] = []
 
