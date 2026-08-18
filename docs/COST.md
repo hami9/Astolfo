@@ -112,10 +112,21 @@ an extra call per message rather than everything that costs tokens:
 
 Any variable you set explicitly still wins over the preset.
 
-**Images and GIFs still work** when the catalog contains a free model that accepts
-image input; GIFs and videos are sampled into still frames first, so they need image
-support rather than video support. When no free vision model exists the attachment is
-dropped and the bot says it cannot see it, instead of sending images to a text-only
-model. Voice messages always need a paid model.
+Selection is by capability, not just price. A model qualifies only if every priced
+dimension is zero *and* its whole output is text — generators advertise themselves as
+`text+image->text+audio`, so a music model reports text output too and would otherwise
+rank first on context length — and classifier and retrieval models are skipped by name.
+
+**Models rotate as their allowances run out.** A rate limit or an exhausted quota puts
+that model to rest (ten minutes for a rate limit, six hours for a quota) and the turn
+continues on the next model immediately, without waiting. A resting model is skipped on
+later messages until its cooldown passes, and only when the whole pool is spent does the
+bot report that it has run out.
+
+**Images, GIFs and voice work** whenever the catalog offers a free model with the right
+input. GIFs and videos are sampled into still frames first, so they need image support
+rather than video support, and some free models accept audio, so voice messages can work
+too. When nothing in the pool can read an attachment it is dropped and the bot says so
+honestly rather than failing the turn.
 
 `/status` reports which pool is in use and whether images are available.
