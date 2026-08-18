@@ -23,6 +23,7 @@ from .text import (
     clean_name,
     format_sources,
     is_addressed,
+    looks_broken,
     polish,
     split_message,
     typing_indicator,
@@ -99,7 +100,10 @@ def build_messages(
     settings = rt.settings
     has_media = bundle.has_content or bool(bundle.notes)
 
-    static_block = persona.static_prompt(is_group=is_group, locale=resolve_locale(rt, state))
+    locale = resolve_locale(rt, state)
+    # Free models are small and drown in the full layered prompt.
+    build = persona.compact_prompt if settings.free_mode else persona.static_prompt
+    static_block = build(is_group=is_group, locale=locale)
     messages: list[dict] = [
         cacheable_system(static_block, model, settings.prompt_cache_control),
         {
@@ -248,18 +252,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 bot_name=(bot_user.first_name if bot_user else "Astolfo"),
                 model=params["model"],
             )
-            result: ChatResult = await rt.llm.chat(
-                messages,
-                model=params["model"],
-                temperature=params["temperature"],
-                max_tokens=params["max_tokens"],
-                reasoning=params["reasoning"],
-                web=decision.web,
-            )
+            call = {
+                "model": params["model"],
+                "temperature": params["temperature"],
+                "max_tokens": params["max_tokens"],
+                "reasoning": params["reasoning"],
+                "web": decision.web,
+            }
+            result: ChatResult = await rt.llm.chat(messages, **call)
             rt.record(mode=decision.mode, model=result.model or params["model"],
                       usage=result.usage, chat_id=chat.id)
 
-        reply = polish(result.text or "")
+            reply = polish(result.text or "")
+            # Small models leak the prompt or parrot the question. One more go on a
+            # different model is cheaper than sending that to the chat.
+            if settings.free_mode and result.ok:
+                fault = looks_broken(reply, echoes=text, previous=_last_reply(state))
+                if fault:
+                    log.info("chat %s: %s returned a reply that %s, retrying",
+                             chat.id, result.model, fault)
+                    rt.llm.mark_unusable(result.model)
+                    result = await rt.llm.chat(messages, **call)
+                    rt.record(mode=decision.mode, model=result.model or params["model"],
+                              usage=result.usage, chat_id=chat.id)
+                    reply = polish(result.text or "")
+                    if looks_broken(reply, echoes=text, previous=_last_reply(state)):
+                        rt.llm.mark_unusable(result.model)
+                        reply = ""
+
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
             if addressed:
@@ -292,6 +312,13 @@ async def _announce_failure(rt: Runtime, state: ChatState, message, result: Chat
     if now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
         state.error_notice_at = now
         await send_reply(message, rt.strings("error_reply"))
+
+
+def _last_reply(state: ChatState) -> str:
+    for turn in reversed(state.history):
+        if turn.get("role") == "assistant":
+            return str(turn.get("content") or "")
+    return ""
 
 
 def _can_read_media(rt: Runtime, bundle: media_mod.MediaBundle) -> bool:

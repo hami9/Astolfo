@@ -24,6 +24,15 @@ _AI_ISM = re.compile(
 )
 _BLANK_LINES = re.compile(r"\n{3,}")
 
+# Small models sometimes echo the scaffolding instead of answering through it.
+_PROMPT_LEAK = re.compile(
+    r"(<identity>|</identity>|<voice>|<canon-anchors|<never>|<truthfulness"
+    r"|<response-mode|<chat-context|<examples>|<output>|<media>"
+    r"|absolute rules:|how you write:)",
+    re.I,
+)
+_ROLE_PREFIX = re.compile(r"^\s*(system|user|assistant)\s*:", re.I)
+
 
 def clean_name(raw: str | None) -> str:
     name = (raw or "user").replace("\n", " ").strip()
@@ -116,3 +125,26 @@ async def typing_indicator(bot, chat_id: int, action: str = ChatAction.TYPING):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
+
+
+def looks_broken(reply: str, *, echoes: str = "", previous: str = "") -> str | None:
+    """Why this reply is unusable, or None when it is fine.
+
+    Weak models fail in recognisable ways: they quote the prompt back, answer in
+    the transcript format they were shown, repeat the question, or repeat their own
+    last line. Each is worth another model rather than sending to the chat.
+    """
+    body = (reply or "").strip()
+    if not body:
+        return "empty"
+    if _PROMPT_LEAK.search(body):
+        return "leaked the prompt"
+    if _ROLE_PREFIX.match(body):
+        return "answered in transcript format"
+
+    folded = " ".join(body.lower().split())
+    if echoes and folded == " ".join(echoes.lower().split()):
+        return "echoed the message"
+    if previous and folded == " ".join(previous.lower().split()):
+        return "repeated its previous reply"
+    return None

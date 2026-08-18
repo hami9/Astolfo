@@ -571,3 +571,101 @@ async def test_a_silent_model_rests_for_later_messages(settings, monkeypatch):
 
     assert "free/text-large" not in seen, "a silent model is skipped on the next message"
     await client.aclose()
+
+
+# -- quality guards for small models --------------------------------------
+def test_compact_persona_is_small_enough_for_a_small_model():
+    from astolfo import persona
+
+    full = persona.static_prompt(locale="fa")
+    compact = persona.compact_prompt(locale="fa")
+
+    assert len(compact) < len(full) / 4, "the point is to fit a small context"
+    lowered = compact.lower()
+    for essential in ("astolfo", "newest message", "no markdown", "never invent"):
+        assert essential in lowered, f"compact prompt dropped {essential!r}"
+    assert "<identity>" not in compact, "no tag scaffolding for a model that copies it"
+
+
+def test_compact_persona_keeps_one_example_in_the_right_language():
+    from astolfo import persona
+
+    assert "آستولفو" in persona.compact_prompt(locale="fa")
+    assert "آستولفو" not in persona.compact_prompt(locale="en")
+    assert "[teasing]" not in persona.compact_prompt(locale="fa"), "one example, not four"
+
+
+async def test_free_mode_sends_the_compact_persona(rt, llm):
+    rt.settings = rt.settings.replace(free_mode=True)
+    await chat.handle_message(
+        make_update(FakeMessage("astolfo hey")), FakeContext(rt, FakeBot())
+    )
+    assert "<identity>" not in llm.calls[0]["messages"][0]["content"]
+
+    rt.settings = rt.settings.replace(free_mode=False)
+    llm.calls.clear()
+    await chat.handle_message(
+        make_update(FakeMessage("astolfo hey", chat_id=-200)), FakeContext(rt, FakeBot())
+    )
+    assert "<identity>" in llm.calls[0]["messages"][0]["content"]
+
+
+async def test_a_reply_that_leaks_the_prompt_is_retried_elsewhere(rt, llm):
+    rt.settings = rt.settings.replace(free_mode=True)
+    replies = iter(["<identity> You are Astolfo, the Rider", "ehehe~ hi!"])
+    rested: list[str] = []
+
+    async def flaky(messages, **kwargs):
+        from astolfo.llm import ChatResult
+
+        llm.calls.append({"messages": messages, **kwargs})
+        return ChatResult(text=next(replies), model=f"free/m{len(llm.calls)}", usage=llm.usage)
+
+    llm.chat = flaky
+    llm.mark_unusable = lambda model, *a, **k: rested.append(model)
+
+    message = FakeMessage("astolfo hey")
+    await chat.handle_message(make_update(message), FakeContext(rt, FakeBot()))
+
+    assert len(llm.calls) == 2, "the broken reply was not sent, another model was asked"
+    assert message.sent == ["ehehe~ hi!"]
+    assert rested == ["free/m1"], "the leaking model was retired"
+
+
+async def test_two_broken_replies_do_not_reach_the_chat(rt, llm):
+    rt.settings = rt.settings.replace(free_mode=True)
+
+    async def always_broken(messages, **kwargs):
+        from astolfo.llm import ChatResult
+
+        llm.calls.append({"messages": messages, **kwargs})
+        return ChatResult(text="assistant: hello", model="free/bad", usage=llm.usage)
+
+    llm.chat = always_broken
+    llm.mark_unusable = lambda *a, **k: None
+
+    message = FakeMessage("astolfo hey")
+    await chat.handle_message(make_update(message), FakeContext(rt, FakeBot()))
+
+    assert len(llm.calls) == 2, "one retry, then give up"
+    assert message.sent == [rt.strings("error_reply")], "garbage is never forwarded"
+
+
+async def test_paid_mode_does_not_second_guess_replies(rt, llm):
+    llm.reply = "assistant: hello"  # would be rejected in free mode
+    message = FakeMessage("astolfo hey")
+    await chat.handle_message(make_update(message), FakeContext(rt, FakeBot()))
+
+    assert len(llm.calls) == 1
+    assert message.sent, "paid models are trusted, no extra call"
+
+
+async def test_misbehaving_models_sink_in_the_pool(settings):
+    client = _catalog_client(free_settings(settings))
+    await client.load_catalog()
+
+    best = client.free_pool()[0]
+    client.mark_unusable(best, seconds=0.0)  # rested, but instantly available again
+
+    assert client.free_pool()[0] != best, "a model that misbehaved is no longer first"
+    assert best in client.free_pool(), "but it stays available as a last resort"

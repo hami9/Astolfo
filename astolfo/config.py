@@ -152,6 +152,12 @@ class Settings:
     video_frames: int = _env("VIDEO_FRAMES", default=4)
     max_audio_seconds: int = _env("MAX_AUDIO_SECONDS", default=240)
 
+    # --- donations ---------------------------------------------------
+    donate_enabled: bool = _env("DONATE", default=True)
+    donate_amounts: list[int] = _env(
+        "DONATE_AMOUNTS", default_factory=lambda: [15, 50, 150]
+    )
+
     # --- runtime -----------------------------------------------------
     app_title: str = _env("APP_TITLE", default="Astolfo Telegram Bot")
     app_url: str = _env("APP_URL", default="https://github.com/hami9/Astolfo")
