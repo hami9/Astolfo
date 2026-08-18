@@ -117,9 +117,12 @@ dimension is zero *and* its whole output is text — generators advertise themse
 `text+image->text+audio`, so a music model reports text output too and would otherwise
 rank first on context length — and classifier and retrieval models are skipped by name.
 
-**Models rotate as their allowances run out.** A rate limit or an exhausted quota puts
-that model to rest (ten minutes for a rate limit, six hours for a quota) and the turn
-continues on the next model immediately, without waiting. A resting model is skipped on
+**Models rotate when they stop being useful.** A rate limit, an exhausted quota, or a
+model that answers with nothing at all puts it to rest (ten minutes for a rate limit or
+an empty answer, six hours for a quota) and the turn continues on the next model
+immediately, without waiting. Before blaming a silent model the optional reasoning
+parameter is dropped and it gets one more try, since some models answer an unsupported
+parameter with silence rather than an error. A resting model is skipped on
 later messages until its cooldown passes, and only when the whole pool is spent does the
 bot report that it has run out.
 

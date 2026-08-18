@@ -19,12 +19,13 @@ log = logging.getLogger(__name__)
 # Text-to-text models that are not conversational partners.
 NOT_CONVERSATIONAL = ("content-safety", "guard", "moderation", "embed", "rerank", "classif")
 
-# How long a free model is skipped after it turns us away. A per-minute limit
-# clears quickly; an exhausted daily quota does not.
 # OpenRouter rejects a longer `models` chain outright.
 MAX_FALLBACKS = 3
 
+# How long a free model is skipped after it turns us away. A per-minute limit
+# and a broken model both clear soon; an exhausted daily quota does not.
 RATE_LIMIT_COOLDOWN = 600.0
+EMPTY_COOLDOWN = 600.0
 QUOTA_COOLDOWN = 6 * 3600.0
 
 
@@ -417,8 +418,27 @@ class LLMClient:
                     if self._s.free_mode and attempt > 1:
                         log.info("answered by %s after %d attempts", model, attempt)
                     return result
+
                 last_error = result.error or "empty completion"
                 log.warning("empty completion from %s (attempt %d)", model, attempt)
+
+                # Some models answer an unsupported parameter with silence rather
+                # than an error, so drop the optional one before blaming the model.
+                if reasoning:
+                    log.info("retrying %s without reasoning parameters", model)
+                    reasoning = None
+                    continue
+
+                # A model that keeps returning nothing is unusable for this turn,
+                # and waiting will not change that: move to the next one.
+                if self._s.free_mode:
+                    self._rest(model, EMPTY_COOLDOWN)
+                    alternative = self._next_free(tried=tried, vision=vision, audio=audio)
+                    if alternative:
+                        log.info("%s returned nothing, switching to %s", model, alternative)
+                        model = alternative
+                        continue
+
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 20.0)
 
