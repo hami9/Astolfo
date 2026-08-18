@@ -30,11 +30,10 @@ def test_prompt_history_respects_char_budget():
         state.add_user("reza", f"msg{i} " + "x" * 100)
 
     selected = state.prompt_history(char_budget=300)
-    contents = [turn["content"] for turn in selected]
-    assert 1 <= len(selected) <= 3
-    assert sum(len(c) for c in contents) <= 300
-    assert contents == sorted(contents, key=lambda c: int(c.split("msg")[1].split()[0]))
-    assert "msg8" in contents[-1], "the newest turns must be the ones kept"
+    body = "\n".join(turn["content"] for turn in selected)
+    assert len(body) <= 320
+    assert "msg8" in body, "the newest turns must be the ones kept"
+    assert "msg0" not in body, "the oldest turns must be dropped"
 
 
 def test_prompt_history_skips_current_turn():
@@ -106,3 +105,50 @@ async def test_update_notes_ignores_garbage(settings, llm):
     llm.json_result = None
     await update_notes(llm, settings.replace(summaries=True), state)
     assert state.notes == ""
+
+
+def test_unanswered_messages_collapse_into_one_turn():
+    """A run of user turns must not look like a queue of separate questions."""
+    state = _state(20)
+    state.add_user("Hami", "what are these?")
+    state.add_user("Hami", "edit it?")
+    state.add_user("DanTRM", "chance 25?")
+    state.add_user("Hami", "it was 100")
+    state.add_user("DanTRM", "current one")
+
+    turns = state.prompt_history(10_000)
+    assert len(turns) == 1, "consecutive user turns must be merged into one"
+    assert turns[0]["role"] == "user"
+    assert turns[0]["content"].splitlines() == [
+        "Hami: what are these?",
+        "Hami: edit it?",
+        "DanTRM: chance 25?",
+        "Hami: it was 100",
+    ]
+
+
+def test_merging_keeps_the_conversation_shape():
+    state = _state(20)
+    state.add_user("Hami", "one")
+    state.add_user("Sara", "two")
+    state.add_assistant("ehehe~")
+    state.add_user("Hami", "three")
+    state.add_user("Sara", "four")
+    state.add_user("Hami", "current")
+
+    roles = [turn["role"] for turn in state.prompt_history(10_000)]
+    assert roles == ["user", "assistant", "user"]
+
+
+def test_merge_runs_does_not_mutate_the_stored_history():
+    state = _state(20)
+    state.add_user("Hami", "one")
+    state.add_user("Sara", "two")
+    state.add_user("Hami", "current")
+
+    state.prompt_history(10_000)
+    assert [turn["content"] for turn in state.history] == [
+        "Hami: one",
+        "Sara: two",
+        "Hami: current",
+    ]

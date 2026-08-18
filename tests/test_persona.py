@@ -62,3 +62,26 @@ def test_locale_detection():
 def test_persian_examples_selected_for_persian_chats():
     assert "آستولفو" in persona.static_prompt(locale="fa")
     assert "آستولفو" not in persona.static_prompt(locale="en")
+
+
+def _flat(text: str) -> str:
+    """Prompt prose is hard-wrapped, so compare on a single normalised line."""
+    return " ".join(text.lower().split())
+
+
+def test_output_rules_scope_the_reply_to_the_newest_message():
+    prompt = _flat(persona.static_prompt())
+    assert "answering the newest message only" in prompt
+    assert "not a queue of questions waiting on you" in prompt
+    assert "never address more than one person in a single reply" in prompt
+
+
+def test_group_rules_say_not_to_answer_the_backlog():
+    assert "you read the backlog, you do not reply to it" in _flat(
+        persona.static_prompt(is_group=True)
+    )
+    assert "you read the backlog" not in _flat(persona.static_prompt(is_group=False))
+
+
+def test_dynamic_prompt_points_at_the_final_message():
+    assert "reply to the final message" in _flat(persona.dynamic_prompt())
