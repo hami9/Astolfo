@@ -98,6 +98,7 @@ class LLMClient:
         self._free_vision: list[str] = []
         self._free_audio: list[str] = []
         self._cooldowns: dict[str, float] = {}
+        self._scores: dict[str, int] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -200,12 +201,14 @@ class LLMClient:
         return list(self._free_vision if vision else self._free_text)
 
     def free_pool(self, *, vision: bool = False, audio: bool = False) -> list[str]:
-        """Usable free models, skipping any that recently turned us away."""
+        """Usable free models, worst-behaved last, skipping any that are resting."""
         candidates = self._all_free(vision=vision, audio=audio)
         now = time.monotonic()
         available = [m for m in candidates if self._cooldowns.get(m, 0.0) <= now]
         # If every one is resting, try them anyway rather than going silent.
-        return available or candidates
+        pool = available or candidates
+        # Stable sort: models that have misbehaved sink, the rest keep catalog order.
+        return sorted(pool, key=lambda m: -self._scores.get(m, 0))
 
     def supports_free_vision(self) -> bool:
         return bool(self._all_free(vision=True))
@@ -215,6 +218,13 @@ class LLMClient:
 
     def _rest(self, model: str, seconds: float) -> None:
         self._cooldowns[model] = time.monotonic() + seconds
+
+    def mark_unusable(self, model: str, seconds: float = EMPTY_COOLDOWN) -> None:
+        """Retire a model the caller judged unusable, e.g. it wrote nonsense."""
+        if model:
+            self._rest(model, seconds)
+            self._scores[model] = self._scores.get(model, 0) - 1
+            log.info("resting %s: unusable reply", model)
 
     def _next_free(self, *, tried: set[str], vision: bool, audio: bool) -> str | None:
         for candidate in self.free_pool(vision=vision, audio=audio) or self.free_pool():
@@ -415,6 +425,7 @@ class LLMClient:
 
                 result = self._parse(data)
                 if result.ok:
+                    self._scores[model] = min(self._scores.get(model, 0) + 1, 3)
                     if self._s.free_mode and attempt > 1:
                         log.info("answered by %s after %d attempts", model, attempt)
                     return result
@@ -433,6 +444,7 @@ class LLMClient:
                 # and waiting will not change that: move to the next one.
                 if self._s.free_mode:
                     self._rest(model, EMPTY_COOLDOWN)
+                    self._scores[model] = self._scores.get(model, 0) - 1
                     alternative = self._next_free(tried=tried, vision=vision, audio=audio)
                     if alternative:
                         log.info("%s returned nothing, switching to %s", model, alternative)

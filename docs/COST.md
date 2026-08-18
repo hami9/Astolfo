@@ -134,6 +134,24 @@ honestly rather than failing the turn.
 
 `/status` reports which pool is in use and whether images are available.
 
+### Keeping a small model in character
+
+Free models are a fraction of the size of the paid ones and fail in recognisable ways,
+so free mode adds three guards:
+
+- **A compact persona.** The full layered prompt is around 10 KB; a 9-to-30B model
+  drowns in it and starts quoting the scaffolding back. Free mode sends a version under
+  a quarter of that size, keeping the identity, the hard limits and one example.
+- **Reply validation.** A reply that leaks the prompt, answers in `assistant:`
+  transcript format, echoes the question, or repeats the previous reply is not sent.
+  The model is retired and one other model is asked; if that also fails the turn ends
+  quietly rather than forwarding nonsense.
+- **Behaviour ranking.** Models that return nothing or write rejected replies sink in
+  the pool, so the ones that behave are tried first. They stay available as a last
+  resort rather than being dropped.
+
+None of this applies on paid models, which are trusted and answered in one call.
+
 ## Letting the chat pay for it
 
 `/donate` sends a Telegram Stars invoice. Stars need no payment provider, no merchant
