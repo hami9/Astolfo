@@ -60,9 +60,17 @@ class FakeBot:
         self.bot = SimpleNamespace(id=999, username="astolfo_bot", first_name="Astolfo")
         self.actions = 0
         self._file_bytes = file_bytes
+        self.left: list[int] = []
+        self.documents: list[str] = []
 
     async def send_chat_action(self, **kwargs):
         self.actions += 1
+
+    async def leave_chat(self, chat_id):
+        self.left.append(chat_id)
+
+    async def send_document(self, chat_id, document, filename=None, **kwargs):
+        self.documents.append(filename or "")
 
     async def get_file(self, file_id):
         payload = self._file_bytes
@@ -97,6 +105,7 @@ class FakeMessage:
         self.reply_to_message = reply_to
         self.entities = []
         self.caption_entities = []
+        self.deleted = False
         self.photo = None
         self.sticker = self.animation = self.video = None
         self.video_note = self.voice = self.audio = self.document = None
@@ -106,11 +115,33 @@ class FakeMessage:
         self.sent.append(text)
         return SimpleNamespace(message_id=2)
 
+    async def delete(self):
+        self.deleted = True
+
+
+class FakeQuery:
+    """A pressed inline button, with the screen it lives on."""
+
+    def __init__(self, data: str, message: FakeMessage, user):
+        self.data = data
+        self.message = message
+        self.from_user = user
+        self.answers: list[str | None] = []
+        self.edits: list[str] = []
+
+    async def answer(self, text=None, show_alert=False):
+        self.answers.append(text)
+
+    async def edit_message_text(self, text, **kwargs):
+        self.edits.append(text)
+        self.message.sent.append(text)
+
 
 class FakeContext:
     def __init__(self, rt: Runtime, bot: FakeBot):
         self.bot = bot
         self.args: list[str] = []
+        self.user_data: dict = {}
         self.application = SimpleNamespace(
             bot_data={"runtime": rt},
             create_task=lambda coro: _drain(coro),
@@ -129,6 +160,16 @@ def make_update(message: FakeMessage) -> SimpleNamespace:
         effective_message=message,
         effective_chat=message.chat,
         effective_user=message.from_user,
+        callback_query=None,
+    )
+
+
+def make_press(query: FakeQuery) -> SimpleNamespace:
+    return SimpleNamespace(
+        effective_message=query.message,
+        effective_chat=query.message.chat,
+        effective_user=query.from_user,
+        callback_query=query,
     )
 
 

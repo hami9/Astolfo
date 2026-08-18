@@ -70,6 +70,9 @@ class BudgetTracker:
         self._dirty = False
         self._load()
 
+    def configure(self, settings: Settings) -> None:
+        self._s = settings
+
     # -- persistence -----------------------------------------------------
     def _load(self) -> None:
         try:

@@ -8,18 +8,31 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from telegram import Update
+from telegram import BotCommand, BotCommandScopeChat, Update
 from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
     filters,
 )
 
-from . import chat, commands, donate, media, runtime
+from . import (
+    admin,
+    chat,
+    commands,
+    donate,
+    master,
+    media,
+    membership,
+    runtime,
+    server_ops,
+    settings_store,
+)
 from .config import ConfigError, Settings
 from .runtime import Runtime
 
@@ -46,7 +59,8 @@ def start_keepalive(port: int) -> None:
 
     def serve() -> None:
         try:
-            HTTPServer(("0.0.0.0", port), _AliveHandler).serve_forever()
+            # Binds publicly on purpose: an uptime pinger has to reach it.
+            HTTPServer(("0.0.0.0", port), _AliveHandler).serve_forever()  # noqa: S104
         except Exception as exc:
             log.warning("keepalive server did not start: %s", exc)
 
@@ -62,7 +76,7 @@ async def _autosave(rt: Runtime) -> None:
 
 async def post_init(app: Application) -> None:
     settings: Settings = app.bot_data["settings"]
-    rt = Runtime.build(settings)
+    rt = Runtime.build(settings, app.bot_data.get("db"), app.bot_data.get("box"))
     app.bot_data[runtime.KEY] = rt
 
     await rt.llm.load_catalog()
@@ -89,10 +103,39 @@ async def post_init(app: Application) -> None:
 
     with contextlib.suppress(Exception):
         await app.bot.set_my_commands(commands.COMMANDS)
+    await _offer_panel(app, rt)
 
     me = await app.bot.get_me()
     log.info("started as @%s (%s)", me.username, me.id)
+    await _report_restart(app, rt)
     app.bot_data["autosave"] = asyncio.create_task(_autosave(rt))
+
+
+async def _offer_panel(app: Application, rt: Runtime) -> None:
+    """Show /panel in the owner's chat only, so nobody else sees it suggested."""
+    owner = master.current(rt)
+    log.info("owner: %s", master.describe(rt))
+    if not owner:
+        return
+    with contextlib.suppress(Exception):
+        await app.bot.set_my_commands(
+            [*commands.COMMANDS, BotCommand("panel", "owner controls")],
+            scope=BotCommandScopeChat(chat_id=owner),
+        )
+
+
+async def _report_restart(app: Application, rt: Runtime) -> None:
+    """Tell whoever asked for an update how it went, once the bot is back."""
+    who = rt.db.note("report_to")
+    if not who:
+        return
+    rt.db.clear_note("report_to")
+
+    outcome = server_ops.last_result(rt.settings.data_dir) or "back up"
+    with contextlib.suppress(Exception):
+        await app.bot.send_message(
+            chat_id=int(who), text=f"✅ back up~\n{outcome}\nrunning {server_ops.commit()}"
+        )
 
 
 async def post_shutdown(app: Application) -> None:
@@ -122,7 +165,7 @@ CONTENT_FILTER = (
 )
 
 
-def build_application(settings: Settings) -> Application:
+def build_application(settings: Settings, database=None, box=None) -> Application:
     builder = (
         ApplicationBuilder()
         .token(settings.telegram_token)
@@ -135,10 +178,13 @@ def build_application(settings: Settings) -> Application:
 
     app = builder.build()
     app.bot_data["settings"] = settings
+    app.bot_data["db"] = database
+    app.bot_data["box"] = box
 
     for name, handler in (
         ("start", commands.start),
         ("help", commands.help_),
+        ("about", commands.about),
         ("reset", commands.reset),
         ("chance", commands.chance),
         ("mode", commands.mode),
@@ -147,9 +193,20 @@ def build_application(settings: Settings) -> Application:
         ("status", commands.status),
         ("usage", commands.usage),
         ("donate", donate.donate),
+        ("panel", admin.open_panel),
     ):
         app.add_handler(CommandHandler(name, handler))
 
+    app.add_handler(CallbackQueryHandler(admin.on_button, pattern=admin.PATTERN))
+    # Group -1 so a typed answer to the panel is seen before the chat pipeline,
+    # which is what a message in the owner's private chat would otherwise be.
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT, admin.on_text), group=-1
+    )
+
+    app.add_handler(
+        ChatMemberHandler(membership.on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
+    )
     app.add_handler(PreCheckoutQueryHandler(donate.precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, donate.paid))
 
@@ -160,12 +217,12 @@ def build_application(settings: Settings) -> Application:
 
 def run() -> None:
     try:
-        settings = Settings.from_env()
+        settings, database, box = settings_store.bootstrap()
     except ConfigError as exc:
         raise SystemExit(f"configuration error: {exc}") from None
 
     if settings.keepalive:
         start_keepalive(settings.keepalive_port)
-    build_application(settings).run_polling(
+    build_application(settings, database, box).run_polling(
         drop_pending_updates=True, allowed_updates=Update.ALL_TYPES
     )

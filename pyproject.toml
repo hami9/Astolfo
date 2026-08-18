@@ -14,6 +14,7 @@ dependencies = [
     "httpx>=0.27,<0.29",
     "python-dotenv>=1.0",
     "Pillow>=10.3",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -36,9 +37,12 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "S"]
 ignore = ["B008", "SIM105"]
 
 [tool.ruff.lint.per-file-ignores]
 # persona.py is mostly prompt prose; rewrapping it would change what the model reads.
 "astolfo/persona.py" = ["E501"]
+# Tests assert on behaviour, including the assert statement itself and sample keys
+# that are not credentials.
+"tests/*" = ["S101", "S105", "S106", "S108"]

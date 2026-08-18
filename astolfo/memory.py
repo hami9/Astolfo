@@ -11,6 +11,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
 from .config import Settings
+from .db import Database
 from .llm import LLMClient, Usage
 
 log = logging.getLogger(__name__)
@@ -110,10 +111,11 @@ def merge_runs(turns: list[dict]) -> list[dict]:
 class ChatStore:
     """TTL + LRU store. Only settings and notes are persisted, never message text."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, database: Database) -> None:
         self._s = settings
+        self.db = database
         self._chats: OrderedDict[int, ChatState] = OrderedDict()
-        self._path = os.path.join(settings.data_dir, "state.json")
+        self._legacy_path = os.path.join(settings.data_dir, "state.json")
         self._dirty = False
         self._load()
 
@@ -126,6 +128,9 @@ class ChatStore:
         self._chats.move_to_end(chat_id)
         self._evict()
         return state
+
+    def configure(self, settings: Settings) -> None:
+        self._s = settings
 
     def all_states(self) -> list[ChatState]:
         return list(self._chats.values())
@@ -150,61 +155,68 @@ class ChatStore:
                 break
 
     def _load(self) -> None:
+        self._import_legacy_file()
+        for row in self.db.chat_settings():
+            chat_id = int(row["chat_id"])
+            self._chats[chat_id] = ChatState(
+                chat_id=chat_id,
+                history=deque(maxlen=self._s.max_history),
+                notes=str(row["notes"] or "")[:MAX_NOTES_CHARS],
+                reply_chance=row["reply_chance"],
+                forced_mode=row["forced_mode"],
+                muted=bool(row["muted"]),
+                title=str(row["title"] or ""),
+                locale=row["locale"],
+            )
+        if self._chats:
+            log.info("restored settings for %d chats", len(self._chats))
+
+    def _import_legacy_file(self) -> None:
+        """Carry a pre-database install over, once, then leave the file alone."""
         try:
-            with open(self._path, encoding="utf-8") as fh:
+            with open(self._legacy_path, encoding="utf-8") as fh:
                 data = json.load(fh)
         except FileNotFoundError:
             return
         except Exception as exc:
-            log.warning("could not read persisted state: %s", exc)
+            log.warning("could not read the old state file: %s", exc)
             return
 
+        imported = 0
         for raw_id, blob in (data.get("chats") or {}).items():
             try:
                 chat_id = int(raw_id)
             except ValueError:
                 continue
-            self._chats[chat_id] = ChatState(
-                chat_id=chat_id,
-                history=deque(maxlen=self._s.max_history),
+            if self.db.chat(chat_id):
+                continue
+            self.db.save_chat_state(
+                chat_id,
                 notes=str(blob.get("notes") or "")[:MAX_NOTES_CHARS],
                 reply_chance=blob.get("reply_chance"),
                 forced_mode=blob.get("forced_mode"),
-                muted=bool(blob.get("muted")),
+                muted=1 if blob.get("muted") else 0,
                 title=str(blob.get("title") or ""),
                 locale=blob.get("locale"),
             )
-        log.info("restored settings for %d chats", len(self._chats))
+            imported += 1
+        if imported:
+            log.info("imported %d chats from the old state file into the database", imported)
 
     def save(self, force: bool = False) -> None:
         if not (self._dirty or force):
             return
-        payload = {
-            "chats": {
-                str(cid): {
-                    "notes": state.notes,
-                    "reply_chance": state.reply_chance,
-                    "forced_mode": state.forced_mode,
-                    "muted": state.muted,
-                    "title": state.title,
-                    "locale": state.locale,
-                }
-                for cid, state in self._chats.items()
-                if state.notes
-                or state.reply_chance is not None
-                or state.forced_mode
-                or state.muted
-            }
-        }
-        try:
-            os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
-            tmp = f"{self._path}.tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False, indent=1)
-            os.replace(tmp, self._path)
-            self._dirty = False
-        except Exception as exc:
-            log.warning("could not persist state: %s", exc)
+        for state in self._chats.values():
+            self.db.save_chat_state(
+                state.chat_id,
+                notes=state.notes,
+                reply_chance=state.reply_chance,
+                forced_mode=state.forced_mode,
+                muted=1 if state.muted else 0,
+                title=state.title,
+                locale=state.locale,
+            )
+        self._dirty = False
 
 
 SUMMARY_PROMPT = """\

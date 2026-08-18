@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from . import branding
+
 try:
     from dotenv import load_dotenv
 
@@ -166,6 +168,12 @@ class Settings:
         "DONATE_AMOUNTS", default_factory=lambda: [15, 50, 150]
     )
 
+    # --- ownership ---------------------------------------------------
+    # The panel answers to one person. A numeric id is the only thing trusted at
+    # runtime; the username below is used once, to learn that id.
+    master_id: int = _env("MASTER_ID", default=0)
+    master_username: str = _env("MASTER_USERNAME", default=branding.CREATOR)
+
     # --- runtime -----------------------------------------------------
     app_title: str = _env("APP_TITLE", default="Astolfo Telegram Bot")
     app_url: str = _env("APP_URL", default="https://github.com/hami9/Astolfo")
@@ -175,7 +183,8 @@ class Settings:
     log_level: str = _env("LOG_LEVEL", default="INFO")
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls, *, validate: bool = True) -> Settings:
+        """Read the environment. Pass validate=False while keys may still be in the db."""
         values = {}
         for f in fields(cls):
             env_name = f.metadata.get("env")
@@ -192,11 +201,16 @@ class Settings:
             values = {**FREE_MODE_PRESET, **values}
 
         settings = cls(**values)
+        if validate:
+            settings.validate()
+        return settings
+
+    def validate(self) -> None:
         missing = [
             name
             for name, value in (
-                ("TELEGRAM_BOT_TOKEN", settings.telegram_token),
-                ("OPENROUTER_API_KEY", settings.api_key),
+                ("TELEGRAM_BOT_TOKEN", self.telegram_token),
+                ("OPENROUTER_API_KEY", self.api_key),
             )
             if not value
         ]
@@ -204,9 +218,8 @@ class Settings:
             raise ConfigError(
                 "missing required environment variables: "
                 + ", ".join(missing)
-                + " (set them in Replit Secrets or a local .env file)"
+                + " (set them in the .env file, or from the bot's panel once it runs)"
             )
-        return settings
 
     @property
     def chat_url(self) -> str:
