@@ -322,3 +322,31 @@ async def test_a_missing_model_moves_down_the_list(settings, monkeypatch):
     assert result.error_kind == "rejected"
     tried = [model for _, model in seen]
     assert len(tried) == len(set(tried)) >= 2, "every configured id was tried once"
+
+
+# -- the built-in list ----------------------------------------------------
+def test_every_preset_is_usable_as_written():
+    """A preset nobody can reach is worse than no preset."""
+    for name, preset in providers_mod.PRESETS.items():
+        assert preset.name == name
+        assert preset.base_url.startswith("https://"), name
+        assert not preset.base_url.endswith("/"), name
+        assert preset.key_env.isupper(), name
+        # Only the catalog service may ship without model names.
+        assert preset.models or preset.discovers_free_models, name
+        assert set(preset.vision_models) <= set(preset.models) or preset.vision_models, name
+
+
+def test_a_preset_needs_no_edit_to_PROVIDERS(settings, monkeypatch):
+    """Giving a service a key is the whole setup; the order is a panel matter."""
+    monkeypatch.setenv("MISTRAL_API_KEY", "ms-key")
+    found = providers_mod.discover(["mistral"])
+    assert [p.name for p in found] == ["mistral"]
+    assert found[0].base_url == providers_mod.PRESETS["mistral"].base_url
+    assert found[0].models == providers_mod.PRESETS["mistral"].models
+
+
+def test_a_service_stored_by_the_panel_joins_without_touching_providers():
+    stored = [{"name": "sambanova", "credentials": [{"id": 1, "value": "sn-key"}]}]
+    found = providers_mod.discover(["openrouter"], fallback_key="or", stored=stored)
+    assert "sambanova" in [p.name for p in found]
