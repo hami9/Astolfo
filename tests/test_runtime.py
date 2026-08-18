@@ -13,8 +13,9 @@ class _Client:
 
     instances: list[_Client] = []
 
-    def __init__(self, settings) -> None:
+    def __init__(self, settings, registry=None) -> None:
         self.settings = settings
+        self.registry = registry
         self.closed = False
         self.catalog_loads = 0
         self.providers = [SimpleNamespace(name="openrouter")]

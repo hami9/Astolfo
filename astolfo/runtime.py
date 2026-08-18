@@ -13,6 +13,7 @@ from .db import Database, open_database
 from .llm import LLMClient, Usage
 from .memory import ChatStore
 from .routing import Router
+from .services import ServiceRegistry
 from .strings import Strings
 
 log = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class Runtime:
     strings: Strings
     db: Database
     box: SecretBox
+    registry: ServiceRegistry
     responses: TTLCache = field(init=False)
     # Read on every message, changed only from the panel, so it lives in memory.
     blocked: set[int] = field(default_factory=set)
@@ -52,8 +54,10 @@ class Runtime:
         database: Database | None = None,
         box: SecretBox | None = None,
     ) -> Runtime:
-        llm = LLMClient(settings)
         database = database or open_database(settings.data_dir)
+        box = box or SecretBox(settings.data_dir)
+        registry = ServiceRegistry(database, box)
+        llm = LLMClient(settings, registry=registry)
         return cls(
             settings=settings,
             llm=llm,
@@ -62,7 +66,8 @@ class Runtime:
             budget=BudgetTracker(settings),
             strings=Strings(settings.locale),
             db=database,
-            box=box or SecretBox(settings.data_dir),
+            box=box,
+            registry=registry,
         )
 
     async def reconfigure(self, settings: Settings) -> None:
@@ -73,7 +78,7 @@ class Runtime:
         """
         previous = self.llm
         self.settings = settings
-        self.llm = LLMClient(settings)
+        self.llm = LLMClient(settings, registry=self.registry)
         self.store.configure(settings)
         self.router.configure(settings, self.llm)
         self.budget.configure(settings)

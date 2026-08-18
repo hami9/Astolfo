@@ -205,15 +205,12 @@ class Settings:
             settings.validate()
         return settings
 
-    def validate(self) -> None:
-        missing = [
-            name
-            for name, value in (
-                ("TELEGRAM_BOT_TOKEN", self.telegram_token),
-                ("OPENROUTER_API_KEY", self.api_key),
-            )
-            if not value
-        ]
+    def validate(self, *, has_stored_key: bool = False) -> None:
+        """Check the bot can start. A key saved in the panel counts as a key."""
+        required = [("TELEGRAM_BOT_TOKEN", self.telegram_token)]
+        if not has_stored_key:
+            required.append(("OPENROUTER_API_KEY", self.api_key))
+        missing = [name for name, value in required if not value]
         if missing:
             raise ConfigError(
                 "missing required environment variables: "

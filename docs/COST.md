@@ -207,6 +207,12 @@ next id on the list is tried before the service is passed over — the response 
 is always logged, so a wrong endpoint or a renamed model is one `journalctl` away
 rather than a guess.
 
+All of this is managed from `/panel → services` rather than the environment: keys
+(more than one per service), the order, whether a service is used at all, its
+endpoint and its models, plus what each one cost today. `PROVIDERS` and the
+`<NAME>_API_KEY` variables still work and are still the fallback, so nothing has
+to move.
+
 Each service is asked for its own models — the one that publishes a catalog gets the
 discovered free list, the rest get what their preset or `<NAME>_MODELS` names. Presets
 carry only the endpoint and some model names, and both are overridable

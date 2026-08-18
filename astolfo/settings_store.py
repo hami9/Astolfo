@@ -173,5 +173,7 @@ def bootstrap() -> tuple[Settings, Database, SecretBox]:
     export_secrets(db, box)
 
     settings = apply(Settings.from_env(validate=False), db.overrides())
-    settings.validate()
+    # A key added from the panel lives in the credentials table, not the
+    # environment, and is just as good a reason to start.
+    settings.validate(has_stored_key=bool(db.credentials()))
     return settings, db, box

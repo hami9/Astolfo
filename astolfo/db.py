@@ -18,7 +18,17 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Provider keys used to live in `secrets`, one per service. They are credentials
+# now, so a service can hold more than one and each carries its own state.
+KEY_ENV_TO_SERVICE = {
+    "OPENROUTER_API_KEY": "openrouter",
+    "GOOGLE_API_KEY": "google",
+    "GROQ_API_KEY": "groq",
+    "GITHUB_MODELS_TOKEN": "github",
+    "CEREBRAS_API_KEY": "cerebras",
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chats (
@@ -82,9 +92,65 @@ CREATE TABLE IF NOT EXISTS audit (
     detail      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_by_time ON audit (at DESC);
+
+-- A row here either overrides the preset of the same name or defines a service
+-- the code has never heard of. An empty column means "keep what the preset says".
+CREATE TABLE IF NOT EXISTS services (
+    name          TEXT PRIMARY KEY,
+    base_url      TEXT    NOT NULL DEFAULT '',
+    models        TEXT    NOT NULL DEFAULT '',
+    vision_models TEXT    NOT NULL DEFAULT '',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    position      INTEGER NOT NULL DEFAULT 100,
+    custom        INTEGER NOT NULL DEFAULT 0,
+    discovers_free_models INTEGER NOT NULL DEFAULT 0,
+    openrouter_extensions INTEGER NOT NULL DEFAULT 0,
+    rested_until  REAL    NOT NULL DEFAULT 0,
+    last_error    TEXT    NOT NULL DEFAULT '',
+    added_at      REAL
+);
+
+-- Wall clock, not monotonic: a quota that runs out until tomorrow has to still
+-- be known tomorrow, on the other side of a restart.
+CREATE TABLE IF NOT EXISTS credentials (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    service      TEXT    NOT NULL,
+    label        TEXT    NOT NULL DEFAULT '',
+    value        BLOB    NOT NULL,
+    position     INTEGER NOT NULL DEFAULT 0,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    added_at     REAL,
+    last_used    REAL,
+    last_ok      REAL,
+    last_error   TEXT    NOT NULL DEFAULT '',
+    rested_until REAL    NOT NULL DEFAULT 0,
+    requests     INTEGER NOT NULL DEFAULT 0,
+    failures     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS credentials_by_service ON credentials (service, position);
+
+CREATE TABLE IF NOT EXISTS service_usage (
+    day       TEXT    NOT NULL,
+    service   TEXT    NOT NULL,
+    requests  INTEGER NOT NULL DEFAULT 0,
+    failures  INTEGER NOT NULL DEFAULT 0,
+    tokens    INTEGER NOT NULL DEFAULT 0,
+    cost      REAL    NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, service)
+);
 """
 
-TABLES = ("chats", "users", "members", "settings", "secrets", "audit")
+TABLES = (
+    "chats",
+    "users",
+    "members",
+    "settings",
+    "secrets",
+    "audit",
+    "services",
+    "credentials",
+    "service_usage",
+)
 
 
 class Database:
@@ -122,12 +188,36 @@ class Database:
                 SCHEMA_VERSION,
             )
             return
-        # Future versions add their steps here; the table definitions above are
-        # written with IF NOT EXISTS so a fresh file and an upgrade agree.
+        # The table definitions above run with IF NOT EXISTS, so a fresh file and
+        # an upgrade end up in the same place; only data moves belong here.
+        if current and current < 2:
+            self._adopt_stored_keys()
+
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
         if current:
             log.info("database schema upgraded from %s to %s", current, SCHEMA_VERSION)
+
+    def _adopt_stored_keys(self) -> None:
+        """Carry keys saved under the old one-per-service scheme into credentials."""
+        moved = 0
+        for row in self._db.execute("SELECT name, value FROM secrets").fetchall():
+            service = KEY_ENV_TO_SERVICE.get(row["name"])
+            if not service:
+                continue
+            self._db.execute(
+                """
+                INSERT INTO credentials (service, label, value, position, added_at)
+                VALUES (?, ?, ?, 0, ?)
+                """,
+                (service, "moved from secrets", row["value"], time.time()),
+            )
+            # Removed from the old table, not copied: two rows holding the same
+            # key would show up as two keys for one service.
+            self._db.execute("DELETE FROM secrets WHERE name = ?", (row["name"],))
+            moved += 1
+        if moved:
+            log.info("moved %d stored key(s) into the credentials table", moved)
 
     # -- plumbing ---------------------------------------------------------
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -379,6 +469,130 @@ class Database:
 
     def secret_names(self) -> list[sqlite3.Row]:
         return self.query("SELECT name, updated_at FROM secrets ORDER BY name")
+
+    # -- services ---------------------------------------------------------
+    def services(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM services ORDER BY position, name")
+
+    def service(self, name: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM services WHERE name = ?", (name,))
+
+    def save_service(self, name: str, **columns: Any) -> None:
+        allowed = {
+            "base_url",
+            "models",
+            "vision_models",
+            "enabled",
+            "position",
+            "custom",
+            "discovers_free_models",
+            "openrouter_extensions",
+            "rested_until",
+            "last_error",
+        }
+        fields = {k: v for k, v in columns.items() if k in allowed}
+        self.execute(
+            "INSERT OR IGNORE INTO services (name, position, added_at) VALUES (?, ?, ?)",
+            (name, self._next_service_position(), time.time()),
+        )
+        if not fields:
+            return
+        assignments = ", ".join(f"{column} = ?" for column in fields)
+        self.execute(
+            f"UPDATE services SET {assignments} WHERE name = ?",  # noqa: S608 - allowlist above
+            (*fields.values(), name),
+        )
+
+    def _next_service_position(self) -> int:
+        row = self.one("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM services")
+        return int(row["next"]) if row else 1
+
+    def delete_service(self, name: str) -> None:
+        self.execute("DELETE FROM services WHERE name = ?", (name,))
+        self.execute("DELETE FROM credentials WHERE service = ?", (name,))
+
+    # -- credentials ------------------------------------------------------
+    def credentials(self, service: str | None = None) -> list[sqlite3.Row]:
+        if service is None:
+            return self.query("SELECT * FROM credentials ORDER BY service, position, id")
+        return self.query(
+            "SELECT * FROM credentials WHERE service = ? ORDER BY position, id", (service,)
+        )
+
+    def credential(self, credential_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM credentials WHERE id = ?", (credential_id,))
+
+    def add_credential(self, service: str, value: bytes, *, label: str = "") -> int:
+        row = self.one(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM credentials WHERE service = ?",
+            (service,),
+        )
+        cursor = self.execute(
+            """
+            INSERT INTO credentials (service, label, value, position, added_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (service, label, value, int(row["next"]) if row else 0, time.time()),
+        )
+        return int(cursor.lastrowid or 0)
+
+    def update_credential(self, credential_id: int, **columns: Any) -> None:
+        allowed = {
+            "label",
+            "value",
+            "position",
+            "enabled",
+            "last_used",
+            "last_ok",
+            "last_error",
+            "rested_until",
+        }
+        fields = {k: v for k, v in columns.items() if k in allowed}
+        if not fields:
+            return
+        assignments = ", ".join(f"{column} = ?" for column in fields)
+        self.execute(
+            f"UPDATE credentials SET {assignments} WHERE id = ?",  # noqa: S608 - allowlist above
+            (*fields.values(), credential_id),
+        )
+
+    def count_credential_use(self, credential_id: int, *, failed: bool = False) -> None:
+        column = "failures" if failed else "requests"
+        self.execute(
+            f"UPDATE credentials SET {column} = {column} + 1, last_used = ? WHERE id = ?",  # noqa: S608
+            (time.time(), credential_id),
+        )
+
+    def delete_credential(self, credential_id: int) -> None:
+        self.execute("DELETE FROM credentials WHERE id = ?", (credential_id,))
+
+    # -- per-service usage ------------------------------------------------
+    def add_service_usage(
+        self,
+        day: str,
+        service: str,
+        *,
+        requests: int = 0,
+        failures: int = 0,
+        tokens: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        self.execute(
+            """
+            INSERT INTO service_usage (day, service, requests, failures, tokens, cost)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(day, service) DO UPDATE SET
+                requests = service_usage.requests + excluded.requests,
+                failures = service_usage.failures + excluded.failures,
+                tokens   = service_usage.tokens   + excluded.tokens,
+                cost     = service_usage.cost     + excluded.cost
+            """,
+            (day, service, requests, failures, tokens, cost),
+        )
+
+    def service_usage(self, day: str) -> dict[str, sqlite3.Row]:
+        rows = self.query("SELECT * FROM service_usage WHERE day = ?", (day,))
+        return {row["service"]: row for row in rows}
 
     # -- audit ------------------------------------------------------------
     def record(self, *, actor: int | None, action: str, detail: str = "") -> None:

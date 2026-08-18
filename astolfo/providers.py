@@ -14,6 +14,7 @@ configuration edit rather than a code change.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 
 
@@ -67,15 +68,37 @@ PRESETS: dict[str, Preset] = {
 
 
 @dataclass
+class Credential:
+    """One key for one service, with the state that belongs to the key itself.
+
+    More than one is for keys you already hold - replacing one without a gap,
+    or a work key beside a personal one. Holding several accounts at one service
+    to get past its free quota is a different thing: it breaks their terms and
+    ends with all of them closed.
+    """
+
+    value: str
+    id: int | None = None  # the database row, when it came from there
+    label: str = ""
+    enabled: bool = True
+    rested_until: float = 0.0  # wall clock, so a rest outlives a restart
+    last_error: str = ""
+
+    def usable(self, now: float) -> bool:
+        return self.enabled and bool(self.value) and self.rested_until <= now
+
+
+@dataclass
 class Provider:
     name: str
     base_url: str
-    api_key: str
+    credentials: list[Credential] = field(default_factory=list)
     key_env: str = ""
     models: list[str] = field(default_factory=list)
     vision_models: list[str] = field(default_factory=list)
     discovers_free_models: bool = False
     openrouter_extensions: bool = False
+    custom: bool = False
     paused_until: float = 0.0
     last_request: float = 0.0  # each service has its own per-minute allowance
 
@@ -87,6 +110,21 @@ class Provider:
     def models_url(self) -> str:
         return f"{self.base_url.rstrip('/')}/models"
 
+    @property
+    def api_key(self) -> str:
+        """The key a request would use right now, empty when none is usable."""
+        credential = self.pick(time.time())
+        return credential.value if credential else ""
+
+    def pick(self, now: float) -> Credential | None:
+        return next((c for c in self.credentials if c.usable(now)), None)
+
+    def next_key(self, after: Credential, now: float) -> Credential | None:
+        """Another key at this service, for when the current one is refused."""
+        return next(
+            (c for c in self.credentials if c is not after and c.usable(now)), None
+        )
+
 
 def _env(name: str, default: str = "") -> str:
     return (os.getenv(name) or default).strip()
@@ -97,40 +135,90 @@ def _env_list(name: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-def discover(order: list[str], *, fallback_key: str = "") -> list[Provider]:
-    """Build the providers named in `order` that actually have a key configured.
+def discover(
+    order: list[str],
+    *,
+    fallback_key: str = "",
+    stored: list[dict] | None = None,
+) -> list[Provider]:
+    """Build the services to draw on, in the order they should be tried.
 
-    Anything unknown is skipped with its name preserved in the log by the caller,
-    so a typo does not silently become a missing provider.
+    Three sources, in increasing priority: the presets in this file, the
+    environment, and what the owner has saved from the panel. A service is used
+    only when it ends up with at least one usable key, so an install that has
+    never opened the panel behaves exactly as it did before.
     """
+    saved = {row["name"]: row for row in (stored or [])}
+    names = list(dict.fromkeys([n.strip().lower() for n in order if n.strip()]))
+    # A service added from the panel joins the list without editing PROVIDERS.
+    names += [name for name in saved if name not in names]
+
     providers: list[Provider] = []
-    for raw in order:
-        name = raw.strip().lower()
-        preset = PRESETS.get(name)
-        if preset is None:
+    for name in names:
+        row = saved.get(name, {})
+        if row.get("enabled") == 0:
             continue
+        preset = PRESETS.get(name)
+        if preset is None and not row.get("base_url"):
+            continue  # neither the code nor the owner knows where to send this
 
         prefix = name.upper()
-        key = _env(preset.key_env) or (fallback_key if name == "openrouter" else "")
-        if not key:
+        base = preset.base_url if preset else ""
+        keys = [
+            Credential(
+                value=str(credential["value"]),
+                id=credential.get("id"),
+                label=str(credential.get("label") or ""),
+                enabled=bool(credential.get("enabled", 1)),
+                rested_until=float(credential.get("rested_until") or 0.0),
+                last_error=str(credential.get("last_error") or ""),
+            )
+            for credential in row.get("credentials", [])
+            if credential.get("value")
+        ]
+        from_env = _env(preset.key_env) if preset else ""
+        if not from_env and name == "openrouter":
+            from_env = fallback_key
+        if from_env:
+            keys.append(Credential(value=from_env, label="from .env"))
+        if not keys:
             continue
 
         providers.append(
             Provider(
                 name=name,
-                base_url=_env(f"{prefix}_BASE_URL", preset.base_url),
-                api_key=key,
-                key_env=preset.key_env,
-                models=_env_list(f"{prefix}_MODELS") or list(preset.models),
-                vision_models=(
-                    _env_list(f"{prefix}_VISION_MODELS") or list(preset.vision_models)
+                base_url=(
+                    str(row.get("base_url") or "") or _env(f"{prefix}_BASE_URL", base)
                 ),
-                discovers_free_models=preset.discovers_free_models,
-                openrouter_extensions=preset.openrouter_extensions,
+                credentials=keys,
+                key_env=preset.key_env if preset else f"{prefix}_API_KEY",
+                models=(
+                    _split(row.get("models"))
+                    or _env_list(f"{prefix}_MODELS")
+                    or list(preset.models if preset else [])
+                ),
+                vision_models=(
+                    _split(row.get("vision_models"))
+                    or _env_list(f"{prefix}_VISION_MODELS")
+                    or list(preset.vision_models if preset else [])
+                ),
+                discovers_free_models=bool(
+                    preset.discovers_free_models if preset else row.get("discovers_free_models")
+                ),
+                openrouter_extensions=bool(
+                    preset.openrouter_extensions if preset else row.get("openrouter_extensions")
+                ),
+                custom=preset is None,
+                paused_until=0.0,
             )
         )
     return providers
 
 
-def unknown_names(order: list[str]) -> list[str]:
-    return [n for n in order if n.strip().lower() not in PRESETS]
+def _split(raw: object) -> list[str]:
+    return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+
+
+def unknown_names(order: list[str], stored: list[dict] | None = None) -> list[str]:
+    known = set(PRESETS) | {row["name"] for row in (stored or [])}
+    return [n for n in order if n.strip() and n.strip().lower() not in known]

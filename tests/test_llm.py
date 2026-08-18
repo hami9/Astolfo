@@ -118,7 +118,7 @@ async def test_auth_error_is_not_retried(settings):
     result = await client.chat([{"role": "user", "content": "hi"}], model="m")
 
     assert not result.ok
-    assert "invalid API key" in result.error
+    assert "the key was refused" in result.error
     assert calls["n"] == 1
     await client.aclose()
 
