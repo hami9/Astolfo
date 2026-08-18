@@ -200,6 +200,13 @@ unknown field with a 400 rather than ignoring it. A request one service rejects 
 offered to the next, and so is a key one service refuses, so a stale `GOOGLE_API_KEY`
 costs a log line rather than the turn.
 
+At startup every service that is not the catalog one is asked for its own model
+listing, and configured ids it does not offer are dropped with a log line naming
+what it does offer. If an id survives that and still answers 404 when called, the
+next id on the list is tried before the service is passed over — the response body
+is always logged, so a wrong endpoint or a renamed model is one `journalctl` away
+rather than a guess.
+
 Each service is asked for its own models — the one that publishes a catalog gets the
 discovered free list, the rest get what their preset or `<NAME>_MODELS` names. Presets
 carry only the endpoint and some model names, and both are overridable

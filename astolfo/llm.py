@@ -175,7 +175,50 @@ class LLMClient:
             provider.last_request = time.monotonic()
 
     # -- model catalog ---------------------------------------------------
+    async def _confirm_models(self, provider: providers_mod.Provider) -> None:
+        """Keep only the model ids this service actually lists.
+
+        Preset ids go stale as services rename and retire models, and the answer
+        to asking for one that is gone is a 404 per message. The service's own
+        listing is the cheapest way to find out at startup instead.
+        """
+        try:
+            resp = await self._clients[provider.name].get(provider.models_url, timeout=20.0)
+            resp.raise_for_status()
+            offered = {m["id"] for m in resp.json().get("data", []) if m.get("id")}
+        except Exception as exc:
+            log.info(
+                "%s did not list its models (%s); using the configured ids", provider.name, exc
+            )
+            return
+        if not offered:
+            return
+
+        # Services vary on whether ids carry a namespace prefix.
+        def known(model: str) -> bool:
+            return model in offered or f"models/{model}" in offered
+
+        kept = [m for m in provider.models if known(m)]
+        dropped = [m for m in provider.models if not known(m)]
+        if dropped:
+            log.warning("%s does not offer %s", provider.name, ", ".join(dropped))
+        if not kept:
+            log.warning(
+                "%s offers none of the configured models; set %s_MODELS from: %s",
+                provider.name,
+                provider.name.upper(),
+                ", ".join(sorted(offered)[:12]),
+            )
+            return
+        provider.models = kept
+        provider.vision_models = [m for m in provider.vision_models if known(m)]
+        log.info("%s: %s", provider.name, ", ".join(kept))
+
     async def load_catalog(self) -> None:
+        for provider in self.providers:
+            if not provider.discovers_free_models:
+                await self._confirm_models(provider)
+
         discovering = next((p for p in self.providers if p.discovers_free_models), None)
         if discovering is None:
             log.info("no provider advertises a free catalog; using configured models")
@@ -309,6 +352,20 @@ class LLMClient:
                 return candidate
         return None
 
+    def _candidates(
+        self,
+        provider: providers_mod.Provider,
+        requested: str,
+        *,
+        vision: bool = False,
+        audio: bool = False,
+    ) -> list[str]:
+        """Everything worth asking this service for, best first."""
+        if provider.discovers_free_models:
+            return self.free_pool(vision=vision, audio=audio) or self.free_pool() or [requested]
+        options = provider.vision_models if vision else provider.models
+        return list(options or provider.models or [requested])
+
     def _pick_model(
         self,
         provider: providers_mod.Provider,
@@ -324,8 +381,24 @@ class LLMClient:
         """
         if provider.discovers_free_models:
             return self.resolve(requested, vision=vision, audio=audio)
-        options = provider.vision_models if vision else provider.models
-        return (options or provider.models or [requested])[0]
+        return self._candidates(provider, requested, vision=vision, audio=audio)[0]
+
+    def _next_model(
+        self,
+        provider: providers_mod.Provider,
+        requested: str,
+        *,
+        tried: set[str],
+        vision: bool,
+        audio: bool,
+    ) -> str | None:
+        """Another model at the same service, or None when its list is used up."""
+        if provider.discovers_free_models:
+            return self._next_free(tried=tried, vision=vision, audio=audio)
+        for candidate in self._candidates(provider, requested, vision=vision, audio=audio):
+            if candidate not in tried:
+                return candidate
+        return None
 
     def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         if self._s.free_mode:
@@ -490,12 +563,15 @@ class LLMClient:
         audio: bool,
     ) -> ChatResult:
         client = self._clients[provider.name]
+        requested = model
         model = self._pick_model(provider, model, vision=vision, audio=audio)
 
         retries = self._s.max_retries if max_retries is None else max_retries
         if self._s.free_mode:
             # Enough attempts to walk a few models before giving up on the turn.
             retries = max(retries, min(len(self._all_free(vision=vision, audio=audio)), 5))
+        # A short retry budget must not cut a service's model list short.
+        retries = max(retries, len(self._candidates(provider, model, vision=vision, audio=audio)))
         tried: set[str] = set()
         delay = 1.5
         last_error = "unknown"
@@ -586,7 +662,31 @@ class LLMClient:
                         error=f"HTTP {resp.status_code}: invalid API key", error_kind="auth"
                     )
 
-                resp.raise_for_status()
+                if resp.status_code == 404:
+                    # Model ids differ between services and change over time, so
+                    # the list is walked before the service is written off.
+                    body = resp.text[:300]
+                    log.error("%s does not serve %s: %s", provider.name, model, body)
+                    alternative = self._next_model(
+                        provider, requested, tried=tried, vision=vision, audio=audio
+                    )
+                    if alternative:
+                        model = alternative
+                        continue
+                    return ChatResult(
+                        error=f"HTTP 404: {provider.name} serves none of the configured models",
+                        error_kind="rejected",
+                    )
+
+                if resp.status_code >= 400:
+                    # Log the body: the status alone never says which field or
+                    # model the service objected to.
+                    body = resp.text[:300]
+                    log.error("%s returned HTTP %s: %s", provider.name, resp.status_code, body)
+                    return ChatResult(
+                        error=f"HTTP {resp.status_code}: {body[:200]}", error_kind="rejected"
+                    )
+
                 data = resp.json()
 
                 if data.get("error") and not data.get("choices"):

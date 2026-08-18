@@ -41,8 +41,8 @@ PRESETS: dict[str, Preset] = {
         name="google",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         key_env="GOOGLE_API_KEY",
-        models=["gemini-2.5-flash", "gemini-2.5-flash-lite"],
-        vision_models=["gemini-2.5-flash"],
+        models=["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"],
+        vision_models=["gemini-2.5-flash", "gemini-2.0-flash"],
     ),
     "groq": Preset(
         name="groq",
