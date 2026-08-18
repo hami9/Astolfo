@@ -28,6 +28,8 @@ MAX_FALLBACKS = 3
 RATE_LIMIT_COOLDOWN = 600.0
 EMPTY_COOLDOWN = 600.0
 QUOTA_COOLDOWN = 6 * 3600.0
+# A refused key is a configuration problem; asking again this run cannot fix it.
+AUTH_COOLDOWN = 24 * 3600.0
 
 # A free-tier 429 is account-wide, so every model is equally unavailable and the
 # only useful response is for the whole bot to stop knocking for a while.
@@ -98,7 +100,9 @@ class LLMClient:
                     name="openrouter",
                     base_url=settings.api_base,
                     api_key=settings.api_key,
+                    key_env="OPENROUTER_API_KEY",
                     discovers_free_models=True,
+                    openrouter_extensions=True,
                 )
             ]
         for unknown in providers_mod.unknown_names(settings.providers):
@@ -343,6 +347,7 @@ class LLMClient:
     def _payload(
         self,
         *,
+        provider: providers_mod.Provider,
         model: str,
         messages: list[dict],
         temperature: float,
@@ -358,6 +363,14 @@ class LLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if response_format:
+            payload["response_format"] = response_format
+
+        if not provider.openrouter_extensions:
+            # A plain OpenAI-compatible service rejects unknown fields, so the
+            # extras below are only meaningful where they are understood.
+            return payload
+
         if fallbacks:
             # OpenRouter tries these in order when the first is rate limited or
             # errors, which is what keeps a rationed free model usable. The API
@@ -370,8 +383,6 @@ class LLMClient:
             payload["reasoning"] = reasoning
         if web and self._s.web_search:
             payload["plugins"] = [{"id": "web", "max_results": max(1, self._s.web_max_results)}]
-        if response_format:
-            payload["response_format"] = response_format
         if self._s.provider_sort:
             payload["provider"] = {"sort": self._s.provider_sort}
         if self._s.track_cost:
@@ -454,6 +465,11 @@ class LLMClient:
                 if provider.paused_until <= time.monotonic():
                     self._pause_provider(provider, ACCOUNT_PAUSE)
                 continue  # a spent service says nothing about the next one
+            if last.error_kind in ("rejected", "auth") and len(live) > 1:
+                # One service disliking the request, or the key for it, says
+                # nothing about the next one in line.
+                log.info("trying the next service after %s declined", provider.name)
+                continue
             return last
         return last
 
@@ -488,6 +504,7 @@ class LLMClient:
             tried.add(model)
             await self._pace(provider)
             payload = self._payload(
+                provider=provider,
                 model=model,
                 messages=messages,
                 temperature=temperature,
@@ -529,8 +546,8 @@ class LLMClient:
                         log.warning("web plugin rejected, retrying without search")
                         web = False
                         continue
-                    log.error("bad request: %s", body)
-                    return ChatResult(error=f"HTTP 400: {body[:200]}")
+                    log.error("%s rejected the request: %s", provider.name, body)
+                    return ChatResult(error=f"HTTP 400: {body[:200]}", error_kind="rejected")
 
                 if resp.status_code == 402:
                     if self._s.free_mode and provider.discovers_free_models:
@@ -553,7 +570,18 @@ class LLMClient:
                     return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
 
                 if resp.status_code in (401, 403):
-                    log.error("auth failed (%s), check OPENROUTER_API_KEY", resp.status_code)
+                    # A key that is refused now will be refused all evening, so the
+                    # service steps aside for the rest of the run.
+                    log.error(
+                        "%s refused the key (%s), check %s",
+                        provider.name,
+                        resp.status_code,
+                        provider.key_env or "the API key",
+                    )
+                    if len(self.providers) > 1:
+                        # With nothing else to fall back on, keep trying: a lone
+                        # service silenced for a day is worse than a wasted call.
+                        self._pause_provider(provider, AUTH_COOLDOWN)
                     return ChatResult(
                         error=f"HTTP {resp.status_code}: invalid API key", error_kind="auth"
                     )
