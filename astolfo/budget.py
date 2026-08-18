@@ -58,6 +58,7 @@ def _empty_day() -> dict:
         "by_model": {},
         "chats": {},
         "saved_by_cache": 0,
+        "stars": 0,
     }
 
 
@@ -118,6 +119,11 @@ class BudgetTracker:
             key = str(chat_id)
             day["chats"][key] = day["chats"].get(key, 0) + 1
         self._dirty = True
+
+    def record_donation(self, stars: int) -> None:
+        self._days[_today()]["stars"] += stars
+        self._dirty = True
+        self.save()  # never lose a payment to a restart
 
     def record_cache_hit(self) -> None:
         self._days[_today()]["saved_by_cache"] += 1
@@ -197,6 +203,7 @@ class BudgetTracker:
             "cached_tokens": day["cached_tokens"],
             "cache_hit_rate": self.cache_hit_rate(),
             "cache_replies": day["saved_by_cache"],
+            "stars_today": day["stars"],
             "by_mode": dict(sorted(day["by_mode"].items(), key=lambda kv: -kv[1])),
             "top_model": top_model[0],
             "generated_at": time.time(),

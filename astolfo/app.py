@@ -15,10 +15,11 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
-from . import chat, commands, media, runtime
+from . import chat, commands, donate, media, runtime
 from .config import ConfigError, Settings
 from .runtime import Runtime
 
@@ -145,8 +146,12 @@ def build_application(settings: Settings) -> Application:
         ("unmute", commands.unmute),
         ("status", commands.status),
         ("usage", commands.usage),
+        ("donate", donate.donate),
     ):
         app.add_handler(CommandHandler(name, handler))
+
+    app.add_handler(PreCheckoutQueryHandler(donate.precheckout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, donate.paid))
 
     app.add_handler(MessageHandler(CONTENT_FILTER & ~filters.COMMAND, chat.handle_message))
     app.add_error_handler(chat.on_error)

@@ -133,3 +133,14 @@ too. When nothing in the pool can read an attachment it is dropped and the bot s
 honestly rather than failing the turn.
 
 `/status` reports which pool is in use and whether images are available.
+
+## Letting the chat pay for it
+
+`/donate` sends a Telegram Stars invoice. Stars need no payment provider, no merchant
+account and no card from the sender, which is the only rail that works for every user
+in a group; the balance is withdrawable from the bot account afterwards. `/donate 50`
+picks an amount, and `DONATE_AMOUNTS` sets the suggestions, the first being the
+default. Set `DONATE=0` to hide the command entirely.
+
+Received stars are counted in the same daily record as spending and shown by `/usage`,
+and a payment is written to disk immediately rather than at the next autosave.

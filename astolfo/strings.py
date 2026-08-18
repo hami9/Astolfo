@@ -24,6 +24,7 @@ EN: dict[str, str] = {
         "/chance 0-100 — how often I join in on my own\n"
         "/mode auto|fast|think|search — how I answer\n"
         "/usage — what I've spent today\n"
+        "/donate — feed me with Telegram Stars 🥕\n"
         "/status — current settings\n"
         "/reset — forget this chat's history and notes\n"
         "/mute and /unmute — quiet me down or bring me back"
@@ -44,6 +45,18 @@ EN: dict[str, str] = {
     "error_reply": "Ugh... my brain flew to the Moon and didn't come back 😵‍💫 say that again?",
     "budget_stopped": "I've burned through today's allowance~ back tomorrow! 💸",
     "no_credit": "my magic ran out of credit 😭 someone needs to top up the API account!",
+    "donate_title": "Feed Astolfo",
+    "donate_description": (
+        "Keeps the bot's brain running~ every star goes straight to the API bill. "
+        "Absolutely no obligation, I'll like you either way!"
+    ),
+    "donate_label": "carrots for Astolfo",
+    "donate_bad_amount": "give me a number of stars, like /donate 50 (try: {amounts})",
+    "donate_unavailable": "hmm, the star thing isn't working right now 😵‍💫 try again later?",
+    "donate_thanks": (
+        "WAAAH {stars} stars?! 🥕✨ you're the best, I'm telling everyone about you~ "
+        "hop hop!"
+    ),
     "status": (
         "My status:\n"
         "• mode: {mode}   • muted: {muted}\n"
@@ -65,6 +78,7 @@ EN: dict[str, str] = {
         "• tokens: {prompt_tokens} in / {completion_tokens} out\n"
         "• prompt cache hits: {cache_hit_rate} ({cached_tokens} tokens reused)\n"
         "• replies served from cache: {cache_replies}\n"
+        "• stars donated today: {stars_today}\n"
         "• router shortcuts: {router_saved}\n"
         "• cost by mode: {by_mode}\n"
         "• state: {level}"
@@ -89,6 +103,7 @@ FA: dict[str, str] = {
         "/chance ۰تا۱۰۰ — چقدر خودم بپرم وسط بحث\n"
         "/mode auto|fast|think|search — حالت جواب دادن\n"
         "/usage — مصرف امروز\n"
+        "/donate — بهم هویج بده با Telegram Stars 🥕\n"
         "/status — وضعیت فعلی\n"
         "/reset — پاک کردن حافظهٔ این چت\n"
         "/mute و /unmute — ساکتم کن / برم گردون"
@@ -109,6 +124,17 @@ FA: dict[str, str] = {
     "error_reply": "اوه... مغزم یه لحظه رفت رو ماه و برنگشت 😵‍💫 یه بار دیگه بگو؟",
     "budget_stopped": "سهمیهٔ امروزم تموم شد~ فردا برمی‌گردم! 💸",
     "no_credit": "کردیت جادوم ته کشید 😭 یکی حساب OpenRouter رو شارژ کنه!",
+    "donate_title": "به آستولفو هویج بده",
+    "donate_description": (
+        "مغز ربات رو روشن نگه می‌داره~ هر ستاره مستقیم می‌ره پای قبض API. "
+        "هیچ اجباری نیست ها، من در هر صورت دوستت دارم!"
+    ),
+    "donate_label": "هویج برای آستولفو",
+    "donate_bad_amount": "تعداد ستاره رو بگو، مثلاً /donate 50 (پیشنهاد: {amounts})",
+    "donate_unavailable": "اوم، سیستم ستاره الان کار نمی‌کنه 😵‍💫 بعداً امتحان کن؟",
+    "donate_thanks": (
+        "وااااای {stars} تا ستاره؟! 🥕✨ تو بهترینی، می‌رم به همه بگم~ هاپ هاپ!"
+    ),
     "status": (
         "وضعیت من:\n"
         "• حالت: {mode}   • ساکت: {muted}\n"
@@ -130,6 +156,7 @@ FA: dict[str, str] = {
         "• توکن: {prompt_tokens} ورودی / {completion_tokens} خروجی\n"
         "• کش پرامپت: {cache_hit_rate} ({cached_tokens} توکن دوباره استفاده شد)\n"
         "• جواب‌های از کش: {cache_replies}\n"
+        "• ستارهٔ دریافتی امروز: {stars_today}\n"
         "• میان‌بُرهای مسیریاب: {router_saved}\n"
         "• هزینه بر اساس حالت: {by_mode}\n"
         "• وضعیت: {level}"
