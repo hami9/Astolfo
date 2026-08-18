@@ -109,6 +109,7 @@ an extra call per message rather than everything that costs tokens:
 | `GROUP_REPLY_CHANCE` | 0.12 | fewer unprompted replies |
 | `REPLY_COOLDOWN` | 45s | spreads requests out |
 | `VIDEO_FRAMES` / `IMAGE_MAX_DIM` | 2 / 768 | free vision models are small |
+| `FREE_RPM` | 8 | the whole bot shares one per-minute allowance |
 
 Any variable you set explicitly still wins over the preset.
 
@@ -116,6 +117,15 @@ Selection is by capability, not just price. A model qualifies only if every pric
 dimension is zero *and* its whole output is text — generators advertise themselves as
 `text+image->text+audio`, so a music model reports text output too and would otherwise
 rank first on context length — and classifier and retrieval models are skipped by name.
+
+**The free allowance belongs to the account, not to a model.** A free-tier 429 comes
+back from every model at once, whichever provider it is from, so touring the pool only
+spends five requests to learn the same thing and pushes the account further over the
+limit. A 429 therefore pauses the whole bot for as long as the response asks (a minute
+by default), and requests are refused instantly while that pause lasts rather than
+queueing up. `FREE_RPM` spaces requests out globally so the limit is approached less
+often; every chat draws on the same budget, so the gap is shared across all of them.
+A throttled turn is not announced in the chat, since it is routine and clears itself.
 
 **Models rotate when they stop being useful.** A rate limit, an exhausted quota, or a
 model that answers with nothing at all puts it to rest (ten minutes for a rate limit or

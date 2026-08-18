@@ -93,6 +93,9 @@ class Settings:
     # request per message is switched off by the preset below.
     free_mode: bool = _env("FREE_MODE", default=False)
     free_models: list[str] = _env("FREE_MODELS", default_factory=list)
+    # Free-tier limits are counted per account, not per model, so the whole bot
+    # shares one budget of requests per minute no matter how many chats it serves.
+    free_rpm: int = _env("FREE_RPM", default=8)
 
     # --- generation --------------------------------------------------
     temperature_fast: float = _env("TEMPERATURE_FAST", default=0.95)

@@ -94,8 +94,9 @@ def _catalog_client(settings, catalog=CATALOG, chat_body=None):
     return LLMClient(settings, transport=httpx.MockTransport(handler))
 
 
-def free_settings(settings) -> Settings:
-    return settings.replace(free_mode=True)
+def free_settings(settings, **overrides) -> Settings:
+    # Pacing off by default so tests are not throttled; exercised on its own below.
+    return settings.replace(**{"free_mode": True, "free_rpm": 0, **overrides})
 
 
 async def test_preset_switches_off_per_message_extras(monkeypatch):
@@ -385,13 +386,28 @@ async def test_exhausted_model_is_skipped_for_the_next_one(settings):
     await client.aclose()
 
 
-async def test_rate_limited_model_rotates_without_waiting(settings, monkeypatch):
-    slept: list[float] = []
+async def test_rate_limit_pauses_the_account_instead_of_touring_the_models(settings):
+    """A free-tier 429 covers the account, so the next model is just as limited."""
+    seen: list[str] = []
+    all_limited = dict.fromkeys(
+        ["free/text-large", "free/omni-audio", "free/vision", "free/text-small"], 429
+    )
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_rotating_handler(all_limited, seen)),
+    )
+    await client.load_catalog()
 
-    async def record_sleep(seconds):
-        slept.append(seconds)
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
 
-    monkeypatch.setattr("asyncio.sleep", record_sleep)
+    assert not result.ok
+    assert result.error_kind == "throttled"
+    assert len(seen) == 1, "one request is enough to learn the account is limited"
+    assert client.throttled_for() > 0
+    await client.aclose()
+
+
+async def test_further_requests_are_skipped_while_paused(settings):
     seen: list[str] = []
     client = LLMClient(
         free_settings(settings),
@@ -399,11 +415,55 @@ async def test_rate_limited_model_rotates_without_waiting(settings, monkeypatch)
     )
     await client.load_catalog()
 
-    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+    await client.chat([{"role": "user", "content": "one"}], model="anything")
+    before = len(seen)
+    result = await client.chat([{"role": "user", "content": "two"}], model="anything")
 
-    assert result.ok
+    assert len(seen) == before, "no point knocking while the account is paused"
+    assert result.error_kind == "throttled"
+    await client.aclose()
+
+
+async def test_requests_are_spaced_out_by_the_shared_allowance(settings, monkeypatch):
+    slept: list[float] = []
+
+    async def record(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", record)
+    seen: list[str] = []
+    client = LLMClient(
+        free_settings(settings, free_rpm=60),  # one per second
+        transport=httpx.MockTransport(_rotating_handler({}, seen)),
+    )
+    await client.load_catalog()
+
+    await client.chat([{"role": "user", "content": "one"}], model="anything")
+    await client.chat([{"role": "user", "content": "two"}], model="anything")
+
     assert len(seen) == 2
-    assert slept == [], "switching models beats waiting out a limit"
+    assert slept, "the second request waited for its slot"
+    assert max(slept) <= 1.0
+
+
+async def test_pacing_is_off_for_paid_models(settings, monkeypatch):
+    slept: list[float] = []
+
+    async def record(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", record)
+    seen: list[str] = []
+    client = LLMClient(
+        settings.replace(free_rpm=60),  # free_mode stays off
+        transport=httpx.MockTransport(_rotating_handler({}, seen)),
+    )
+    await client.load_catalog()
+
+    await client.chat([{"role": "user", "content": "one"}], model="paid/big")
+    await client.chat([{"role": "user", "content": "two"}], model="paid/big")
+
+    assert slept == [], "paid accounts are not on the shared free allowance"
     await client.aclose()
 
 
@@ -503,7 +563,7 @@ async def test_a_silent_model_is_swapped_not_retried(settings, monkeypatch):
         slept.append(seconds)
 
     monkeypatch.setattr("asyncio.sleep", record)
-    seen: list[str] = []
+    seen: list[str] = []  # pacing is disabled here, so any sleep is a backoff
     client = LLMClient(
         free_settings(settings),
         transport=httpx.MockTransport(_empty_from({"free/text-large"}, seen)),
