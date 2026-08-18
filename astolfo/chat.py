@@ -368,7 +368,7 @@ def _should_join(rt: Runtime, state: ChatState, kind: str) -> bool:
     if base <= 0:
         return False
     chance = max(base, settings.media_reply_chance) if kind else base
-    return random.random() < chance
+    return random.random() < chance  # noqa: S311 - a coin flip, not a secret
 
 
 async def _summarize(rt: Runtime, state: ChatState) -> None:

@@ -8,7 +8,7 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from telegram import Update
+from telegram import BotCommand, BotCommandScopeChat, Update
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -26,6 +26,7 @@ from . import (
     chat,
     commands,
     donate,
+    master,
     media,
     membership,
     runtime,
@@ -58,7 +59,8 @@ def start_keepalive(port: int) -> None:
 
     def serve() -> None:
         try:
-            HTTPServer(("0.0.0.0", port), _AliveHandler).serve_forever()
+            # Binds publicly on purpose: an uptime pinger has to reach it.
+            HTTPServer(("0.0.0.0", port), _AliveHandler).serve_forever()  # noqa: S104
         except Exception as exc:
             log.warning("keepalive server did not start: %s", exc)
 
@@ -101,11 +103,25 @@ async def post_init(app: Application) -> None:
 
     with contextlib.suppress(Exception):
         await app.bot.set_my_commands(commands.COMMANDS)
+    await _offer_panel(app, rt)
 
     me = await app.bot.get_me()
     log.info("started as @%s (%s)", me.username, me.id)
     await _report_restart(app, rt)
     app.bot_data["autosave"] = asyncio.create_task(_autosave(rt))
+
+
+async def _offer_panel(app: Application, rt: Runtime) -> None:
+    """Show /panel in the owner's chat only, so nobody else sees it suggested."""
+    owner = master.current(rt)
+    log.info("owner: %s", master.describe(rt))
+    if not owner:
+        return
+    with contextlib.suppress(Exception):
+        await app.bot.set_my_commands(
+            [*commands.COMMANDS, BotCommand("panel", "owner controls")],
+            scope=BotCommandScopeChat(chat_id=owner),
+        )
 
 
 async def _report_restart(app: Application, rt: Runtime) -> None:

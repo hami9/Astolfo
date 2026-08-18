@@ -769,7 +769,8 @@ class LLMClient:
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = f"network: {exc}"
                 log.warning("network error (attempt %d/%d): %s", attempt, retries, exc)
-                await asyncio.sleep(delay + random.uniform(0, 0.8))
+                # noqa below: retry jitter, nothing to guess
+                await asyncio.sleep(delay + random.uniform(0, 0.8))  # noqa: S311
                 delay = min(delay * 2, 20.0)
             except Exception as exc:
                 log.exception("unexpected error calling the model")

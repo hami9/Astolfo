@@ -128,9 +128,9 @@ def test_setting_a_key_is_written_to_the_audit_trail(settings):
 
 
 def test_masking_shows_enough_to_recognise_and_not_enough_to_use():
-    assert mask("sk-or-v1-15e5d7781a9767ff") == "sk-or-…67ff"
+    assert mask("sk-or-v1-000000000000abcd") == "sk-or-…abcd"
     assert mask("") == "(not set)"
-    assert "15e5d778" not in mask("sk-or-v1-15e5d7781a9767ff")
+    assert "000000000000" not in mask("sk-or-v1-000000000000abcd")
 
 
 # -- bootstrap ------------------------------------------------------------

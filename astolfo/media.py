@@ -117,7 +117,7 @@ def _duration(path: str) -> float:
     if not FFPROBE:
         return 0.0
     try:
-        out = subprocess.run(
+        out = subprocess.run(  # noqa: S603 - argv list, no shell
             [FFPROBE, "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, text=True, timeout=25,
@@ -138,7 +138,7 @@ def _frames(path: str, workdir: str, count: int, max_dim: int, quality: int) -> 
     for index, offset in enumerate(timestamps):
         out_path = os.path.join(workdir, f"frame_{index}.jpg")
         try:
-            subprocess.run(
+            subprocess.run(  # noqa: S603 - argv list, no shell
                 [FFMPEG, "-nostdin", "-y", "-ss", f"{offset:.2f}", "-i", path,
                  "-frames:v", "1", "-q:v", "3", out_path],
                 capture_output=True, timeout=45,
@@ -158,7 +158,7 @@ def _to_mp3(path: str, workdir: str, max_seconds: int) -> str | None:
         return None
     out_path = os.path.join(workdir, "audio.mp3")
     try:
-        subprocess.run(
+        subprocess.run(  # noqa: S603 - argv list, no shell
             [FFMPEG, "-nostdin", "-y", "-i", path, "-t", str(max_seconds),
              "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", out_path],
             capture_output=True, timeout=120,

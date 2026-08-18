@@ -110,9 +110,9 @@ async def test_a_key_is_stored_encrypted_and_the_message_deleted(owned, monkeypa
 
 
 async def test_a_key_is_never_shown_in_full(owned, monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-abcdefghijklmnop")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-0000000000secret")
     query, _ = await _press(owned, "ap:keys")
-    assert "abcdefghijklmnop" not in query.edits[0]
+    assert "0000000000secret" not in query.edits[0]
     assert "sk-or-" in query.edits[0]
 
 

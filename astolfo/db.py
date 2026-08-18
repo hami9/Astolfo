@@ -149,7 +149,11 @@ class Database:
             self._db.close()
 
     def counts(self) -> dict[str, int]:
-        return {t: self.query(f"SELECT COUNT(*) AS n FROM {t}")[0]["n"] for t in TABLES}
+        # Table names come from TABLES above, never from a caller.
+        return {
+            t: self.query(f"SELECT COUNT(*) AS n FROM {t}")[0]["n"]  # noqa: S608
+            for t in TABLES
+        }
 
     def vacuum(self) -> None:
         with self._lock:
@@ -205,7 +209,9 @@ class Database:
         assignments = ", ".join(f"{name} = ?" for name in fields)
         self.execute("INSERT OR IGNORE INTO chats (chat_id) VALUES (?)", (chat_id,))
         self.execute(
-            f"UPDATE chats SET {assignments} WHERE chat_id = ?",
+            # noqa: S608 - assignments is built from the allowlist above; the
+            # values themselves are still bound, never formatted in
+            f"UPDATE chats SET {assignments} WHERE chat_id = ?",  # noqa: S608
             (*fields.values(), chat_id),
         )
 
@@ -220,15 +226,17 @@ class Database:
         )
 
     def list_chats(self, *, active_only: bool = True, limit: int = 50) -> list[sqlite3.Row]:
-        where = "WHERE left_at IS NULL" if active_only else ""
+        # The filter is a bound value rather than a piece of assembled SQL, so
+        # this query is a constant no matter who calls it.
         return self.query(
-            f"""
+            """
             SELECT c.*, (SELECT COUNT(*) FROM members m WHERE m.chat_id = c.chat_id) AS people
-            FROM chats c {where}
+            FROM chats c
+            WHERE ? = 0 OR c.left_at IS NULL
             ORDER BY c.last_seen IS NULL, c.last_seen DESC
             LIMIT ?
             """,
-            (limit,),
+            (1 if active_only else 0, limit),
         )
 
     def chat(self, chat_id: int) -> sqlite3.Row | None:
@@ -289,8 +297,15 @@ class Database:
         return self.one("SELECT * FROM users WHERE user_id = ?", (user_id,))
 
     def set_blocked(self, user_id: int, blocked: bool) -> None:
+        # An upsert, not an update: blocking somebody the bot has never recorded
+        # would otherwise change nothing and be forgotten on the next start.
+        now = time.time()
         self.execute(
-            "UPDATE users SET blocked = ? WHERE user_id = ?", (1 if blocked else 0, user_id)
+            """
+            INSERT INTO users (user_id, first_seen, last_seen, blocked) VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET blocked = excluded.blocked
+            """,
+            (user_id, now, now, 1 if blocked else 0),
         )
 
     def blocked_ids(self) -> set[int]:

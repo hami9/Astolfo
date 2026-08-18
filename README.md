@@ -1,5 +1,10 @@
 # Astolfo
 
+[![CI](https://github.com/hami9/Astolfo/actions/workflows/ci.yml/badge.svg)](https://github.com/hami9/Astolfo/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/hami9/Astolfo/actions/workflows/codeql.yml/badge.svg)](https://github.com/hami9/Astolfo/actions/workflows/codeql.yml)
+[![Audit](https://github.com/hami9/Astolfo/actions/workflows/audit.yml/badge.svg)](https://github.com/hami9/Astolfo/actions/workflows/audit.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A Telegram bot that behaves like a member of your group chat instead of an assistant.
 It decides for itself whether a message deserves an instant reply, real reasoning, or a
 web search, it reads photos, stickers, GIFs, videos and voice messages, and it keeps its
@@ -58,7 +63,8 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 re-add the bot to the group.
 
 Deployment on Replit, Docker or a plain VPS is covered in
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), and running the bot from Telegram
+afterwards in [docs/ADMIN.md](docs/ADMIN.md).
 
 ## Commands
 
@@ -71,6 +77,16 @@ Deployment on Replit, Docker or a plain VPS is covered in
 | `/status` | current settings and capabilities |
 | `/reset` | clear this chat's history and notes (admin) |
 | `/mute`, `/unmute` | silence the bot or bring it back (admin) |
+| `/about` | channel, creator and what the bot is |
+| `/donate` | send Telegram Stars towards the API bill |
+| `/panel` | the owner's control panel, private chat only |
+
+## The owner's panel
+
+`/panel`, in a private chat with the bot, from the account named by `MASTER_ID`:
+API keys (set, test, remove), any setting, the groups the bot is in, the people it
+has seen, server health, and update or restart. Changes take effect immediately —
+no editing `.env`, no restart. See [docs/ADMIN.md](docs/ADMIN.md).
 
 ## Configuration
 
@@ -94,7 +110,7 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 104 tests, fully offline
+pytest -q          # 260 tests, fully offline
 ruff check .
 ```
 
@@ -113,10 +129,17 @@ astolfo/budget.py       cost accounting and degradation ladder
 astolfo/cache.py        TTL + LRU caches
 astolfo/media.py        images, stickers, GIFs, video, audio
 astolfo/memory.py       history, long-term notes, persistence
+astolfo/db.py           SQLite: chats, people, settings, secrets, audit
+astolfo/settings_store.py  settings and keys that change without a restart
+astolfo/crypto.py       encryption for the stored keys
+astolfo/master.py       who owns the bot
+astolfo/admin/          the owner's panel
+astolfo/server_ops.py   machine health, and asking the root helper for a job
 astolfo/chat.py         the message pipeline
 astolfo/commands.py     command handlers
 astolfo/app.py          wiring, lifecycle, keepalive server
-docs/                   architecture, deployment, cost control
+deploy/                 VPS installer and the privileged helper
+docs/                   architecture, deployment, cost control, admin
 ```
 
 ## Notes
