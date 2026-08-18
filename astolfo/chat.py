@@ -154,6 +154,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     rt = runtime.get(context)
     settings = rt.settings
     chat = message.chat
+    if message.from_user.id in rt.blocked:
+        return
     state = rt.store.get(chat.id)
     if state.muted:
         return
@@ -170,6 +172,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = raw_text[: settings.max_input_chars]
     placeholder = media_mod.PLACEHOLDERS.get(kind, "[sent a file]") if kind else ""
     state.add_user(sender, f"{text} {placeholder}".strip() if kind else text)
+    _track(rt, message, sender)
 
     is_group = chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
     bot_user = context.bot.bot
@@ -288,6 +291,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         state.add_assistant(reply)
         rt.store.mark_dirty()
+        rt.db.count_reply(chat.id)
         if settings.response_cache and not kind and not decision.web and decision.mode == FAST:
             rt.responses.set(cache_key, reply)
 
@@ -298,6 +302,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if settings.summaries:
         context.application.create_task(_summarize(rt, state))
+
+
+def _track(rt: Runtime, message, sender: str) -> None:
+    """Note who is talking where. Counts only, never the text itself."""
+    chat, user = message.chat, message.from_user
+    try:
+        rt.db.seen_chat(
+            chat.id,
+            kind=str(chat.type),
+            title=chat.title or "",
+            username=chat.username or "",
+        )
+        rt.db.seen_member(
+            user_id=user.id,
+            chat_id=chat.id,
+            name=sender,
+            username=user.username or "",
+        )
+    except Exception as exc:  # a bookkeeping failure must never cost a reply
+        log.warning("could not record activity for chat %s: %s", chat.id, exc)
 
 
 async def _announce_failure(rt: Runtime, state: ChatState, message, result: ChatResult) -> None:

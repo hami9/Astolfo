@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from .budget import BudgetTracker
 from .cache import TTLCache
 from .config import Settings
+from .db import Database, open_database
 from .llm import LLMClient, Usage
 from .memory import ChatStore
 from .routing import Router
@@ -26,21 +27,34 @@ class Runtime:
     router: Router
     budget: BudgetTracker
     strings: Strings
+    db: Database
     responses: TTLCache = field(init=False)
+    # Read on every message, changed only from the panel, so it lives in memory.
+    blocked: set[int] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.responses = TTLCache(maxsize=512, ttl=self.settings.response_cache_ttl)
+        self.blocked = self.db.blocked_ids()
+
+    def set_blocked(self, user_id: int, blocked: bool) -> None:
+        self.db.set_blocked(user_id, blocked)
+        if blocked:
+            self.blocked.add(user_id)
+        else:
+            self.blocked.discard(user_id)
 
     @classmethod
     def build(cls, settings: Settings) -> Runtime:
         llm = LLMClient(settings)
+        database = open_database(settings.data_dir)
         return cls(
             settings=settings,
             llm=llm,
-            store=ChatStore(settings),
+            store=ChatStore(settings, database),
             router=Router(settings, llm),
             budget=BudgetTracker(settings),
             strings=Strings(settings.locale),
+            db=database,
         )
 
     def record(self, *, mode: str, model: str, usage: Usage, chat_id: int | None = None) -> None:
@@ -54,6 +68,7 @@ class Runtime:
     async def aclose(self) -> None:
         self.save(force=True)
         await self.llm.aclose()
+        self.db.close()
 
 
 def get(context) -> Runtime:

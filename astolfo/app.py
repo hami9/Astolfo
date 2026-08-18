@@ -13,13 +13,14 @@ from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
     filters,
 )
 
-from . import chat, commands, donate, media, runtime
+from . import chat, commands, donate, media, membership, runtime
 from .config import ConfigError, Settings
 from .runtime import Runtime
 
@@ -150,6 +151,9 @@ def build_application(settings: Settings) -> Application:
     ):
         app.add_handler(CommandHandler(name, handler))
 
+    app.add_handler(
+        ChatMemberHandler(membership.on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
+    )
     app.add_handler(PreCheckoutQueryHandler(donate.precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, donate.paid))
 

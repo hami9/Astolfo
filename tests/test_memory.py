@@ -1,5 +1,6 @@
 from collections import deque
 
+from astolfo.db import open_database
 from astolfo.memory import ChatState, ChatStore, update_notes
 
 
@@ -52,7 +53,7 @@ def test_prompt_history_keeps_at_least_one_turn():
 
 
 def test_store_persists_settings_but_not_messages(settings):
-    store = ChatStore(settings)
+    store = ChatStore(settings, open_database(settings.data_dir))
     state = store.get(101)
     state.notes = "Reza loves coffee"
     state.reply_chance = 0.5
@@ -62,7 +63,7 @@ def test_store_persists_settings_but_not_messages(settings):
     store.mark_dirty()
     store.save()
 
-    reloaded = ChatStore(settings).get(101)
+    reloaded = ChatStore(settings, open_database(settings.data_dir)).get(101)
     assert reloaded.notes == "Reza loves coffee"
     assert reloaded.reply_chance == 0.5
     assert reloaded.forced_mode == "think"
@@ -71,7 +72,8 @@ def test_store_persists_settings_but_not_messages(settings):
 
 
 def test_store_lru_eviction(settings):
-    store = ChatStore(settings.replace(max_chats=3))
+    small = settings.replace(max_chats=3)
+    store = ChatStore(small, open_database(small.data_dir))
     for chat_id in range(6):
         store.get(chat_id)
     assert len(store.all_states()) <= 3
