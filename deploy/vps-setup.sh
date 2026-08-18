@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# One-command install on a fresh Debian/Ubuntu server.
+#
+#   curl -fsSL https://raw.githubusercontent.com/hami9/Astolfo/main/deploy/vps-setup.sh | sudo bash
+#
+# Installs the bot under /opt/astolfo, runs it as a dedicated user, and keeps it
+# alive with systemd. Credentials are asked for interactively and written to a
+# root-only environment file; they are never stored in the repository.
+set -euo pipefail
+
+REPO="${REPO:-https://github.com/hami9/Astolfo}"
+BRANCH="${BRANCH:-main}"
+APP_DIR="${APP_DIR:-/opt/astolfo}"
+APP_USER="${APP_USER:-astolfo}"
+ENV_FILE="$APP_DIR/.env"
+SERVICE="/etc/systemd/system/astolfo.service"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run this as root (use sudo)" >&2
+  exit 1
+fi
+
+echo "==> installing system packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq git ffmpeg python3 python3-venv python3-pip ca-certificates
+
+echo "==> creating service user"
+id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
+
+echo "==> fetching the code"
+if [ -d "$APP_DIR/.git" ]; then
+  git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
+  git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
+else
+  rm -rf "$APP_DIR"
+  git clone --quiet --branch "$BRANCH" --depth 1 "$REPO" "$APP_DIR"
+fi
+
+echo "==> installing python dependencies"
+python3 -m venv "$APP_DIR/.venv"
+"$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
+"$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "==> credentials"
+  read -rp "TELEGRAM_BOT_TOKEN: " TG_TOKEN
+  read -rp "OPENROUTER_API_KEY: " OR_KEY
+  read -rp "command language [fa/en] (default fa): " LANG_CHOICE
+  read -rp "daily budget in USD, 0 for unlimited (default 0): " BUDGET
+
+  cat > "$ENV_FILE" <<EOF
+TELEGRAM_BOT_TOKEN=$TG_TOKEN
+OPENROUTER_API_KEY=$OR_KEY
+BOT_LANG=${LANG_CHOICE:-fa}
+DAILY_BUDGET_USD=${BUDGET:-0}
+DATA_DIR=$APP_DIR/data
+KEEPALIVE=0
+EOF
+else
+  echo "==> keeping the existing environment file"
+fi
+
+chmod 600 "$ENV_FILE"
+mkdir -p "$APP_DIR/data"
+chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
+echo "==> installing the systemd service"
+cat > "$SERVICE" <<EOF
+[Unit]
+Description=Astolfo Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/main.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now astolfo
+sleep 3
+
+echo
+echo "==> status"
+systemctl --no-pager --lines=15 status astolfo || true
+echo
+echo "Done. Useful commands:"
+echo "  journalctl -u astolfo -f      # follow the log"
+echo "  systemctl restart astolfo     # restart"
+echo "  bash $APP_DIR/deploy/vps-setup.sh   # re-run to update to the latest code"
