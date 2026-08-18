@@ -25,6 +25,29 @@ It does need a process that stays running.
 Note that a Repl's filesystem is reset on some redeploys; `data/` holds only settings,
 notes and usage history, so losing it costs nothing except accumulated budget counters.
 
+## A plain VPS (one command)
+
+On a fresh Debian or Ubuntu server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hami9/Astolfo/main/deploy/vps-setup.sh | sudo bash
+```
+
+It installs ffmpeg and the Python dependencies, creates a dedicated service user,
+asks for the two credentials, writes them to a root-only environment file, and
+registers a systemd service that restarts on failure and starts at boot. Re-run the
+same script to update to the latest code.
+
+The smallest plan any provider sells is enough: the bot idles at well under 300 MB of
+RAM and spends almost all its time waiting on network calls. One shared core and 1 GB
+of RAM is comfortable.
+
+**Pick a region outside Iran.** Telegram's Bot API and OpenRouter are not reliably
+reachable from Iranian IP ranges, and OpenRouter geo-blocks some of them outright, so a
+European datacenter (Frankfurt, Amsterdam, Helsinki) is the practical choice even when
+buying from an Iranian reseller. Prefer Ubuntu LTS: `ffmpeg` and `python3-venv` are one
+`apt install` away.
+
 ## Docker
 
 ```bash
@@ -39,7 +62,9 @@ docker run -d --name astolfo --restart unless-stopped \
 
 The image includes ffmpeg and writes state to the `/data` volume.
 
-## systemd on a VPS
+## systemd by hand
+
+If you would rather not run the setup script, this is what it configures:
 
 ```ini
 [Unit]
