@@ -147,14 +147,103 @@ async def test_exhausting_everything_is_reported_as_throttled(settings, monkeypa
     assert len({host for host, _ in seen}) == 2, "both were tried before giving up"
 
 
-async def test_a_bad_request_does_not_burn_the_other_services(settings, monkeypatch):
-    """Only an exhausted allowance means try elsewhere; our own mistake does not."""
+async def test_a_rejected_request_is_offered_to_the_next_service(settings, monkeypatch):
+    """Services disagree about which fields they accept, so a 400 is not the end."""
     seen: list[tuple[str, str]] = []
     client = _multi(settings, monkeypatch, _router({"openrouter.ai": 400}, seen))
     await client.load_catalog()
 
     result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
 
+    assert result.ok, "the service that understood the request answered"
+    assert [host for host, _ in seen][0] == "openrouter.ai"
+    assert "generativelanguage.googleapis.com" in [host for host, _ in seen]
+
+
+async def test_a_rejected_request_does_not_rest_the_service(settings, monkeypatch):
+    """A malformed request says nothing about the allowance, so nothing is paused."""
+    seen: list[tuple[str, str]] = []
+    client = _multi(settings, monkeypatch, _router({"openrouter.ai": 400}, seen))
+    await client.load_catalog()
+
+    await client.chat([{"role": "user", "content": "one"}], model="anything")
+    seen.clear()
+    await client.chat([{"role": "user", "content": "two"}], model="anything")
+
+    assert seen[0][0] == "openrouter.ai", "still first in line"
+
+
+async def test_a_request_nobody_accepts_ends_the_turn(settings, monkeypatch):
+    seen: list[tuple[str, str]] = []
+    everywhere = {"openrouter.ai": 400, "generativelanguage.googleapis.com": 400}
+    client = _multi(settings, monkeypatch, _router(everywhere, seen))
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
     assert not result.ok
-    assert result.error_kind is None
-    assert len({host for host, _ in seen}) == 1, "the second service was never asked"
+    assert result.error_kind == "rejected"
+    assert len({host for host, _ in seen}) == 2, "both were asked before giving up"
+
+
+# -- request shape --------------------------------------------------------
+OPENROUTER_ONLY = ("models", "plugins", "provider", "usage", "reasoning")
+
+
+def _recorder(bodies: dict[str, dict]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=CATALOG)
+        body = json.loads(request.content)
+        bodies[request.url.host] = body
+        return httpx.Response(
+            200,
+            json={
+                "model": body["model"],
+                "choices": [{"message": {"content": "ehehe~"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "cost": 0},
+            },
+        )
+
+    return handler
+
+
+async def test_plain_services_are_sent_a_plain_request(settings, monkeypatch):
+    """OpenRouter's extras are rejected outright by an ordinary OpenAI endpoint."""
+    bodies: dict[str, dict] = {}
+    client = _multi(settings, monkeypatch, _recorder(bodies), order=("google",))
+    await client.load_catalog()
+
+    await client.chat(
+        [{"role": "user", "content": "hi"}],
+        model="anything",
+        reasoning={"effort": "low"},
+        web=True,
+    )
+
+    body = bodies["generativelanguage.googleapis.com"]
+    assert [key for key in OPENROUTER_ONLY if key in body] == []
+    assert body["messages"] and body["model"]
+
+
+async def test_openrouter_still_gets_its_extras(settings, monkeypatch):
+    bodies: dict[str, dict] = {}
+    client = _multi(settings, monkeypatch, _recorder(bodies), order=("openrouter",))
+    await client.load_catalog()
+
+    await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert bodies["openrouter.ai"].get("usage") == {"include": True}
+
+
+async def test_a_refused_key_steps_aside_for_the_next_service(settings, monkeypatch):
+    seen: list[tuple[str, str]] = []
+    client = _multi(settings, monkeypatch, _router({"openrouter.ai": 401}, seen))
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "one"}], model="anything")
+    assert result.ok, "the service with a working key answered"
+
+    seen.clear()
+    await client.chat([{"role": "user", "content": "two"}], model="anything")
+    assert all(host != "openrouter.ai" for host, _ in seen), "a bad key stays bad"

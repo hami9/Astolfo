@@ -25,6 +25,8 @@ class Preset:
     models: list[str] = field(default_factory=list)
     vision_models: list[str] = field(default_factory=list)
     discovers_free_models: bool = False
+    # OpenRouter adds fields plain OpenAI-compatible services reject outright.
+    openrouter_extensions: bool = False
 
 
 PRESETS: dict[str, Preset] = {
@@ -33,6 +35,7 @@ PRESETS: dict[str, Preset] = {
         base_url="https://openrouter.ai/api/v1",
         key_env="OPENROUTER_API_KEY",
         discovers_free_models=True,
+        openrouter_extensions=True,
     ),
     "google": Preset(
         name="google",
@@ -68,9 +71,11 @@ class Provider:
     name: str
     base_url: str
     api_key: str
+    key_env: str = ""
     models: list[str] = field(default_factory=list)
     vision_models: list[str] = field(default_factory=list)
     discovers_free_models: bool = False
+    openrouter_extensions: bool = False
     paused_until: float = 0.0
     last_request: float = 0.0  # each service has its own per-minute allowance
 
@@ -115,11 +120,13 @@ def discover(order: list[str], *, fallback_key: str = "") -> list[Provider]:
                 name=name,
                 base_url=_env(f"{prefix}_BASE_URL", preset.base_url),
                 api_key=key,
+                key_env=preset.key_env,
                 models=_env_list(f"{prefix}_MODELS") or list(preset.models),
                 vision_models=(
                     _env_list(f"{prefix}_VISION_MODELS") or list(preset.vision_models)
                 ),
                 discovers_free_models=preset.discovers_free_models,
+                openrouter_extensions=preset.openrouter_extensions,
             )
         )
     return providers

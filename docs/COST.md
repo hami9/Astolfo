@@ -193,6 +193,13 @@ limits: that breaks the terms every provider sets, and since all the traffic com
 from one server with one usage pattern it typically ends with every account closed,
 including any that has credit on it.
 
+Only OpenRouter is sent OpenRouter's own request fields — the fallback model list,
+the web-search plugin, the provider-sort hint and the usage accounting. Everything
+else gets a plain OpenAI-compatible body, because an ordinary endpoint answers an
+unknown field with a 400 rather than ignoring it. A request one service rejects is
+offered to the next, and so is a key one service refuses, so a stale `GOOGLE_API_KEY`
+costs a log line rather than the turn.
+
 Each service is asked for its own models — the one that publishes a catalog gets the
 discovered free list, the rest get what their preset or `<NAME>_MODELS` names. Presets
 carry only the endpoint and some model names, and both are overridable
