@@ -472,3 +472,102 @@ async def test_fallback_chain_respects_the_api_limit(settings):
     assert chain[0] == bodies[0]["model"]
     assert len(set(chain)) == len(chain), "no duplicates in the chain"
     await client.aclose()
+
+
+def _empty_from(broken: set[str], seen: list[str]):
+    """A model that answers with nothing at all, as seen in production."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=CATALOG)
+        body = json.loads(request.content)
+        model = body["model"]
+        seen.append(model)
+        content = "" if model in broken else "ehehe~"
+        return httpx.Response(
+            200,
+            json={
+                "model": model,
+                "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 0, "cost": 0},
+            },
+        )
+
+    return handler
+
+
+async def test_a_silent_model_is_swapped_not_retried(settings, monkeypatch):
+    slept: list[float] = []
+
+    async def record(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", record)
+    seen: list[str] = []
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_empty_from({"free/text-large"}, seen)),
+    )
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert result.ok, "another model should have answered"
+    assert seen.count("free/text-large") == 1, "the silent model is tried once, not five times"
+    assert slept == [], "swapping beats waiting for a model that returns nothing"
+    await client.aclose()
+
+
+async def test_reasoning_is_dropped_before_blaming_the_model(settings, monkeypatch):
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=CATALOG)
+        body = json.loads(request.content)
+        bodies.append(body)
+        content = "" if "reasoning" in body else "ehehe~"
+        return httpx.Response(
+            200,
+            json={
+                "model": body["model"],
+                "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "cost": 0},
+            },
+        )
+
+    client = LLMClient(free_settings(settings), transport=httpx.MockTransport(handler))
+    await client.load_catalog()
+
+    result = await client.chat(
+        [{"role": "user", "content": "hi"}], model="anything", reasoning={"max_tokens": 0}
+    )
+
+    assert result.ok
+    assert bodies[0]["model"] == bodies[1]["model"], "the same model gets a second chance"
+    assert "reasoning" not in bodies[1]
+    await client.aclose()
+
+
+async def test_a_silent_model_rests_for_later_messages(settings, monkeypatch):
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
+    seen: list[str] = []
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_empty_from({"free/text-large"}, seen)),
+    )
+    await client.load_catalog()
+
+    await client.chat([{"role": "user", "content": "one"}], model="anything")
+    seen.clear()
+    await client.chat([{"role": "user", "content": "two"}], model="anything")
+
+    assert "free/text-large" not in seen, "a silent model is skipped on the next message"
+    await client.aclose()
