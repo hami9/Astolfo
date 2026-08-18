@@ -1,5 +1,6 @@
 import pytest
 
+from astolfo import routing
 from astolfo.persona import FAST, SEARCH, SERIOUS, THINK
 from astolfo.routing import CONFIDENT, heuristic
 
@@ -128,3 +129,19 @@ async def test_budget_downgrade_applies_to_ordinary_messages(rt):
 async def test_user_pinned_mode_is_labelled(rt):
     decision, _ = await rt.router.decide(text="anything at all", forced_mode=SEARCH)
     assert decision.source == "user" and decision.web is True
+
+
+def test_dispatcher_prompt_excludes_banter_from_serious():
+    """Group trash talk was reaching the expensive model as genuine distress."""
+    prompt = " ".join(routing.DISPATCHER_PROMPT.lower().split())
+    assert "insults or threats aimed at the bot" in prompt
+    assert "when in doubt it is \"fast\"" in prompt
+    assert "group chats are mostly banter" in prompt
+
+
+def test_serious_mode_can_drop_the_concern_if_it_is_banter():
+    from astolfo import persona
+
+    block = " ".join(persona.MODE_BLOCKS[SERIOUS].lower().split())
+    assert "do not perform concern" in block
+    assert "unbothered voice" in block
