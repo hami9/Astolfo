@@ -44,9 +44,9 @@ class Runtime:
             self.blocked.discard(user_id)
 
     @classmethod
-    def build(cls, settings: Settings) -> Runtime:
+    def build(cls, settings: Settings, database: Database | None = None) -> Runtime:
         llm = LLMClient(settings)
-        database = open_database(settings.data_dir)
+        database = database or open_database(settings.data_dir)
         return cls(
             settings=settings,
             llm=llm,
@@ -56,6 +56,24 @@ class Runtime:
             strings=Strings(settings.locale),
             db=database,
         )
+
+    async def reconfigure(self, settings: Settings) -> None:
+        """Adopt changed settings in place, so a key swap needs no restart.
+
+        The chat store is deliberately kept: it holds the running conversations
+        and their locks, and dropping it would make every group forget mid-reply.
+        """
+        previous = self.llm
+        self.settings = settings
+        self.llm = LLMClient(settings)
+        self.store.configure(settings)
+        self.router.configure(settings, self.llm)
+        self.budget.configure(settings)
+        self.strings = Strings(settings.locale)
+        self.responses = TTLCache(maxsize=512, ttl=settings.response_cache_ttl)
+        await self.llm.load_catalog()
+        await previous.aclose()
+        log.info("settings reloaded: %s", ", ".join(p.name for p in self.llm.providers))
 
     def record(self, *, mode: str, model: str, usage: Usage, chat_id: int | None = None) -> None:
         if usage.total_tokens or usage.cost:

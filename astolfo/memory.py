@@ -129,6 +129,9 @@ class ChatStore:
         self._evict()
         return state
 
+    def configure(self, settings: Settings) -> None:
+        self._s = settings
+
     def all_states(self) -> list[ChatState]:
         return list(self._chats.values())
 

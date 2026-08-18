@@ -169,6 +169,11 @@ class Router:
         self.cache: TTLCache[Decision] = TTLCache(maxsize=1024, ttl=settings.router_cache_ttl)
         self.llm_calls = 0
 
+    def configure(self, settings: Settings, llm: LLMClient) -> None:
+        """Adopt reloaded settings, keeping the decisions already cached."""
+        self._s = settings
+        self._llm = llm
+
     async def decide(
         self,
         *,

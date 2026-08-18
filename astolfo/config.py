@@ -175,7 +175,8 @@ class Settings:
     log_level: str = _env("LOG_LEVEL", default="INFO")
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls, *, validate: bool = True) -> Settings:
+        """Read the environment. Pass validate=False while keys may still be in the db."""
         values = {}
         for f in fields(cls):
             env_name = f.metadata.get("env")
@@ -192,11 +193,16 @@ class Settings:
             values = {**FREE_MODE_PRESET, **values}
 
         settings = cls(**values)
+        if validate:
+            settings.validate()
+        return settings
+
+    def validate(self) -> None:
         missing = [
             name
             for name, value in (
-                ("TELEGRAM_BOT_TOKEN", settings.telegram_token),
-                ("OPENROUTER_API_KEY", settings.api_key),
+                ("TELEGRAM_BOT_TOKEN", self.telegram_token),
+                ("OPENROUTER_API_KEY", self.api_key),
             )
             if not value
         ]
@@ -204,9 +210,8 @@ class Settings:
             raise ConfigError(
                 "missing required environment variables: "
                 + ", ".join(missing)
-                + " (set them in Replit Secrets or a local .env file)"
+                + " (set them in the .env file, or from the bot's panel once it runs)"
             )
-        return settings
 
     @property
     def chat_url(self) -> str:

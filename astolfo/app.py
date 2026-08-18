@@ -20,7 +20,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import chat, commands, donate, media, membership, runtime
+from . import chat, commands, donate, media, membership, runtime, settings_store
 from .config import ConfigError, Settings
 from .runtime import Runtime
 
@@ -63,7 +63,7 @@ async def _autosave(rt: Runtime) -> None:
 
 async def post_init(app: Application) -> None:
     settings: Settings = app.bot_data["settings"]
-    rt = Runtime.build(settings)
+    rt = Runtime.build(settings, app.bot_data.get("db"))
     app.bot_data[runtime.KEY] = rt
 
     await rt.llm.load_catalog()
@@ -123,7 +123,7 @@ CONTENT_FILTER = (
 )
 
 
-def build_application(settings: Settings) -> Application:
+def build_application(settings: Settings, database=None) -> Application:
     builder = (
         ApplicationBuilder()
         .token(settings.telegram_token)
@@ -136,6 +136,7 @@ def build_application(settings: Settings) -> Application:
 
     app = builder.build()
     app.bot_data["settings"] = settings
+    app.bot_data["db"] = database
 
     for name, handler in (
         ("start", commands.start),
@@ -164,12 +165,12 @@ def build_application(settings: Settings) -> Application:
 
 def run() -> None:
     try:
-        settings = Settings.from_env()
+        settings, database, _box = settings_store.bootstrap()
     except ConfigError as exc:
         raise SystemExit(f"configuration error: {exc}") from None
 
     if settings.keepalive:
         start_keepalive(settings.keepalive_port)
-    build_application(settings).run_polling(
+    build_application(settings, database).run_polling(
         drop_pending_updates=True, allowed_updates=Update.ALL_TYPES
     )
