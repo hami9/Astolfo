@@ -219,6 +219,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if not allowance.allow_web and decision.web:
                 decision = Decision(decision.mode, False, decision.source, "web disabled by budget")
 
+            if bundle.has_content and not _can_read_media(rt, bundle):
+                # A text-only model would reject the parts outright; say so instead.
+                bundle.parts.clear()
+                bundle.notes.append(
+                    "You cannot see attachments right now because the bot is running on a "
+                    "text-only model. Say so honestly in one line and ask what is in it."
+                )
+                log.info("chat %s: media dropped, no vision model available", chat.id)
+
             params = model_params(settings, decision, bundle.has_content)
             log.info("chat %s | %s | %s | %s", chat.id, sender, decision, params["model"])
 
@@ -277,6 +286,16 @@ async def _announce_failure(rt: Runtime, state: ChatState, message, result: Chat
     if now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
         state.error_notice_at = now
         await send_reply(message, rt.strings("error_reply"))
+
+
+def _can_read_media(rt: Runtime, bundle: media_mod.MediaBundle) -> bool:
+    """Audio needs a paid model; images (including sampled GIF frames) may not."""
+    if not rt.settings.free_mode:
+        return True
+    wants_audio = any(part.get("type") == "input_audio" for part in bundle.parts)
+    if wants_audio:
+        return False
+    return rt.llm.supports_free_vision()
 
 
 def _should_join(rt: Runtime, state: ChatState, kind: str) -> bool:

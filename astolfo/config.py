@@ -48,6 +48,24 @@ class ConfigError(RuntimeError):
     pass
 
 
+# Every entry removes model calls per message, because free models are rationed by
+# request count. Web search is off because the search plugin is billed even when
+# the model itself is free.
+FREE_MODE_PRESET = {
+    "web_search": False,
+    "router_llm": False,
+    "summaries": False,
+    "group_reply_chance": 0.12,
+    "reply_cooldown": 45.0,
+    "response_cache_ttl": 1800.0,
+    "max_retries": 2,
+    # Free vision models take images but are small; fewer, smaller frames keep a
+    # GIF within what they will accept.
+    "video_frames": 2,
+    "image_max_dim": 768,
+}
+
+
 @dataclass(frozen=True)
 class Settings:
     """All tunables. Every field maps to an environment variable."""
@@ -69,6 +87,12 @@ class Settings:
         default_factory=lambda: ["openai/gpt-4o-mini", "anthropic/claude-3.5-haiku"],
     )
     provider_sort: str | None = _env("PROVIDER_SORT", default=None)  # price | throughput
+
+    # Free mode: run on OpenRouter's zero-cost models. The limit there is requests
+    # per minute and per day rather than tokens, so anything that spends an extra
+    # request per message is switched off by the preset below.
+    free_mode: bool = _env("FREE_MODE", default=False)
+    free_models: list[str] = _env("FREE_MODELS", default_factory=list)
 
     # --- generation --------------------------------------------------
     temperature_fast: float = _env("TEMPERATURE_FAST", default=0.95)
@@ -148,6 +172,10 @@ class Settings:
                 values[f.name] = _coerce(str(f.type), raw)
             except (TypeError, ValueError) as exc:
                 raise ConfigError(f"invalid value for {env_name}: {raw!r} ({exc})") from exc
+
+        if values.get("free_mode"):
+            # Explicit environment variables still win over the preset.
+            values = {**FREE_MODE_PRESET, **values}
 
         settings = cls(**values)
         missing = [

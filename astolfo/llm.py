@@ -81,6 +81,8 @@ class LLMClient:
             limits=httpx.Limits(max_connections=40, max_keepalive_connections=15),
         )
         self._catalog: set | None = None
+        self._free_text: list[str] = []
+        self._free_vision: list[str] = []
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -90,13 +92,75 @@ class LLMClient:
         try:
             resp = await self._client.get(self._s.models_url, timeout=25.0)
             resp.raise_for_status()
-            self._catalog = {m["id"] for m in resp.json().get("data", []) if m.get("id")}
-            log.info("loaded model catalog (%d models)", len(self._catalog))
+            entries = resp.json().get("data", [])
         except Exception as exc:
             log.warning("could not load model catalog (%s); skipping validation", exc)
             self._catalog = None
+            self._seed_free_models()
+            return
 
-    def resolve(self, model: str) -> str:
+        self._catalog = {m["id"] for m in entries if m.get("id")}
+        log.info("loaded model catalog (%d models)", len(self._catalog))
+        self._index_free_models(entries)
+
+    @staticmethod
+    def _is_free(entry: dict) -> bool:
+        pricing = entry.get("pricing") or {}
+        try:
+            return all(
+                float(pricing.get(key, 1) or 0) == 0.0 for key in ("prompt", "completion")
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def _index_free_models(self, entries: list[dict]) -> None:
+        """Discover zero-cost models instead of shipping a list that goes stale."""
+        text: list[tuple[int, str]] = []
+        vision: list[tuple[int, str]] = []
+        for entry in entries:
+            model_id = entry.get("id")
+            if not model_id or not self._is_free(entry):
+                continue
+            context = int(entry.get("context_length") or 0)
+            modalities = (entry.get("architecture") or {}).get("input_modalities") or []
+            if "image" in modalities:
+                vision.append((context, model_id))
+            text.append((context, model_id))
+
+        # Longest context first: the persona prompt alone is a few thousand tokens.
+        self._free_text = [m for _, m in sorted(text, reverse=True)]
+        self._free_vision = [m for _, m in sorted(vision, reverse=True)]
+        if self._s.free_mode:
+            log.info(
+                "free mode: %d free models available (%d of them read images)",
+                len(self._free_text),
+                len(self._free_vision),
+            )
+            if not self._free_text:
+                log.error("free mode is on but no zero-cost model was found")
+
+    def _seed_free_models(self) -> None:
+        """Fall back to the configured list when the catalog cannot be read."""
+        self._free_text = list(self._s.free_models)
+        self._free_vision = []
+
+    def free_pool(self, *, vision: bool = False) -> list[str]:
+        configured = list(self._s.free_models)
+        if configured:
+            return configured
+        pool = self._free_vision if vision else self._free_text
+        return list(pool)
+
+    def supports_free_vision(self) -> bool:
+        return bool(self.free_pool(vision=True))
+
+    def resolve(self, model: str, *, vision: bool = False) -> str:
+        if self._s.free_mode:
+            pool = self.free_pool(vision=vision) or self.free_pool()
+            if pool:
+                return pool[0]
+            log.warning("free mode is on but no free model is known; using %s", model)
+            return model
         if not self._catalog or model in self._catalog:
             return model
         for candidate in self._s.fallback_models:
@@ -125,8 +189,12 @@ class LLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if fallbacks and self._s.fallback_models:
-            payload["models"] = [model] + [m for m in self._s.fallback_models if m != model]
+        if fallbacks:
+            # OpenRouter tries these in order when the first is rate limited or
+            # errors, which is what keeps a rationed free model usable.
+            alternatives = self.free_pool() if self._s.free_mode else self._s.fallback_models
+            if alternatives:
+                payload["models"] = [model] + [m for m in alternatives if m != model][:5]
         if reasoning:
             payload["reasoning"] = reasoning
         if web and self._s.web_search:
@@ -180,7 +248,8 @@ class LLMClient:
         fallbacks: bool = True,
         max_retries: int | None = None,
     ) -> ChatResult:
-        model = self.resolve(model)
+        vision = any(isinstance(m.get("content"), list) for m in messages)
+        model = self.resolve(model, vision=vision)
         retries = self._s.max_retries if max_retries is None else max_retries
         delay = 1.5
         last_error = "unknown"
