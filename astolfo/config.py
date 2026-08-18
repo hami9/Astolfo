@@ -96,6 +96,11 @@ class Settings:
     # Free-tier limits are counted per account, not per model, so the whole bot
     # shares one budget of requests per minute no matter how many chats it serves.
     free_rpm: int = _env("FREE_RPM", default=8)
+    # Services to draw on, in order. Each keeps its own allowance, so stacking
+    # them multiplies the daily budget without stacking accounts at one service.
+    providers: list[str] = _env(
+        "PROVIDERS", default_factory=lambda: ["openrouter"]
+    )
 
     # --- generation --------------------------------------------------
     temperature_fast: float = _env("TEMPERATURE_FAST", default=0.95)

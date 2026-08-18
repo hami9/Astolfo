@@ -139,11 +139,12 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _billing_label(rt) -> str:
+    services = ", ".join(p.name for p in rt.llm.providers)
     if not rt.settings.free_mode:
-        return "paid models"
+        return f"paid models via {services}"
     pool = rt.llm.free_pool()
     vision = "with images" if rt.llm.supports_free_vision() else "text only"
-    return f"free models ({len(pool)} available, {vision})"
+    return f"free models via {services} ({len(pool)} available, {vision})"
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

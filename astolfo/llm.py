@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from . import providers as providers_mod
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -86,59 +87,99 @@ class LLMClient:
         self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
         self._s = settings
-        self._client = httpx.AsyncClient(
-            transport=transport,
-            timeout=httpx.Timeout(settings.request_timeout, connect=20.0),
-            headers={
-                "Authorization": f"Bearer {settings.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": settings.app_url,
-                "X-Title": settings.app_title,
-            },
-            limits=httpx.Limits(max_connections=40, max_keepalive_connections=15),
+        self._transport = transport
+        self.providers = providers_mod.discover(
+            settings.providers, fallback_key=settings.api_key
         )
+        if not self.providers:
+            # Nothing named a key, so fall back to the plain single-service setup.
+            self.providers = [
+                providers_mod.Provider(
+                    name="openrouter",
+                    base_url=settings.api_base,
+                    api_key=settings.api_key,
+                    discovers_free_models=True,
+                )
+            ]
+        for unknown in providers_mod.unknown_names(settings.providers):
+            log.warning("unknown provider %r in PROVIDERS, ignoring", unknown)
+        if len(self.providers) > 1:
+            log.info("providers: %s", ", ".join(p.name for p in self.providers))
+
+        self._clients = {p.name: self._build_client(p) for p in self.providers}
+        self._client = self._clients[self.providers[0].name]
         self._catalog: set | None = None
         self._free_text: list[str] = []
         self._free_vision: list[str] = []
         self._free_audio: list[str] = []
         self._cooldowns: dict[str, float] = {}
         self._scores: dict[str, int] = {}
-        self._paused_until = 0.0
-        self._last_request = 0.0
         self._pace_lock = asyncio.Lock()
 
+    def _build_client(self, provider: providers_mod.Provider) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=self._transport,
+            timeout=httpx.Timeout(self._s.request_timeout, connect=20.0),
+            headers={
+                "Authorization": f"Bearer {provider.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": self._s.app_url,
+                "X-Title": self._s.app_title,
+            },
+            limits=httpx.Limits(max_connections=40, max_keepalive_connections=15),
+        )
+
+    def _live_providers(self) -> list[providers_mod.Provider]:
+        now = time.monotonic()
+        return [p for p in self.providers if p.paused_until <= now]
+
+    def _pause_provider(self, provider: providers_mod.Provider, seconds: float) -> None:
+        provider.paused_until = max(provider.paused_until, time.monotonic() + seconds)
+        others = [p.name for p in self._live_providers()]
+        log.warning(
+            "%s is out of allowance, resting it for %.0fs%s",
+            provider.name,
+            seconds,
+            f"; falling back to {', '.join(others)}" if others else "; nothing left to try",
+        )
+
     async def aclose(self) -> None:
-        await self._client.aclose()
+        for client in self._clients.values():
+            await client.aclose()
 
-    # -- account-wide pacing ---------------------------------------------
+    # -- allowances -------------------------------------------------------
     def throttled_for(self) -> float:
-        """Seconds until the account-wide pause lifts, 0 when it is not paused."""
-        return max(0.0, self._paused_until - time.monotonic())
+        """Seconds until any service is usable again, 0 while one still is."""
+        now = time.monotonic()
+        remaining = [p.paused_until - now for p in self.providers]
+        return max(0.0, min(remaining)) if remaining else 0.0
 
-    def _pause_account(self, seconds: float) -> None:
-        self._paused_until = max(self._paused_until, time.monotonic() + seconds)
-        log.warning("free tier limit hit; pausing all requests for %.0fs", seconds)
+    async def _pace(self, provider: providers_mod.Provider) -> None:
+        """Space requests out so a per-minute allowance is not blown.
 
-    async def _pace(self) -> None:
-        """Space requests out so the shared per-minute allowance is not blown.
-
-        Every chat draws on the same account budget, so the gap is global rather
-        than per chat.
+        Every chat draws on the same account budget, so the gap is shared across
+        chats, but each service keeps its own clock.
         """
         rpm = self._s.free_rpm
         if not self._s.free_mode or rpm <= 0:
             return
         gap = 60.0 / rpm
         async with self._pace_lock:
-            wait = self._last_request + gap - time.monotonic()
+            wait = provider.last_request + gap - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
-            self._last_request = time.monotonic()
+            provider.last_request = time.monotonic()
 
     # -- model catalog ---------------------------------------------------
     async def load_catalog(self) -> None:
+        discovering = next((p for p in self.providers if p.discovers_free_models), None)
+        if discovering is None:
+            log.info("no provider advertises a free catalog; using configured models")
+            self._seed_free_models()
+            return
+        client = self._clients[discovering.name]
         try:
-            resp = await self._client.get(self._s.models_url, timeout=25.0)
+            resp = await client.get(discovering.models_url, timeout=25.0)
             resp.raise_for_status()
             entries = resp.json().get("data", [])
         except Exception as exc:
@@ -264,6 +305,24 @@ class LLMClient:
                 return candidate
         return None
 
+    def _pick_model(
+        self,
+        provider: providers_mod.Provider,
+        requested: str,
+        *,
+        vision: bool = False,
+        audio: bool = False,
+    ) -> str:
+        """What to ask this particular service for.
+
+        Only the service that publishes a catalog can be asked for free models by
+        discovery; the rest answer with whatever their configuration names.
+        """
+        if provider.discovers_free_models:
+            return self.resolve(requested, vision=vision, audio=audio)
+        options = provider.vision_models if vision else provider.models
+        return (options or provider.models or [requested])[0]
+
     def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         if self._s.free_mode:
             pool = self.free_pool(vision=vision, audio=audio) or self.free_pool()
@@ -360,10 +419,62 @@ class LLMClient:
         fallbacks: bool = True,
         max_retries: int | None = None,
     ) -> ChatResult:
+        """Try each configured service in turn; one being spent is not the end."""
         parts = [p for m in messages if isinstance(m.get("content"), list) for p in m["content"]]
         vision = any(p.get("type") == "image_url" for p in parts)
         audio = any(p.get("type") == "input_audio" for p in parts)
-        model = self.resolve(model, vision=vision, audio=audio)
+
+        live = self._live_providers()
+        if not live:
+            waits = [p.paused_until - time.monotonic() for p in self.providers]
+            return ChatResult(
+                error=f"every provider is resting for another {max(waits):.0f}s",
+                error_kind="throttled",
+            )
+
+        last = ChatResult(error="no provider attempted", error_kind="throttled")
+        for provider in live:
+            last = await self._chat_with(
+                provider,
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+                web=web,
+                response_format=response_format,
+                fallbacks=fallbacks,
+                max_retries=max_retries,
+                vision=vision,
+                audio=audio,
+            )
+            if last.ok:
+                return last
+            if last.error_kind in ("throttled", "payment"):
+                if provider.paused_until <= time.monotonic():
+                    self._pause_provider(provider, ACCOUNT_PAUSE)
+                continue  # a spent service says nothing about the next one
+            return last
+        return last
+
+    async def _chat_with(
+        self,
+        provider: providers_mod.Provider,
+        messages: list[dict],
+        *,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        reasoning: dict | None,
+        web: bool,
+        response_format: dict | None,
+        fallbacks: bool,
+        max_retries: int | None,
+        vision: bool,
+        audio: bool,
+    ) -> ChatResult:
+        client = self._clients[provider.name]
+        model = self._pick_model(provider, model, vision=vision, audio=audio)
 
         retries = self._s.max_retries if max_retries is None else max_retries
         if self._s.free_mode:
@@ -373,14 +484,9 @@ class LLMClient:
         delay = 1.5
         last_error = "unknown"
 
-        pause = self.throttled_for()
-        if pause > 0:
-            log.info("skipping request, free tier paused for another %.0fs", pause)
-            return ChatResult(error=f"rate limited for {pause:.0f}s", error_kind="throttled")
-
         for attempt in range(1, retries + 1):
             tried.add(model)
-            await self._pace()
+            await self._pace(provider)
             payload = self._payload(
                 model=model,
                 messages=messages,
@@ -392,17 +498,17 @@ class LLMClient:
                 fallbacks=fallbacks,
             )
             try:
-                resp = await self._client.post(self._s.chat_url, json=payload)
+                resp = await client.post(provider.chat_url, json=payload)
 
                 if resp.status_code == 429 or resp.status_code >= 500:
                     last_error = f"HTTP {resp.status_code}"
                     if self._s.free_mode and resp.status_code == 429:
-                        # The free allowance belongs to the account, so the next
-                        # model is just as limited. Trying them all in turn spends
-                        # five requests to learn the same thing.
-                        self._pause_account(_retry_after(resp, ACCOUNT_PAUSE))
+                        # The allowance belongs to this account, so every model
+                        # behind it is equally limited; the caller moves on to the
+                        # next service rather than touring this one's models.
+                        self._pause_provider(provider, _retry_after(resp, ACCOUNT_PAUSE))
                         return ChatResult(
-                            error="HTTP 429: free tier limit", error_kind="throttled"
+                            error=f"HTTP 429: {provider.name} limit", error_kind="throttled"
                         )
                     wait = _retry_after(resp, delay)
                     log.warning(
@@ -427,7 +533,7 @@ class LLMClient:
                     return ChatResult(error=f"HTTP 400: {body[:200]}")
 
                 if resp.status_code == 402:
-                    if self._s.free_mode:
+                    if self._s.free_mode and provider.discovers_free_models:
                         # One model's free allowance is spent; the account is fine.
                         self._rest(model, QUOTA_COOLDOWN)
                         alternative = self._next_free(tried=tried, vision=vision, audio=audio)
@@ -481,7 +587,7 @@ class LLMClient:
 
                 # A model that keeps returning nothing is unusable for this turn,
                 # and waiting will not change that: move to the next one.
-                if self._s.free_mode:
+                if self._s.free_mode and provider.discovers_free_models:
                     self._rest(model, EMPTY_COOLDOWN)
                     self._scores[model] = self._scores.get(model, 0) - 1
                     alternative = self._next_free(tried=tried, vision=vision, audio=audio)

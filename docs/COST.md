@@ -172,3 +172,29 @@ default. Set `DONATE=0` to hide the command entirely.
 
 Received stars are counted in the same daily record as spending and shown by `/usage`,
 and a payment is written to disk immediately rather than at the next autosave.
+
+## Stacking several services
+
+`PROVIDERS` names the services to draw on, in order, and each is used only when its
+key is present:
+
+```bash
+PROVIDERS=openrouter,google,groq
+GOOGLE_API_KEY=...
+GROQ_API_KEY=...
+```
+
+When one runs out of allowance the turn continues on the next rather than failing,
+and the spent one is rested so later messages skip it. Every service keeps its own
+quota, so stacking them multiplies the daily budget.
+
+This is not the same as holding several accounts at one service to get past its
+limits: that breaks the terms every provider sets, and since all the traffic comes
+from one server with one usage pattern it typically ends with every account closed,
+including any that has credit on it.
+
+Each service is asked for its own models — the one that publishes a catalog gets the
+discovered free list, the rest get what their preset or `<NAME>_MODELS` names. Presets
+carry only the endpoint and some model names, and both are overridable
+(`GROQ_BASE_URL`, `GOOGLE_MODELS`, …), so a service changing either is a
+configuration edit rather than a new release. `/status` lists the services in use.
