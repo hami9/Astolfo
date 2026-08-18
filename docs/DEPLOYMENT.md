@@ -30,8 +30,14 @@ notes and usage history, so losing it costs nothing except accumulated budget co
 On a fresh Debian or Ubuntu server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hami9/Astolfo/main/deploy/vps-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/hami9/Astolfo/main/deploy/vps-setup.sh -o setup.sh
+sudo bash setup.sh
 ```
+
+The script is downloaded first rather than piped into bash: it asks for the two
+credentials, and a piped script has no terminal to read the answers from.
+For an unattended install, export `TELEGRAM_BOT_TOKEN` and `OPENROUTER_API_KEY`
+beforehand and it will not prompt at all.
 
 It installs ffmpeg and the Python dependencies, creates a dedicated service user,
 asks for the two credentials, writes them to a root-only environment file, and

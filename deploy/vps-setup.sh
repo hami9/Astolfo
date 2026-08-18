@@ -20,6 +20,14 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# When the script is piped in (curl ... | bash) stdin is the pipe, so prompts
+# would read the script itself instead of the keyboard. Reattach the terminal.
+# Probe first: /dev/tty exists as a node even when no controlling terminal is
+# attached, and a failed exec redirection kills a non-interactive shell.
+if [ ! -t 0 ] && { : < /dev/tty; } 2>/dev/null; then
+  exec < /dev/tty
+fi
+
 echo "==> installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -59,10 +67,27 @@ python3 -m venv "$APP_DIR/.venv"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "==> credentials"
-  read -rp "TELEGRAM_BOT_TOKEN: " TG_TOKEN
-  read -rp "OPENROUTER_API_KEY: " OR_KEY
-  read -rp "command language [fa/en] (default fa): " LANG_CHOICE
-  read -rp "daily budget in USD, 0 for unlimited (default 0): " BUDGET
+  # Already-exported values win, which makes an unattended install possible.
+  TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+  OR_KEY="${OPENROUTER_API_KEY:-}"
+  LANG_CHOICE="${BOT_LANG:-}"
+  BUDGET="${DAILY_BUDGET_USD:-}"
+
+  # Prompting is only safe on a real terminal. Piping the script into bash makes
+  # stdin the script itself, and `read` would silently consume the next line of
+  # source as the answer, so refuse instead of storing garbage.
+  if { [ -z "$TG_TOKEN" ] || [ -z "$OR_KEY" ]; } && [ ! -t 0 ]; then
+    echo "cannot ask for credentials: stdin is not a terminal." >&2
+    echo "download the script and run it, rather than piping it:" >&2
+    echo "  curl -fsSL $REPO/raw/$BRANCH/deploy/vps-setup.sh -o setup.sh && bash setup.sh" >&2
+    echo "or export TELEGRAM_BOT_TOKEN and OPENROUTER_API_KEY before running it." >&2
+    exit 1
+  fi
+
+  while [ -z "$TG_TOKEN" ]; do read -rp "TELEGRAM_BOT_TOKEN: " TG_TOKEN || exit 1; done
+  while [ -z "$OR_KEY" ]; do read -rp "OPENROUTER_API_KEY: " OR_KEY || exit 1; done
+  [ -n "$LANG_CHOICE" ] || read -rp "command language [fa/en] (default fa): " LANG_CHOICE || true
+  [ -n "$BUDGET" ] || read -rp "daily budget in USD, 0 for unlimited (default 0): " BUDGET || true
 
   cat > "$ENV_FILE" <<EOF
 TELEGRAM_BOT_TOKEN=$TG_TOKEN
