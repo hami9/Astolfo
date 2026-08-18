@@ -303,6 +303,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def _announce_failure(rt: Runtime, state: ChatState, message, result: ChatResult) -> None:
     """Say what went wrong, rarely enough that an outage cannot flood the chat."""
     now = time.monotonic()
+    if result.error_kind == "throttled":
+        # Expected on the free tier and it clears by itself within a minute.
+        # Apologising every time would be noisier than the silence.
+        return
     if result.error_kind == "payment":
         # Nothing the chat can do about it, and it will not clear on its own.
         if now - state.budget_notice_at > 3600:

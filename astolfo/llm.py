@@ -28,6 +28,10 @@ RATE_LIMIT_COOLDOWN = 600.0
 EMPTY_COOLDOWN = 600.0
 QUOTA_COOLDOWN = 6 * 3600.0
 
+# A free-tier 429 is account-wide, so every model is equally unavailable and the
+# only useful response is for the whole bot to stop knocking for a while.
+ACCOUNT_PAUSE = 60.0
+
 
 @dataclass(frozen=True)
 class Citation:
@@ -99,9 +103,37 @@ class LLMClient:
         self._free_audio: list[str] = []
         self._cooldowns: dict[str, float] = {}
         self._scores: dict[str, int] = {}
+        self._paused_until = 0.0
+        self._last_request = 0.0
+        self._pace_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    # -- account-wide pacing ---------------------------------------------
+    def throttled_for(self) -> float:
+        """Seconds until the account-wide pause lifts, 0 when it is not paused."""
+        return max(0.0, self._paused_until - time.monotonic())
+
+    def _pause_account(self, seconds: float) -> None:
+        self._paused_until = max(self._paused_until, time.monotonic() + seconds)
+        log.warning("free tier limit hit; pausing all requests for %.0fs", seconds)
+
+    async def _pace(self) -> None:
+        """Space requests out so the shared per-minute allowance is not blown.
+
+        Every chat draws on the same account budget, so the gap is global rather
+        than per chat.
+        """
+        rpm = self._s.free_rpm
+        if not self._s.free_mode or rpm <= 0:
+            return
+        gap = 60.0 / rpm
+        async with self._pace_lock:
+            wait = self._last_request + gap - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request = time.monotonic()
 
     # -- model catalog ---------------------------------------------------
     async def load_catalog(self) -> None:
@@ -341,8 +373,14 @@ class LLMClient:
         delay = 1.5
         last_error = "unknown"
 
+        pause = self.throttled_for()
+        if pause > 0:
+            log.info("skipping request, free tier paused for another %.0fs", pause)
+            return ChatResult(error=f"rate limited for {pause:.0f}s", error_kind="throttled")
+
         for attempt in range(1, retries + 1):
             tried.add(model)
+            await self._pace()
             payload = self._payload(
                 model=model,
                 messages=messages,
@@ -359,12 +397,13 @@ class LLMClient:
                 if resp.status_code == 429 or resp.status_code >= 500:
                     last_error = f"HTTP {resp.status_code}"
                     if self._s.free_mode and resp.status_code == 429:
-                        self._rest(model, RATE_LIMIT_COOLDOWN)
-                        alternative = self._next_free(tried=tried, vision=vision, audio=audio)
-                        if alternative:
-                            log.info("%s is rate limited, switching to %s", model, alternative)
-                            model = alternative
-                            continue
+                        # The free allowance belongs to the account, so the next
+                        # model is just as limited. Trying them all in turn spends
+                        # five requests to learn the same thing.
+                        self._pause_account(_retry_after(resp, ACCOUNT_PAUSE))
+                        return ChatResult(
+                            error="HTTP 429: free tier limit", error_kind="throttled"
+                        )
                     wait = _retry_after(resp, delay)
                     log.warning(
                         "%s (attempt %d/%d), waiting %.1fs", last_error, attempt, retries, wait
