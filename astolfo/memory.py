@@ -86,7 +86,24 @@ class ChatState:
             selected.append(turn)
             used += cost
         selected.reverse()
-        return selected
+        return merge_runs(selected)
+
+
+def merge_runs(turns: list[dict]) -> list[dict]:
+    """Collapse consecutive same-role turns into one message.
+
+    In a group the bot stays quiet most of the time, so unanswered messages pile
+    up as a run of separate `user` turns. A model reads that as a queue of
+    questions and answers every one of them in a single reply; merging the run
+    presents it as what it is, a stretch of conversation it overheard.
+    """
+    merged: list[dict] = []
+    for turn in turns:
+        if merged and merged[-1]["role"] == turn["role"]:
+            merged[-1]["content"] = f"{merged[-1]['content']}\n{turn['content']}"
+        else:
+            merged.append(dict(turn))
+    return merged
 
 
 class ChatStore:

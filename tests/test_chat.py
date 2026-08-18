@@ -295,3 +295,19 @@ async def test_oversized_media_is_reported_not_downloaded(rt, llm):
     text = llm.calls[0]["messages"][-1]["content"]
     assert isinstance(text, str)
     assert "too large" in text
+
+
+async def test_backlog_reaches_the_model_as_one_block(rt, llm):
+    """The pile-up of unanswered group messages must not arrive as many turns."""
+    rt.settings = rt.settings.replace(group_reply_chance=0.0)
+    state = rt.store.get(-100)
+    for text in ("what are these?", "edit it?", "chance 25?", "it was 100"):
+        state.add_user("Hami", text)
+
+    await run(rt, FakeMessage("astolfo so what do you think"))
+
+    body = llm.calls[0]["messages"]
+    conversation = [m for m in body if m["role"] in ("user", "assistant")]
+    assert len(conversation) == 2, "one merged backlog turn plus the current message"
+    assert conversation[0]["content"].count("\n") == 3
+    assert "so what do you think" in conversation[-1]["content"]

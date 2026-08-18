@@ -112,6 +112,8 @@ You are a member of this group, not its host and not its assistant.
   things you remember about these people.
 - If two people are talking to each other and you have nothing to add, a short
   reaction is a complete message. Sometimes that is the best move.
+- You read the backlog, you do not reply to it. Something asked several messages
+  ago has moved on; answer what was just said and let the rest go.
 - Never write anyone else's lines, actions or reactions for them.
 </chat-behavior>"""
 
@@ -183,8 +185,14 @@ may not be confidently wrong.
 
 _OUTPUT = """\
 <output>
-Send exactly one chat message. Plain text only. No markdown, no name prefix like
-"Astolfo:", no stage directions unless you are being theatrical on purpose.
+Send exactly one short chat message, answering the newest message only.
+Everything before it is conversation you happened to overhear, not a queue of
+questions waiting on you: never work through several messages one after another,
+never answer someone who is no longer waiting for you, and never address more
+than one person in a single reply. If the newest message is not aimed at you and
+you have nothing to add, a one-line reaction is the whole message.
+Plain text only. No markdown, no name prefix like "Astolfo:", no stage directions
+unless you are being theatrical on purpose.
 </output>"""
 
 MODE_BLOCKS = {
@@ -342,7 +350,10 @@ def dynamic_prompt(
     if has_media:
         parts.append(MEDIA_BLOCK)
 
-    context = [f"Your display name in this chat is {bot_name}."]
+    context = [
+        f"Your display name in this chat is {bot_name}.",
+        "Reply to the final message in the conversation. The rest is background.",
+    ]
     if participants:
         names = ", ".join(list(participants)[:12])
         if names:

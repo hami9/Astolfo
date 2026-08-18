@@ -93,8 +93,8 @@ class Settings:
     group_reply_chance: float = _env("GROUP_REPLY_CHANCE", default=0.30)
     media_reply_chance: float = _env("MEDIA_REPLY_CHANCE", default=0.75)
     reply_cooldown: float = _env("REPLY_COOLDOWN", default=20.0)
-    max_history: int = _env("MAX_HISTORY", default=24)
-    history_char_budget: int = _env("HISTORY_CHAR_BUDGET", default=6000)
+    max_history: int = _env("MAX_HISTORY", default=80)
+    history_char_budget: int = _env("HISTORY_CHAR_BUDGET", default=9000)
     max_input_chars: int = _env("MAX_INPUT_CHARS", default=1200)
     persona_reinject_every: int = _env("PERSONA_REINJECT", default=8)
     locale: str = _env("BOT_LANG", default="en")  # en | fa
