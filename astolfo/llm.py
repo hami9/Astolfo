@@ -173,7 +173,7 @@ class LLMClient:
         self._free_audio = [m for _, m in sorted(audio, reverse=True)]
         if self._s.free_mode:
             log.info(
-                "free mode: %d chat models available (%d read images, %d hear audio)",
+                "free mode: %d chat models available (%d read images, %d hear sound)",
                 len(self._free_text),
                 len(self._free_vision),
                 len(self._free_audio),

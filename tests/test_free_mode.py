@@ -445,3 +445,14 @@ async def test_every_model_exhausted_reports_it(settings, monkeypatch):
     assert result.error_kind == "payment"
     assert len(set(seen)) > 1, "it tried more than one before giving up"
     await client.aclose()
+
+
+async def test_startup_log_names_the_model_that_reads_media(settings):
+    """The media rows must resolve with the flags a real media turn carries."""
+    client = _catalog_client(free_settings(settings))
+    await client.load_catalog()
+
+    assert client.resolve("anything", vision=True) == "free/vision"
+    assert client.resolve("anything", audio=True) == "free/omni-audio"
+    assert client.resolve("anything") == "free/text-large"
+    await client.aclose()
