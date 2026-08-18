@@ -70,7 +70,9 @@ def overview(ctx) -> View:
             counted = f" · {today['requests']} calls"
             if today["failures"]:
                 counted += f", {today['failures']} failed"
-        lines.append(f"{mark} {name} — {detail}{counted}")
+        preset = providers_mod.PRESETS.get(name)
+        note = f" ({preset.note})" if preset and preset.note else ""
+        lines.append(f"{mark} {name}{note} — {detail}{counted}")
         rows.append([button(f"{mark} {name}", "svc", "s", name)])
 
     lines.append("\nThey are tried top to bottom. The first that answers wins.")
@@ -113,6 +115,10 @@ def detail(ctx, name: str) -> View:
     lines = [
         f"{mark} {name}\n",
         f"state: {state}",
+    ]
+    if preset and preset.note:
+        lines.append(f"billing: {preset.note}")
+    lines += [
         f"endpoint: {base}",
         f"models: {', '.join(models) if models else 'discovered from the service'}",
     ]
@@ -123,6 +129,8 @@ def detail(ctx, name: str) -> View:
         )
     if live and any(c.id is None for c in live.credentials):
         lines.append("one key comes from .env")
+    if not rt.db.credentials(name) and preset and preset.signup:
+        lines.append(f"get a key at {preset.signup}")
 
     lines.append("\nkeys:")
     rows: list[list[InlineKeyboardButton]] = []

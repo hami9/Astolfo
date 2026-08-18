@@ -28,6 +28,10 @@ class Preset:
     discovers_free_models: bool = False
     # OpenRouter adds fields plain OpenAI-compatible services reject outright.
     openrouter_extensions: bool = False
+    # Shown in the panel. "free tier" is the service's own offer, not a promise:
+    # what it actually grants is what its test button reports.
+    note: str = ""
+    signup: str = ""
 
 
 PRESETS: dict[str, Preset] = {
@@ -63,6 +67,61 @@ PRESETS: dict[str, Preset] = {
         base_url="https://api.cerebras.ai/v1",
         key_env="CEREBRAS_API_KEY",
         models=["llama-3.3-70b"],
+        note="free tier",
+        signup="cloud.cerebras.ai",
+    ),
+    "mistral": Preset(
+        name="mistral",
+        base_url="https://api.mistral.ai/v1",
+        key_env="MISTRAL_API_KEY",
+        models=["mistral-small-latest", "open-mistral-nemo"],
+        vision_models=["pixtral-12b-latest"],
+        note="free tier",
+        signup="console.mistral.ai",
+    ),
+    "cohere": Preset(
+        name="cohere",
+        base_url="https://api.cohere.ai/compatibility/v1",
+        key_env="COHERE_API_KEY",
+        models=["command-r-08-2024", "command-r7b-12-2024"],
+        note="trial keys are free and rate limited",
+        signup="dashboard.cohere.com",
+    ),
+    "huggingface": Preset(
+        name="huggingface",
+        base_url="https://router.huggingface.co/v1",
+        key_env="HUGGINGFACE_API_KEY",
+        models=["meta-llama/Llama-3.3-70B-Instruct", "Qwen/Qwen2.5-7B-Instruct"],
+        vision_models=["Qwen/Qwen2.5-VL-7B-Instruct"],
+        note="monthly credit, then paid",
+        signup="huggingface.co/settings/tokens",
+    ),
+    "sambanova": Preset(
+        name="sambanova",
+        base_url="https://api.sambanova.ai/v1",
+        key_env="SAMBANOVA_API_KEY",
+        models=["Meta-Llama-3.3-70B-Instruct", "Meta-Llama-3.1-8B-Instruct"],
+        vision_models=["Llama-3.2-11B-Vision-Instruct"],
+        note="free tier",
+        signup="cloud.sambanova.ai",
+    ),
+    "deepinfra": Preset(
+        name="deepinfra",
+        base_url="https://api.deepinfra.com/v1/openai",
+        key_env="DEEPINFRA_API_KEY",
+        models=["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"],
+        vision_models=["meta-llama/Llama-3.2-11B-Vision-Instruct"],
+        note="pay as you go after the signup credit",
+        signup="deepinfra.com/dash/api_keys",
+    ),
+    "aimlapi": Preset(
+        name="aimlapi",
+        base_url="https://api.aimlapi.com/v1",
+        key_env="AIMLAPI_API_KEY",
+        models=["gpt-4o-mini"],
+        vision_models=["gpt-4o-mini"],
+        note="small free allowance, then paid",
+        signup="aimlapi.com/app/keys",
     ),
 }
 

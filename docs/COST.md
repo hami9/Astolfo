@@ -207,6 +207,33 @@ next id on the list is tried before the service is passed over — the response 
 is always logged, so a wrong endpoint or a renamed model is one `journalctl` away
 rather than a guess.
 
+### The services the bot already knows
+
+| Service | Where a key comes from | Billing |
+|---|---|---|
+| `openrouter` | openrouter.ai | free models discovered automatically |
+| `google` | aistudio.google.com | free tier |
+| `groq` | console.groq.com | free tier |
+| `cerebras` | cloud.cerebras.ai | free tier |
+| `mistral` | console.mistral.ai | free tier |
+| `cohere` | dashboard.cohere.com | trial keys are free and rate limited |
+| `sambanova` | cloud.sambanova.ai | free tier |
+| `huggingface` | huggingface.co/settings/tokens | monthly credit, then paid |
+| `github` | a GitHub token with models access | free within the account's limits |
+| `deepinfra` | deepinfra.com | pay as you go after the signup credit |
+| `aimlapi` | aimlapi.com | small free allowance, then paid |
+
+The billing column is what each service advertises, and the panel repeats it beside
+the name so a paid one is never a surprise. It is not a promise: what a key
+actually grants is what its **test** button reports.
+
+Endpoints and model names here are the ones these services publish. When one
+changes something, the bot notices at startup — it asks each service for its own
+model list and logs anything it no longer offers — and both the endpoint and the
+models are editable from the panel, so it is a two-minute fix rather than a
+release. Free mode does not protect against a paid service: put the free ones
+above the paid ones in the order, or switch the paid ones off until you want them.
+
 All of this is managed from `/panel → services` rather than the environment: keys
 (more than one per service), the order, whether a service is used at all, its
 endpoint and its models, plus what each one cost today. `PROVIDERS` and the
