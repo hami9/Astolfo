@@ -17,25 +17,38 @@ CATALOG = {
             "id": "paid/big",
             "context_length": 200000,
             "pricing": {"prompt": "0.000003", "completion": "0.000015"},
-            "architecture": {"input_modalities": ["text", "image"]},
+            "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
         },
         {
             "id": "free/text-small",
             "context_length": 8000,
             "pricing": {"prompt": "0", "completion": "0"},
-            "architecture": {"input_modalities": ["text"]},
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
         },
         {
             "id": "free/text-large",
             "context_length": 128000,
             "pricing": {"prompt": "0", "completion": "0"},
-            "architecture": {"input_modalities": ["text"]},
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+        },
+        {
+            # Music and image generators are token-free but cannot hold a conversation.
+            "id": "google/lyria-3-pro-preview",
+            "context_length": 1000000,
+            "pricing": {"prompt": "0", "completion": "0"},
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["audio"]},
+        },
+        {
+            "id": "some/image-generator",
+            "context_length": 900000,
+            "pricing": {"prompt": "0", "completion": "0", "image": "0.04"},
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["image"]},
         },
         {
             "id": "free/vision",
             "context_length": 64000,
             "pricing": {"prompt": "0", "completion": "0"},
-            "architecture": {"input_modalities": ["text", "image"]},
+            "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
         },
     ]
 }
@@ -255,3 +268,29 @@ def test_locale_is_forgiving_but_not_silent(caplog):
     assert "not a supported language" in caplog.text
 
     assert Strings("fa en").locale == "fa"
+
+
+async def test_non_chat_models_are_never_selected(settings):
+    """A token-free music generator is not the cheapest chat model going."""
+    client = _catalog_client(free_settings(settings))
+    await client.load_catalog()
+
+    pool = client.free_pool()
+    assert "google/lyria-3-pro-preview" not in pool, "audio output is not a chat model"
+    assert "some/image-generator" not in pool, "image output is not a chat model"
+    assert pool[0] == "free/text-large", "longest-context real chat model wins"
+    await client.aclose()
+
+
+async def test_a_model_priced_on_another_axis_is_not_free(settings):
+    entry = {
+        "id": "sneaky/model",
+        "context_length": 500000,
+        "pricing": {"prompt": "0", "completion": "0", "request": "0.01"},
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+    }
+    client = _catalog_client(free_settings(settings), catalog={"data": [entry, *CATALOG["data"]]})
+    await client.load_catalog()
+
+    assert "sneaky/model" not in client.free_pool(), "per-request charges are still charges"
+    await client.aclose()

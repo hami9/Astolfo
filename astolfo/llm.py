@@ -105,13 +105,35 @@ class LLMClient:
 
     @staticmethod
     def _is_free(entry: dict) -> bool:
+        """Every priced dimension must be zero, not just tokens.
+
+        Image, audio and per-request charges live in their own pricing keys, so
+        checking prompt and completion alone marks paid models as free.
+        """
         pricing = entry.get("pricing") or {}
-        try:
-            return all(
-                float(pricing.get(key, 1) or 0) == 0.0 for key in ("prompt", "completion")
-            )
-        except (TypeError, ValueError):
+        if not pricing:
             return False
+        for value in pricing.values():
+            if value in (None, ""):
+                continue
+            try:
+                if float(value) != 0.0:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+
+    @staticmethod
+    def _is_chat(entry: dict) -> bool:
+        """Take text in and give text back.
+
+        The catalog also lists music, image and speech generators, which are
+        token-free and would otherwise look like the cheapest chat models going.
+        """
+        architecture = entry.get("architecture") or {}
+        inputs = architecture.get("input_modalities") or []
+        outputs = architecture.get("output_modalities") or []
+        return "text" in inputs and "text" in outputs
 
     def _index_free_models(self, entries: list[dict]) -> None:
         """Discover zero-cost models instead of shipping a list that goes stale."""
@@ -119,7 +141,7 @@ class LLMClient:
         vision: list[tuple[int, str]] = []
         for entry in entries:
             model_id = entry.get("id")
-            if not model_id or not self._is_free(entry):
+            if not model_id or not self._is_free(entry) or not self._is_chat(entry):
                 continue
             context = int(entry.get("context_length") or 0)
             modalities = (entry.get("architecture") or {}).get("input_modalities") or []
