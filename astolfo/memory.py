@@ -32,6 +32,7 @@ class ChatState:
     last_reply_at: float = float("-inf")
     last_seen: float = field(default_factory=time.monotonic)
     budget_notice_at: float = float("-inf")
+    error_notice_at: float = float("-inf")
     reply_chance: float | None = None
     forced_mode: str | None = None
     muted: bool = False

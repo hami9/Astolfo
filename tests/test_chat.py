@@ -311,3 +311,29 @@ async def test_backlog_reaches_the_model_as_one_block(rt, llm):
     assert len(conversation) == 2, "one merged backlog turn plus the current message"
     assert conversation[0]["content"].count("\n") == 3
     assert "so what do you think" in conversation[-1]["content"]
+
+
+async def test_failure_apology_is_throttled(rt, llm):
+    """A provider outage must not turn every message into an apology."""
+    llm.reply = None
+    messages = [FakeMessage("astolfo hi"), FakeMessage("astolfo hello"),
+                FakeMessage("astolfo anyone there")]
+    for message in messages:
+        await run(rt, message)
+
+    apologies = [m for m in messages if m.sent]
+    assert len(apologies) == 1, "only the first failure in the window is announced"
+    assert apologies[0].sent == [rt.strings("error_reply")]
+    assert len(llm.calls) == 3, "the bot still tries every time"
+
+
+async def test_apology_returns_after_the_window(rt, llm):
+    llm.reply = None
+    first = FakeMessage("astolfo hi")
+    await run(rt, first)
+
+    rt.store.get(-100).error_notice_at -= chat.ERROR_NOTICE_INTERVAL + 1
+    second = FakeMessage("astolfo still broken?")
+    await run(rt, second)
+
+    assert first.sent and second.sent

@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
+# When the provider is down every addressed message would otherwise get its own
+# apology, which reads as the bot spamming the chat.
+ERROR_NOTICE_INTERVAL = 120.0
+
 
 def model_params(settings, decision: Decision, has_media: bool) -> dict:
     """Model, temperature, token ceiling and reasoning budget for a decision."""
@@ -243,7 +247,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply = polish(result.text or "")
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
-            if addressed:
+            now = time.monotonic()
+            if addressed and now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
+                state.error_notice_at = now
                 await send_reply(message, rt.strings("error_reply"))
             return
 
