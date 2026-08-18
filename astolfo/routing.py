@@ -140,11 +140,17 @@ Modes:
   sports results, releases and versions, dates, statistics, specific real people,
   companies or products, anything time-sensitive or easily hallucinated, or a URL the
   user wants read.
-- "serious": the user is genuinely upset, grieving, scared or in distress.
+- "serious": someone is sincerely sharing their own pain - grief, fear, despair,
+  something frightening happening to them in real life. This mode is rare.
+  It is NOT for: insults or threats aimed at the bot, people trash-talking each
+  other, dark jokes, "kill yourself" or "go die" thrown around as banter, or
+  roleplay violence. Those are "fast". Judge whether a real person is really
+  hurting, not whether the words sound dark. When in doubt it is "fast".
 
 Rules:
 - Prefer "fast". Escalate only when it actually changes answer quality, because
-  escalating costs money.
+  escalating costs money. Group chats are mostly banter, so "fast" is the common
+  answer and the other three modes are exceptions.
 - Choose "search" whenever being wrong is likely and verifiable; avoiding invented
   facts matters more than speed.
 - "web" must be true for "search" and may be true for "think" when the reasoning

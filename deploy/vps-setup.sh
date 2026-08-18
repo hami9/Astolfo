@@ -52,12 +52,15 @@ echo "==> creating service user"
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
 
 echo "==> fetching the code"
+# The tree belongs to the service user, so git run as root refuses it as
+# "dubious ownership". Trust it for these commands only, no global config.
+GIT="git -c safe.directory=$APP_DIR"
 if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
-  git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
+  $GIT -C "$APP_DIR" fetch --quiet origin "$BRANCH"
+  $GIT -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
 else
   rm -rf "$APP_DIR"
-  git clone --quiet --branch "$BRANCH" --depth 1 "$REPO" "$APP_DIR"
+  $GIT clone --quiet --branch "$BRANCH" --depth 1 "$REPO" "$APP_DIR"
 fi
 
 echo "==> installing python dependencies"
