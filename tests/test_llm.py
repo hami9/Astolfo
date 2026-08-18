@@ -162,3 +162,31 @@ def test_parse_json(raw, expected):
 
 async def _no_sleep(_seconds):
     return None
+
+
+async def test_payment_required_is_terminal_and_labelled(settings):
+    """402 is a known condition, not a surprise: no retries, no traceback."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(402, text="Insufficient credits")
+
+    client = _client(settings, handler)
+    result = await client.chat([{"role": "user", "content": "hi"}], model="m")
+
+    assert not result.ok
+    assert result.error_kind == "payment"
+    assert "out of credit" in result.error
+    assert calls["n"] == 1, "retrying cannot conjure credit"
+    await client.aclose()
+
+
+async def test_auth_failure_is_labelled(settings):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="no key")
+
+    client = _client(settings, handler)
+    result = await client.chat([{"role": "user", "content": "hi"}], model="m")
+    assert result.error_kind == "auth"
+    await client.aclose()

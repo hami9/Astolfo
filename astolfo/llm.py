@@ -41,6 +41,7 @@ class ChatResult:
     citations: list[Citation] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     error: str | None = None
+    error_kind: str | None = None  # "payment" | "auth" | None
 
     @property
     def ok(self) -> bool:
@@ -222,9 +223,18 @@ class LLMClient:
                     log.error("bad request: %s", body)
                     return ChatResult(error=f"HTTP 400: {body[:200]}")
 
+                if resp.status_code == 402:
+                    # Known and terminal: retrying cannot conjure credit.
+                    log.error(
+                        "out of credit (HTTP 402) - top up at https://openrouter.ai/credits"
+                    )
+                    return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
+
                 if resp.status_code in (401, 403):
                     log.error("auth failed (%s), check OPENROUTER_API_KEY", resp.status_code)
-                    return ChatResult(error=f"HTTP {resp.status_code}: invalid API key")
+                    return ChatResult(
+                        error=f"HTTP {resp.status_code}: invalid API key", error_kind="auth"
+                    )
 
                 resp.raise_for_status()
                 data = resp.json()
