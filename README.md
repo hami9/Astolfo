@@ -84,8 +84,9 @@ afterwards in [docs/ADMIN.md](docs/ADMIN.md).
 ## The owner's panel
 
 `/panel`, in a private chat with the bot, from the account named by `MASTER_ID`:
-API keys (set, test, remove), any setting, the groups the bot is in, the people it
-has seen, server health, and update or restart. Changes take effect immediately —
+services and their keys (several per service, tested and swapped with no
+downtime), any setting, the groups the bot is in, the people it has seen, server
+health, and update or restart. Changes take effect immediately —
 no editing `.env`, no restart. See [docs/ADMIN.md](docs/ADMIN.md).
 
 ## Configuration
@@ -110,7 +111,7 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 260 tests, fully offline
+pytest -q          # 294 tests, fully offline
 ruff check .
 ```
 
@@ -134,6 +135,7 @@ astolfo/settings_store.py  settings and keys that change without a restart
 astolfo/crypto.py       encryption for the stored keys
 astolfo/master.py       who owns the bot
 astolfo/admin/          the owner's panel
+astolfo/services.py     the stored services and keys, and what the client learns
 astolfo/server_ops.py   machine health, and asking the root helper for a job
 astolfo/chat.py         the message pipeline
 astolfo/commands.py     command handlers

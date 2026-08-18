@@ -20,12 +20,37 @@ confirm the command exists. Repeated attempts are logged and recorded.
 
 | Screen | What it is for |
 |---|---|
-| **keys** | Set, replace, test or remove an API key for any supported service |
+| **services** | Every service: keys, health, today's calls, order, on/off, and adding your own |
 | **settings** | Any setting by name, plus switches for the common ones |
 | **groups** | Every group the bot is in: activity, mute, leave |
 | **people** | Who has spoken to it, where, and blocking |
 | **server** | Health, log, update, restart |
 | **data** | Row counts, the audit trail, a backup of the database |
+
+### The services screen
+
+The list shows each service with a mark — working, resting, no key, switched off —
+the number of calls it took today and how many failed. None of that costs an API
+call: it is what the bot recorded while it was working. Only **test** spends one.
+
+Open a service to see its keys, its endpoint and its models. From there you can:
+
+- **add a key**, optionally labelled: send `work laptop: the-key`
+- **test** it, which reports whether the key is refused, out of quota, rate
+  limited, or fine
+- switch the service **off** without deleting anything, or move it up and down
+  the order things are tried
+- **wake it now**, if it is resting and you know the quota has reset
+- correct its **endpoint** or **models** when a service renames something
+- **add a service** the code has never heard of — anything OpenAI-compatible:
+  send `name url model,model`
+
+A service can hold more than one key. The first usable one is used; if a key is
+refused it rests for a day, records what it was told, and the next one takes over
+without the chat noticing — so a key can be replaced with no gap. That is what
+several keys are for: keys you already hold. Several accounts at one service to
+get around its free quota is a different thing, it breaks their terms, and it
+usually ends with all of them closed.
 
 A key you send is stored encrypted and **your message is deleted** right away.
 Keys are only ever shown masked (`sk-or-…f2f4`). Destructive actions — removing a

@@ -197,6 +197,14 @@ async def usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         budget_note = f"of ${summary['daily_budget']:.2f} ({share:.0f}%)"
 
     by_mode = ", ".join(f"{k} ${v:.4f}" for k, v in summary["by_mode"].items()) or "-"
+    by_service = (
+        ", ".join(
+            f"{name} {row['requests']}✓"
+            + (f"/{row['failures']}✗" if row["failures"] else "")
+            for name, row in rt.registry.usage_today().items()
+        )
+        or "-"
+    )
     router_hits = rt.router.cache.hits
 
     await update.effective_message.reply_text(
@@ -214,6 +222,7 @@ async def usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             stars_today=summary["stars_today"],
             router_saved=router_hits,
             by_mode=by_mode,
+            by_service=by_service,
             level="normal" if allowance.level == FULL else allowance.level,
         )
     )

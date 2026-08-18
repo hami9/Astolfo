@@ -210,8 +210,11 @@ class Database:
                 INSERT INTO credentials (service, label, value, position, added_at)
                 VALUES (?, ?, ?, 0, ?)
                 """,
-                (service, "from .env", row["value"], time.time()),
+                (service, "moved from secrets", row["value"], time.time()),
             )
+            # Removed from the old table, not copied: two rows holding the same
+            # key would show up as two keys for one service.
+            self._db.execute("DELETE FROM secrets WHERE name = ?", (row["name"],))
             moved += 1
         if moved:
             log.info("moved %d stored key(s) into the credentials table", moved)

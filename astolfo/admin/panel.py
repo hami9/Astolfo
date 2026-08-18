@@ -10,10 +10,9 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from .. import runtime, server_ops, settings_store
 from ..config import ConfigError
-from ..crypto import SecretsUnavailable
-from ..providers import PRESETS
 from . import sections, server
-from .guard import allowed, audit
+from . import services as services_section
+from .guard import allowed
 from .sections import View
 from .ui import PREFIX
 
@@ -100,16 +99,8 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
     if head == "home":
         return sections.home(ctx)
 
-    if head == "keys":
-        action = rest[0] if rest else ""
-        name = rest[1] if len(rest) > 1 else ""
-        if action == "set":
-            return sections.key_prompt(ctx, name)
-        if action == "test":
-            return await sections.key_test(ctx, name)
-        if action in ("del", "del!"):
-            return sections.key_delete(ctx, name, confirmed=action.endswith("!"))
-        return sections.keys(ctx)
+    if head in ("svc", "keys"):  # "keys" keeps older panel messages working
+        return await _services(ctx, rest)
 
     if head == "cfg":
         action = rest[0] if rest else ""
@@ -171,9 +162,57 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
     return sections.home(ctx)
 
 
+async def _services(ctx: Ctx, rest: list[str]) -> View:
+    head = rest[0] if rest else ""
+
+    if head == "testall":
+        return await services_section.test_all(ctx)
+    if head == "new":
+        return services_section.ask_new_service(ctx)
+
+    if head == "k" and len(rest) > 1:
+        credential_id = int(rest[1])
+        action = rest[2] if len(rest) > 2 else ""
+        if action in ("on", "off"):
+            return services_section.key_enabled(ctx, credential_id, enabled=action == "on")
+        if action in ("rm", "rm!"):
+            return services_section.key_remove(ctx, credential_id, confirmed=action.endswith("!"))
+        return services_section.key_detail(ctx, credential_id)
+
+    if head == "s" and len(rest) > 1:
+        name = rest[1]
+        action = rest[2] if len(rest) > 2 else ""
+        if action == "test":
+            return await services_section.test(ctx, name)
+        if action in ("on", "off"):
+            return services_section.set_enabled(ctx, name, enabled=action == "on")
+        if action in ("up", "down"):
+            return services_section.move(ctx, name, -1 if action == "up" else 1)
+        if action == "wake":
+            return services_section.wake(ctx, name)
+        if action == "addkey":
+            return services_section.ask_key(ctx, name)
+        if action in ("models", "url"):
+            return services_section.ask_field(ctx, name, action)
+        if action in ("del", "del!"):
+            return services_section.delete(ctx, name, confirmed=action.endswith("!"))
+        return services_section.detail(ctx, name)
+
+    return services_section.overview(ctx)
+
+
 async def _answer(ctx: Ctx, kind: str, target: str, text: str, message) -> View:
-    if kind == "key":
-        return await _take_key(ctx, target, text, message)
+    if kind == "svckey":
+        await _forget(message)
+        return services_section.take_key(ctx, target, text)
+
+    if kind == "svcnew":
+        return services_section.take_new_service(ctx, text)
+
+    if kind in ("svcmodels", "svcurl"):
+        return services_section.take_field(
+            ctx, target, "models" if kind == "svcmodels" else "url", text
+        )
 
     if kind == "setting":
         name, _, raw = text.partition(" ") if target == "*" else (target, "", text)
@@ -213,32 +252,12 @@ async def _answer(ctx: Ctx, kind: str, target: str, text: str, message) -> View:
     return sections.home(ctx)
 
 
-async def _take_key(ctx: Ctx, name: str, text: str, message) -> View:
-    """Store a key, then get it out of the chat history."""
-    preset = PRESETS.get(name)
-    if preset is None:
-        return sections.keys(ctx)
-
+async def _forget(message) -> None:
+    """Get a key out of the chat history the moment it has been read."""
     try:
         await message.delete()
-        removed = True
     except Exception as exc:
         log.warning("could not delete the message carrying a key: %s", exc)
-        removed = False
-
-    try:
-        settings_store.store_secret(ctx.rt.db, ctx.rt.box, preset.key_env, text, by=ctx.user.id)
-    except SecretsUnavailable as exc:
-        view = sections.keys(ctx)
-        view.text = f"❌ {exc}\n\n{view.text}"
-        return view
-
-    audit(ctx.rt, ctx.user, "set_key", name)
-    view = sections.keys(ctx)
-    note = "saved" if removed else "saved — delete your message with the key yourself"
-    view.text = f"✅ {name} key {note}\n\n{view.text}"
-    view.extras["reload"] = True
-    return view
 
 
 # -- rendering ------------------------------------------------------------

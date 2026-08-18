@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .. import branding, master, settings_store
-from .. import providers as providers_mod
 from ..config import ConfigError
-from ..crypto import mask
 from .guard import audit
 from .ui import ago, back_row, button, confirm_rows, keyboard, trim, yes_no
 
@@ -65,70 +62,11 @@ def home(ctx) -> View:
     return View(
         text,
         keyboard(
-            [button("🔑 keys", "keys"), button("⚙️ settings", "cfg")],
+            [button("🔌 services", "svc"), button("⚙️ settings", "cfg")],
             [button("💬 groups", "chats"), button("👤 people", "ppl")],
             [button("🖥 server", "srv"), button("🗄 data", "data")],
         ),
     )
-
-
-# -- keys -----------------------------------------------------------------
-def keys(ctx) -> View:
-    rt = ctx.rt
-    live = {p.name for p in rt.llm.providers}
-    lines = ["🔑 API keys\n"]
-    rows: list[list[InlineKeyboardButton]] = []
-
-    for name, preset in providers_mod.PRESETS.items():
-        value = os.getenv(preset.key_env, "")
-        state = "✅" if name in live else ("•" if value else "—")
-        lines.append(f"{state} {name}: {mask(value)}")
-        label = "replace" if value else "set"
-        row = [button(f"{label} {name}", "keys", "set", name)]
-        if value:
-            row.append(button("test", "keys", "test", name))
-            row.append(button("remove", "keys", "del", name))
-        rows.append(row)
-
-    lines.append("\nThe key you send is deleted from the chat right away.")
-    return View("\n".join(lines), keyboard(*rows, back_row()))
-
-
-def key_prompt(ctx, name: str) -> View:
-    preset = providers_mod.PRESETS.get(name)
-    if preset is None:
-        return View("no such service", keyboard(back_row("keys")))
-    return View(
-        f"Send the {name} key now ({preset.key_env}).\n"
-        "I read it, save it encrypted, and delete your message.\n\n"
-        "Send /cancel to stop.",
-        keyboard(back_row("keys")),
-        prompt=("key", name),
-    )
-
-
-async def key_test(ctx, name: str) -> View:
-    ok, detail = await ctx.rt.llm.probe(name)
-    view = keys(ctx)
-    view.alert = f"{'✅' if ok else '❌'} {name}: {detail}"
-    return view
-
-
-def key_delete(ctx, name: str, confirmed: bool) -> View:
-    preset = providers_mod.PRESETS.get(name)
-    if preset is None:
-        return View("no such service", keyboard(back_row("keys")))
-    if not confirmed:
-        return View(
-            f"Remove the {name} key?\nThe bot stops using that service until a new key.",
-            keyboard(*confirm_rows(f"remove {name}", "keys", "del!", name)),
-        )
-
-    settings_store.forget_secret(ctx.rt.db, preset.key_env, by=ctx.user.id)
-    view = keys(ctx)
-    view.alert = f"{name} key removed"
-    view.extras["reload"] = True
-    return view
 
 
 # -- settings -------------------------------------------------------------

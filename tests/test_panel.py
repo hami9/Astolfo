@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +21,14 @@ class _Client:
     def __init__(self, settings, registry=None) -> None:
         self.settings = settings
         self.registry = registry
-        self.providers = [SimpleNamespace(name="openrouter")]
+        self.providers = [
+            SimpleNamespace(
+                name="openrouter",
+                base_url="https://openrouter.ai/api/v1",
+                models=[],
+                credentials=[],
+            )
+        ]
         self.probed: list[str] = []
 
     async def load_catalog(self) -> None:
@@ -95,43 +101,57 @@ async def test_a_forwarded_button_does_not_work_for_a_stranger(owned):
     assert query.answers == ["not for you"]
 
 
-# -- keys -----------------------------------------------------------------
-async def test_a_key_is_stored_encrypted_and_the_message_deleted(owned, monkeypatch):
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    _query, context = await _press(owned, "ap:keys:set:google")
+# -- services and keys ----------------------------------------------------
+async def test_a_key_is_stored_encrypted_and_the_message_deleted(owned):
+    _query, context = await _press(owned, "ap:svc:s:google:addkey")
 
     message = _private("g-secret-key")
     with pytest.raises(ApplicationHandlerStop):
         await on_text(make_update(message), context)
 
     assert message.deleted, "the key must not stay in the chat history"
-    assert os.environ["GOOGLE_API_KEY"] == "g-secret-key"
-    assert owned.db.secret("GOOGLE_API_KEY") not in (None, b"g-secret-key")
-    assert owned.box.decrypt(owned.db.secret("GOOGLE_API_KEY")) == "g-secret-key"
+    stored = owned.db.credentials("google")
+    assert len(stored) == 1
+    assert bytes(stored[0]["value"]) != b"g-secret-key", "not in the clear"
+    assert owned.box.decrypt(bytes(stored[0]["value"])) == "g-secret-key"
 
 
-async def test_a_key_is_never_shown_in_full(owned, monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-0000000000secret")
-    query, _ = await _press(owned, "ap:keys")
+async def test_a_key_can_be_labelled_when_it_is_added(owned):
+    _query, context = await _press(owned, "ap:svc:s:groq:addkey")
+    message = _private("work laptop: gsk-the-key")
+    with pytest.raises(ApplicationHandlerStop):
+        await on_text(make_update(message), context)
+
+    stored = owned.db.credentials("groq")[0]
+    assert stored["label"] == "work laptop"
+    assert owned.box.decrypt(bytes(stored["value"])) == "gsk-the-key"
+
+
+async def test_a_key_is_never_shown_in_full(owned):
+    owned.registry.add_key("google", "AIza-0000000000secret", label="main")
+    key_id = owned.db.credentials("google")[0]["id"]
+
+    query, _ = await _press(owned, f"ap:svc:k:{key_id}")
     assert "0000000000secret" not in query.edits[0]
-    assert "sk-or-" in query.edits[0]
+    assert "AIza-" in query.edits[0]
 
 
-async def test_testing_a_key_asks_the_service(owned, monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "gq")
-    query, _ = await _press(owned, "ap:keys:test:groq")
-    assert owned.llm.probed == ["groq"]
-    assert "groq" in query.answers[0]
+async def test_testing_a_service_asks_it(owned):
+    query, _ = await _press(owned, "ap:svc:s:openrouter:test")
+    assert owned.llm.probed == ["openrouter"]
+    assert "answered by" in query.edits[0]
 
 
-async def test_removing_a_key_needs_a_second_press(owned, monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "gq")
-    query, _ = await _press(owned, "ap:keys:del:groq")
-    assert "Remove the groq key?" in query.edits[0]
-    assert os.environ.get("GROQ_API_KEY") == "gq"
+async def test_removing_a_key_needs_a_second_press(owned):
+    owned.registry.add_key("google", "AIza-key")
+    key_id = owned.db.credentials("google")[0]["id"]
 
-    await _press(owned, "ap:keys:del!:groq")
-    assert "GROQ_API_KEY" not in os.environ
+    query, _ = await _press(owned, f"ap:svc:k:{key_id}:rm")
+    assert "Remove this key" in query.edits[0]
+    assert owned.db.credentials("google"), "still there until confirmed"
+
+    await _press(owned, f"ap:svc:k:{key_id}:rm!")
+    assert owned.db.credentials("google") == []
 
 
 # -- settings -------------------------------------------------------------

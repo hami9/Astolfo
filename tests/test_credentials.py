@@ -216,3 +216,20 @@ def test_a_refused_env_key_has_nothing_to_write_to(settings, registry):
     registry.rest_credential(None, AUTH_COOLDOWN, "refused")
     registry.note_use(None)
     assert registry._db.credentials() == []
+
+
+def test_the_bot_starts_when_the_only_key_is_one_added_from_the_panel(
+    settings, registry, monkeypatch
+):
+    """Deleting the key from .env after saving one in the panel must not brick it."""
+    from astolfo import settings_store
+
+    monkeypatch.setenv("DATA_DIR", settings.data_dir)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    registry.add_key("openrouter", "sk-or-from-the-panel")
+
+    live, _db, _secrets = settings_store.bootstrap()
+    assert live.api_key == "", "nothing in the environment"
+
+    client = LLMClient(live, transport=httpx.MockTransport(_router({}, [])), registry=registry)
+    assert [p.name for p in client.providers] == ["openrouter"]
