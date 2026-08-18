@@ -40,7 +40,8 @@ same script to update to the latest code.
 
 The smallest plan any provider sells is enough: the bot idles at well under 300 MB of
 RAM and spends almost all its time waiting on network calls. One shared core and 1 GB
-of RAM is comfortable.
+of RAM is comfortable, and on a server that small the script adds a 1 GB swapfile so
+that apt, pip and ffmpeg have room to work.
 
 **Pick a region outside Iran.** Telegram's Bot API and OpenRouter are not reliably
 reachable from Iranian IP ranges, and OpenRouter geo-blocks some of them outright, so a
