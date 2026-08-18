@@ -31,7 +31,7 @@ class FakeLLM:
         self.json_calls: list[dict] = []
         self.json_result: dict | None = None
 
-    def resolve(self, model: str) -> str:
+    def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         return model
 
     async def chat(self, messages, **kwargs):

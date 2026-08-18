@@ -65,14 +65,17 @@ async def post_init(app: Application) -> None:
     app.bot_data[runtime.KEY] = rt
 
     await rt.llm.load_catalog()
-    for label, model in (
-        ("fast", settings.model_fast),
-        ("think", settings.model_think),
-        ("search", settings.model_search),
-        ("media", settings.model_media),
-        ("router", settings.model_router),
+    # media rows resolve with the modality flags the real turn would carry, so the
+    # startup log names the model that will actually read an image or a voice note
+    for label, model, kwargs in (
+        ("fast", settings.model_fast, {}),
+        ("think", settings.model_think, {}),
+        ("search", settings.model_search, {}),
+        ("image", settings.model_media, {"vision": True}),
+        ("audio", settings.model_media, {"audio": True}),
+        ("router", settings.model_router, {}),
     ):
-        log.info("model[%s] -> %s", label, rt.llm.resolve(model))
+        log.info("model[%s] -> %s", label, rt.llm.resolve(model, **kwargs))
 
     if not media.ffmpeg_available():
         log.warning("ffmpeg not found: voice is skipped and videos fall back to thumbnails")

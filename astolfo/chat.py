@@ -229,7 +229,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 log.info("chat %s: media dropped, no vision model available", chat.id)
 
             params = model_params(settings, decision, bundle.has_content)
-            log.info("chat %s | %s | %s | %s", chat.id, sender, decision, params["model"])
+            # Free mode swaps the model inside the client, so log what will run.
+            effective = rt.llm.resolve(
+                params["model"],
+                vision=any(p.get("type") == "image_url" for p in bundle.parts),
+                audio=any(p.get("type") == "input_audio" for p in bundle.parts),
+            )
+            log.info("chat %s | %s | %s | %s", chat.id, sender, decision, effective)
 
             messages = build_messages(
                 rt,
