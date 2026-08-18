@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from .budget import BudgetTracker
 from .cache import TTLCache
 from .config import Settings
+from .crypto import SecretBox
 from .db import Database, open_database
 from .llm import LLMClient, Usage
 from .memory import ChatStore
@@ -28,6 +29,7 @@ class Runtime:
     budget: BudgetTracker
     strings: Strings
     db: Database
+    box: SecretBox
     responses: TTLCache = field(init=False)
     # Read on every message, changed only from the panel, so it lives in memory.
     blocked: set[int] = field(default_factory=set)
@@ -44,7 +46,12 @@ class Runtime:
             self.blocked.discard(user_id)
 
     @classmethod
-    def build(cls, settings: Settings, database: Database | None = None) -> Runtime:
+    def build(
+        cls,
+        settings: Settings,
+        database: Database | None = None,
+        box: SecretBox | None = None,
+    ) -> Runtime:
         llm = LLMClient(settings)
         database = database or open_database(settings.data_dir)
         return cls(
@@ -55,6 +62,7 @@ class Runtime:
             budget=BudgetTracker(settings),
             strings=Strings(settings.locale),
             db=database,
+            box=box or SecretBox(settings.data_dir),
         )
 
     async def reconfigure(self, settings: Settings) -> None:

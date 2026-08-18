@@ -151,6 +151,45 @@ class LLMClient:
         for client in self._clients.values():
             await client.aclose()
 
+    async def probe(self, name: str) -> tuple[bool, str]:
+        """Ask one service a throwaway question to see whether its key works.
+
+        Reported separately from "it answered", because a key can be perfectly
+        valid and still be out of quota or rate limited this minute.
+        """
+        provider = next((p for p in self.providers if p.name == name), None)
+        if provider is None:
+            return False, "no key configured for this service"
+
+        was_paused, provider.paused_until = provider.paused_until, 0.0
+        try:
+            result = await self._chat_with(
+                provider,
+                [{"role": "user", "content": "ping"}],
+                model=self._s.model_fast,
+                temperature=0.0,
+                max_tokens=5,
+                reasoning=None,
+                web=False,
+                response_format=None,
+                fallbacks=False,
+                max_retries=1,
+                vision=False,
+                audio=False,
+            )
+        finally:
+            provider.paused_until = max(was_paused, provider.paused_until)
+
+        if result.ok:
+            return True, f"answered by {result.model}"
+        if result.error_kind == "auth":
+            return False, "the key was refused"
+        if result.error_kind == "payment":
+            return True, "the key works but has no credit or quota left"
+        if result.error_kind == "throttled":
+            return True, "the key works but is rate limited right now"
+        return False, result.error or "no answer"
+
     # -- allowances -------------------------------------------------------
     def throttled_for(self) -> float:
         """Seconds until any service is usable again, 0 while one still is."""

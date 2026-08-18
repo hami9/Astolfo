@@ -13,6 +13,7 @@ from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     ChatMemberHandler,
     CommandHandler,
     MessageHandler,
@@ -20,7 +21,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import chat, commands, donate, media, membership, runtime, settings_store
+from . import admin, chat, commands, donate, media, membership, runtime, settings_store
 from .config import ConfigError, Settings
 from .runtime import Runtime
 
@@ -63,7 +64,7 @@ async def _autosave(rt: Runtime) -> None:
 
 async def post_init(app: Application) -> None:
     settings: Settings = app.bot_data["settings"]
-    rt = Runtime.build(settings, app.bot_data.get("db"))
+    rt = Runtime.build(settings, app.bot_data.get("db"), app.bot_data.get("box"))
     app.bot_data[runtime.KEY] = rt
 
     await rt.llm.load_catalog()
@@ -123,7 +124,7 @@ CONTENT_FILTER = (
 )
 
 
-def build_application(settings: Settings, database=None) -> Application:
+def build_application(settings: Settings, database=None, box=None) -> Application:
     builder = (
         ApplicationBuilder()
         .token(settings.telegram_token)
@@ -137,6 +138,7 @@ def build_application(settings: Settings, database=None) -> Application:
     app = builder.build()
     app.bot_data["settings"] = settings
     app.bot_data["db"] = database
+    app.bot_data["box"] = box
 
     for name, handler in (
         ("start", commands.start),
@@ -150,8 +152,16 @@ def build_application(settings: Settings, database=None) -> Application:
         ("status", commands.status),
         ("usage", commands.usage),
         ("donate", donate.donate),
+        ("panel", admin.open_panel),
     ):
         app.add_handler(CommandHandler(name, handler))
+
+    app.add_handler(CallbackQueryHandler(admin.on_button, pattern=admin.PATTERN))
+    # Group -1 so a typed answer to the panel is seen before the chat pipeline,
+    # which is what a message in the owner's private chat would otherwise be.
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT, admin.on_text), group=-1
+    )
 
     app.add_handler(
         ChatMemberHandler(membership.on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
@@ -166,12 +176,12 @@ def build_application(settings: Settings, database=None) -> Application:
 
 def run() -> None:
     try:
-        settings, database, _box = settings_store.bootstrap()
+        settings, database, box = settings_store.bootstrap()
     except ConfigError as exc:
         raise SystemExit(f"configuration error: {exc}") from None
 
     if settings.keepalive:
         start_keepalive(settings.keepalive_port)
-    build_application(settings, database).run_polling(
+    build_application(settings, database, box).run_polling(
         drop_pending_updates=True, allowed_updates=Update.ALL_TYPES
     )

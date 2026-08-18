@@ -13,7 +13,7 @@ import os
 from dataclasses import fields
 from typing import Any
 
-from .config import ConfigError, Settings, _coerce
+from .config import FREE_MODE_PRESET, ConfigError, Settings, _coerce
 from .crypto import SecretBox, SecretsUnavailable
 from .db import Database, open_database
 
@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 LOCKED = frozenset({"telegram_token", "data_dir", "master_id", "master_username"})
 
 # Keys live in the secrets table, encrypted, never in the settings table.
+_DEFAULTS = Settings()
+
 SECRET_ENV = (
     "OPENROUTER_API_KEY",
     "GOOGLE_API_KEY",
@@ -71,7 +73,24 @@ def apply(settings: Settings, overrides: dict[str, str]) -> Settings:
             values[key] = parse(key, raw)
         except ConfigError as exc:
             log.warning("ignoring stored setting: %s", exc)
+
+    if values.get("free_mode") and not settings.free_mode:
+        values = {**_free_mode_defaults(settings, values), **values}
     return settings.replace(**values) if values else settings
+
+
+def _free_mode_defaults(settings: Settings, values: dict[str, Any]) -> dict[str, Any]:
+    """Turning free mode on from the panel must mean what FREE_MODE=1 means.
+
+    Free mode is not one switch: it comes with a set of cheaper defaults, because
+    free models are rationed by request count. Anything the operator has already
+    chosen, in the environment or here, is left exactly as they set it.
+    """
+    return {
+        key: value
+        for key, value in FREE_MODE_PRESET.items()
+        if key not in values and getattr(settings, key) == getattr(_DEFAULTS, key)
+    }
 
 
 def export_secrets(db: Database, box: SecretBox) -> list[str]:
@@ -125,6 +144,15 @@ def set_override(db: Database, key: str, raw: str, *, by: int) -> Any:
 def clear_override(db: Database, key: str, *, by: int) -> None:
     db.clear_override(key)
     db.record(actor=by, action="clear_setting", detail=key)
+
+
+def reload(db: Database) -> Settings:
+    """The settings the bot should be running with right now.
+
+    Keys already live in the environment by the time this is called, so reading it
+    again is what makes a key change take effect without a restart.
+    """
+    return apply(Settings.from_env(validate=False), db.overrides())
 
 
 def bootstrap() -> tuple[Settings, Database, SecretBox]:

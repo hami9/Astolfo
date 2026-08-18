@@ -155,3 +155,26 @@ def test_a_missing_key_is_still_a_startup_error(settings, monkeypatch):
 def test_settings_from_env_can_defer_its_checks(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     assert Settings.from_env(validate=False).api_key == ""
+
+
+def test_turning_free_mode_on_brings_its_defaults_with_it(settings):
+    """Free mode is a set of cheaper defaults, not one switch."""
+    db = open_database(settings.data_dir)
+    settings_store.set_override(db, "free_mode", "1", by=1)
+
+    live = settings_store.apply(settings, db.overrides())
+    assert live.free_mode is True
+    assert live.web_search is False, "the search plugin is billed even on free models"
+    assert live.router_llm is False
+    assert live.image_max_dim == 768
+
+
+def test_a_choice_already_made_survives_turning_free_mode_on(settings):
+    db = open_database(settings.data_dir)
+    settings_store.set_override(db, "free_mode", "1", by=1)
+    settings_store.set_override(db, "image_max_dim", "1024", by=1)
+
+    chosen = settings.replace(video_frames=6)
+    live = settings_store.apply(chosen, db.overrides())
+    assert live.image_max_dim == 1024, "explicitly set here"
+    assert live.video_frames == 6, "explicitly set in the environment"
