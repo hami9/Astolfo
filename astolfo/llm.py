@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +15,14 @@ import httpx
 from .config import Settings
 
 log = logging.getLogger(__name__)
+
+# Text-to-text models that are not conversational partners.
+NOT_CONVERSATIONAL = ("content-safety", "guard", "moderation", "embed", "rerank", "classif")
+
+# How long a free model is skipped after it turns us away. A per-minute limit
+# clears quickly; an exhausted daily quota does not.
+RATE_LIMIT_COOLDOWN = 600.0
+QUOTA_COOLDOWN = 6 * 3600.0
 
 
 @dataclass(frozen=True)
@@ -83,6 +92,8 @@ class LLMClient:
         self._catalog: set | None = None
         self._free_text: list[str] = []
         self._free_vision: list[str] = []
+        self._free_audio: list[str] = []
+        self._cooldowns: dict[str, float] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -125,20 +136,25 @@ class LLMClient:
 
     @staticmethod
     def _is_chat(entry: dict) -> bool:
-        """Take text in and give text back.
+        """Take text in and give back text and nothing else.
 
-        The catalog also lists music, image and speech generators, which are
-        token-free and would otherwise look like the cheapest chat models going.
+        Generators list their extra output alongside text - a music model reports
+        `text+image->text+audio` - so merely requiring text among the outputs
+        still matches them. Only a model whose whole output is text can chat.
         """
         architecture = entry.get("architecture") or {}
         inputs = architecture.get("input_modalities") or []
         outputs = architecture.get("output_modalities") or []
-        return "text" in inputs and "text" in outputs
+        if "text" not in inputs or set(outputs) != {"text"}:
+            return False
+        # Classifiers and retrieval models are text-to-text but cannot converse.
+        return not any(word in (entry.get("id") or "").lower() for word in NOT_CONVERSATIONAL)
 
     def _index_free_models(self, entries: list[dict]) -> None:
         """Discover zero-cost models instead of shipping a list that goes stale."""
         text: list[tuple[int, str]] = []
         vision: list[tuple[int, str]] = []
+        audio: list[tuple[int, str]] = []
         for entry in entries:
             model_id = entry.get("id")
             if not model_id or not self._is_free(entry) or not self._is_chat(entry):
@@ -147,38 +163,64 @@ class LLMClient:
             modalities = (entry.get("architecture") or {}).get("input_modalities") or []
             if "image" in modalities:
                 vision.append((context, model_id))
+            if "audio" in modalities:
+                audio.append((context, model_id))
             text.append((context, model_id))
 
         # Longest context first: the persona prompt alone is a few thousand tokens.
         self._free_text = [m for _, m in sorted(text, reverse=True)]
         self._free_vision = [m for _, m in sorted(vision, reverse=True)]
+        self._free_audio = [m for _, m in sorted(audio, reverse=True)]
         if self._s.free_mode:
             log.info(
-                "free mode: %d free models available (%d of them read images)",
+                "free mode: %d chat models available (%d read images, %d hear audio)",
                 len(self._free_text),
                 len(self._free_vision),
+                len(self._free_audio),
             )
             if not self._free_text:
-                log.error("free mode is on but no zero-cost model was found")
+                log.error("free mode is on but no zero-cost chat model was found")
 
     def _seed_free_models(self) -> None:
         """Fall back to the configured list when the catalog cannot be read."""
         self._free_text = list(self._s.free_models)
         self._free_vision = []
+        self._free_audio = []
 
-    def free_pool(self, *, vision: bool = False) -> list[str]:
+    def _all_free(self, *, vision: bool = False, audio: bool = False) -> list[str]:
         configured = list(self._s.free_models)
         if configured:
             return configured
-        pool = self._free_vision if vision else self._free_text
-        return list(pool)
+        if audio:
+            return list(self._free_audio)
+        return list(self._free_vision if vision else self._free_text)
+
+    def free_pool(self, *, vision: bool = False, audio: bool = False) -> list[str]:
+        """Usable free models, skipping any that recently turned us away."""
+        candidates = self._all_free(vision=vision, audio=audio)
+        now = time.monotonic()
+        available = [m for m in candidates if self._cooldowns.get(m, 0.0) <= now]
+        # If every one is resting, try them anyway rather than going silent.
+        return available or candidates
 
     def supports_free_vision(self) -> bool:
-        return bool(self.free_pool(vision=True))
+        return bool(self._all_free(vision=True))
 
-    def resolve(self, model: str, *, vision: bool = False) -> str:
+    def supports_free_audio(self) -> bool:
+        return bool(self._all_free(audio=True))
+
+    def _rest(self, model: str, seconds: float) -> None:
+        self._cooldowns[model] = time.monotonic() + seconds
+
+    def _next_free(self, *, tried: set[str], vision: bool, audio: bool) -> str | None:
+        for candidate in self.free_pool(vision=vision, audio=audio) or self.free_pool():
+            if candidate not in tried:
+                return candidate
+        return None
+
+    def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         if self._s.free_mode:
-            pool = self.free_pool(vision=vision) or self.free_pool()
+            pool = self.free_pool(vision=vision, audio=audio) or self.free_pool()
             if pool:
                 return pool[0]
             log.warning("free mode is on but no free model is known; using %s", model)
@@ -270,13 +312,21 @@ class LLMClient:
         fallbacks: bool = True,
         max_retries: int | None = None,
     ) -> ChatResult:
-        vision = any(isinstance(m.get("content"), list) for m in messages)
-        model = self.resolve(model, vision=vision)
+        parts = [p for m in messages if isinstance(m.get("content"), list) for p in m["content"]]
+        vision = any(p.get("type") == "image_url" for p in parts)
+        audio = any(p.get("type") == "input_audio" for p in parts)
+        model = self.resolve(model, vision=vision, audio=audio)
+
         retries = self._s.max_retries if max_retries is None else max_retries
+        if self._s.free_mode:
+            # Enough attempts to walk a few models before giving up on the turn.
+            retries = max(retries, min(len(self._all_free(vision=vision, audio=audio)), 5))
+        tried: set[str] = set()
         delay = 1.5
         last_error = "unknown"
 
         for attempt in range(1, retries + 1):
+            tried.add(model)
             payload = self._payload(
                 model=model,
                 messages=messages,
@@ -291,8 +341,15 @@ class LLMClient:
                 resp = await self._client.post(self._s.chat_url, json=payload)
 
                 if resp.status_code == 429 or resp.status_code >= 500:
-                    wait = _retry_after(resp, delay)
                     last_error = f"HTTP {resp.status_code}"
+                    if self._s.free_mode and resp.status_code == 429:
+                        self._rest(model, RATE_LIMIT_COOLDOWN)
+                        alternative = self._next_free(tried=tried, vision=vision, audio=audio)
+                        if alternative:
+                            log.info("%s is rate limited, switching to %s", model, alternative)
+                            model = alternative
+                            continue
+                    wait = _retry_after(resp, delay)
                     log.warning(
                         "%s (attempt %d/%d), waiting %.1fs", last_error, attempt, retries, wait
                     )
@@ -315,7 +372,20 @@ class LLMClient:
                     return ChatResult(error=f"HTTP 400: {body[:200]}")
 
                 if resp.status_code == 402:
-                    # Known and terminal: retrying cannot conjure credit.
+                    if self._s.free_mode:
+                        # One model's free allowance is spent; the account is fine.
+                        self._rest(model, QUOTA_COOLDOWN)
+                        alternative = self._next_free(tried=tried, vision=vision, audio=audio)
+                        if alternative:
+                            log.info("%s is out of free quota, switching to %s",
+                                     model, alternative)
+                            model = alternative
+                            continue
+                        log.error("every free model is out of quota for now")
+                        return ChatResult(
+                            error="HTTP 402: free quota exhausted", error_kind="payment"
+                        )
+                    # On paid models this is terminal: retrying cannot conjure credit.
                     log.error(
                         "out of credit (HTTP 402) - top up at https://openrouter.ai/credits"
                     )
@@ -339,6 +409,8 @@ class LLMClient:
 
                 result = self._parse(data)
                 if result.ok:
+                    if self._s.free_mode and attempt > 1:
+                        log.info("answered by %s after %d attempts", model, attempt)
                     return result
                 last_error = result.error or "empty completion"
                 log.warning("empty completion from %s (attempt %d)", model, attempt)

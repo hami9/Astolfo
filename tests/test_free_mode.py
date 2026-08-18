@@ -14,6 +14,35 @@ from tests.conftest import FakeBot, FakeContext, FakeMessage, make_update
 CATALOG = {
     "data": [
         {
+            # Real shape from the live catalog: a music generator that also emits
+            # text, so "text in the outputs" is not enough to exclude it.
+            "id": "google/lyria-3-pro-preview",
+            "context_length": 1048576,
+            "pricing": {"prompt": "0", "completion": "0"},
+            "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text", "audio"],
+            },
+        },
+        {
+            "id": "nvidia/nemotron-3.5-content-safety:free",
+            "context_length": 900000,
+            "pricing": {"prompt": "0", "completion": "0"},
+            "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+            },
+        },
+        {
+            "id": "free/omni-audio",
+            "context_length": 90000,
+            "pricing": {"prompt": "0", "completion": "0"},
+            "architecture": {
+                "input_modalities": ["text", "audio"],
+                "output_modalities": ["text"],
+            },
+        },
+        {
             "id": "paid/big",
             "context_length": 200000,
             "pricing": {"prompt": "0.000003", "completion": "0.000015"},
@@ -30,13 +59,6 @@ CATALOG = {
             "context_length": 128000,
             "pricing": {"prompt": "0", "completion": "0"},
             "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
-        },
-        {
-            # Music and image generators are token-free but cannot hold a conversation.
-            "id": "google/lyria-3-pro-preview",
-            "context_length": 1000000,
-            "pricing": {"prompt": "0", "completion": "0"},
-            "architecture": {"input_modalities": ["text"], "output_modalities": ["audio"]},
         },
         {
             "id": "some/image-generator",
@@ -98,7 +120,9 @@ async def test_free_models_are_discovered_and_ranked(settings):
     client = _catalog_client(free_settings(settings))
     await client.load_catalog()
 
-    assert client.free_pool() == ["free/text-large", "free/vision", "free/text-small"]
+    assert client.free_pool() == [
+        "free/text-large", "free/omni-audio", "free/vision", "free/text-small",
+    ]
     assert client.free_pool(vision=True) == ["free/vision"]
     assert client.supports_free_vision() is True
     assert "paid/big" not in client.free_pool()
@@ -293,4 +317,131 @@ async def test_a_model_priced_on_another_axis_is_not_free(settings):
     await client.load_catalog()
 
     assert "sneaky/model" not in client.free_pool(), "per-request charges are still charges"
+    await client.aclose()
+
+
+# -- selection against real catalog shapes --------------------------------
+async def test_a_generator_that_also_emits_text_is_excluded(settings):
+    client = _catalog_client(free_settings(settings))
+    await client.load_catalog()
+
+    pool = client.free_pool()
+    assert "google/lyria-3-pro-preview" not in pool, "text+audio output is a generator"
+    assert pool[0] == "free/text-large", "the longest-context real chat model wins"
+    await client.aclose()
+
+
+async def test_classifiers_are_excluded(settings):
+    client = _catalog_client(free_settings(settings))
+    await client.load_catalog()
+    assert not any("content-safety" in m for m in client.free_pool())
+    await client.aclose()
+
+
+async def test_audio_capable_free_models_are_tracked(settings):
+    client = _catalog_client(free_settings(settings))
+    await client.load_catalog()
+
+    assert client.supports_free_audio() is True
+    assert client.free_pool(audio=True) == ["free/omni-audio"]
+    await client.aclose()
+
+
+# -- rotation -------------------------------------------------------------
+def _rotating_handler(exhausted: dict[str, int], seen: list[str]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=CATALOG)
+        body = json.loads(request.content)
+        model = body["model"]
+        seen.append(model)
+        if model in exhausted:
+            return httpx.Response(exhausted[model], text="quota")
+        return httpx.Response(
+            200,
+            json={
+                "model": model,
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "cost": 0},
+            },
+        )
+
+    return handler
+
+
+async def test_exhausted_model_is_skipped_for_the_next_one(settings):
+    seen: list[str] = []
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_rotating_handler({"free/text-large": 402}, seen)),
+    )
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert result.ok, "a spent free model must not end the turn"
+    assert seen[0] == "free/text-large"
+    assert seen[1] != "free/text-large", "it moved on to the next model"
+    await client.aclose()
+
+
+async def test_rate_limited_model_rotates_without_waiting(settings, monkeypatch):
+    slept: list[float] = []
+
+    async def record_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", record_sleep)
+    seen: list[str] = []
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_rotating_handler({"free/text-large": 429}, seen)),
+    )
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert result.ok
+    assert len(seen) == 2
+    assert slept == [], "switching models beats waiting out a limit"
+    await client.aclose()
+
+
+async def test_a_spent_model_is_not_retried_on_the_next_message(settings):
+    seen: list[str] = []
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_rotating_handler({"free/text-large": 402}, seen)),
+    )
+    await client.load_catalog()
+
+    await client.chat([{"role": "user", "content": "one"}], model="anything")
+    seen.clear()
+    await client.chat([{"role": "user", "content": "two"}], model="anything")
+
+    assert "free/text-large" not in seen, "the exhausted model rests, it is not retried"
+    await client.aclose()
+
+
+async def test_every_model_exhausted_reports_it(settings, monkeypatch):
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("asyncio.sleep", no_sleep)
+    seen: list[str] = []
+    all_spent = {
+        "free/text-large": 402, "free/vision": 402,
+        "free/omni-audio": 402, "free/text-small": 402,
+    }
+    client = LLMClient(
+        free_settings(settings),
+        transport=httpx.MockTransport(_rotating_handler(all_spent, seen)),
+    )
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert not result.ok
+    assert result.error_kind == "payment"
+    assert len(set(seen)) > 1, "it tried more than one before giving up"
     await client.aclose()
