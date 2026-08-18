@@ -30,6 +30,7 @@ class FakeLLM:
         self.calls: list[dict] = []
         self.json_calls: list[dict] = []
         self.json_result: dict | None = None
+        self.providers = [SimpleNamespace(name="openrouter")]
 
     def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         return model
