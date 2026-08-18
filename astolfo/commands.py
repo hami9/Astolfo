@@ -137,6 +137,14 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(rt.strings("unmuted"))
 
 
+def _billing_label(rt) -> str:
+    if not rt.settings.free_mode:
+        return "paid models"
+    pool = rt.llm.free_pool()
+    vision = "with images" if rt.llm.supports_free_vision() else "text only"
+    return f"free models ({len(pool)} available, {vision})"
+
+
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     rt = runtime.get(context)
     settings = rt.settings
@@ -155,6 +163,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             max_history=settings.max_history,
             notes="yes" if state.notes else "no",
             replies=state.replies_sent,
+            billing=_billing_label(rt),
             model_fast=settings.model_fast,
             model_think=settings.model_think,
             web="on" if settings.web_search else "off",

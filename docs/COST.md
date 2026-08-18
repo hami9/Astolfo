@@ -88,3 +88,34 @@ MAX_TOKENS_FAST=180
 SUMMARIES=0
 PROVIDER_SORT=price
 ```
+
+## Running with no credit at all
+
+`FREE_MODE=1` switches the bot onto OpenRouter's zero-cost models. It does not pick
+from a hardcoded list — free models appear and disappear constantly — but reads the
+model catalog at startup and uses everything priced at zero, longest context first.
+Every request also carries the rest of the free pool as fallbacks, so a model that is
+rate limited is swapped out server-side instead of failing the message.
+
+The binding limit changes in this mode: free models are rationed by **requests per
+minute and per day**, not by tokens. So the preset switches off everything that costs
+an extra call per message rather than everything that costs tokens:
+
+| Setting | Free mode | Why |
+| --- | --- | --- |
+| `WEB_SEARCH` | off | the search plugin is billed even when the model is free |
+| `ROUTER_LLM` | off | the dispatcher is a second call per ambiguous message |
+| `SUMMARIES` | off | folding notes is another call |
+| `GROUP_REPLY_CHANCE` | 0.12 | fewer unprompted replies |
+| `REPLY_COOLDOWN` | 45s | spreads requests out |
+| `VIDEO_FRAMES` / `IMAGE_MAX_DIM` | 2 / 768 | free vision models are small |
+
+Any variable you set explicitly still wins over the preset.
+
+**Images and GIFs still work** when the catalog contains a free model that accepts
+image input; GIFs and videos are sampled into still frames first, so they need image
+support rather than video support. When no free vision model exists the attachment is
+dropped and the bot says it cannot see it, instead of sending images to a text-only
+model. Voice messages always need a paid model.
+
+`/status` reports which pool is in use and whether images are available.
