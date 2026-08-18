@@ -8,7 +8,7 @@ from telegram import BotCommand, Update
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
-from . import media, runtime
+from . import branding, media, runtime
 from .budget import FULL
 from .routing import MODES
 
@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 COMMANDS = [
     BotCommand("start", "say hi to Astolfo"),
     BotCommand("help", "what the bot can do"),
+    BotCommand("about", "channel, creator and what I am"),
     BotCommand("chance", "auto-join chance, 0-100"),
     BotCommand("mode", "auto | fast | think | search"),
     BotCommand("usage", "credit usage and cost"),
@@ -48,11 +49,22 @@ async def _deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.effective_message.reply_text(runtime.get(context).strings("greeting"))
+    rt = runtime.get(context)
+    await update.effective_message.reply_text(
+        f"{rt.strings('greeting')}\n\n{branding.credit(rt.strings.locale)}"
+    )
 
 
 async def help_(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.effective_message.reply_text(runtime.get(context).strings("help"))
+    rt = runtime.get(context)
+    await update.effective_message.reply_text(
+        f"{rt.strings('help')}\n\n{branding.credit(rt.strings.locale)}"
+    )
+
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    rt = runtime.get(context)
+    await update.effective_message.reply_text(branding.about(rt.strings.locale))
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

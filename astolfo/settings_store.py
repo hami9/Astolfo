@@ -19,9 +19,9 @@ from .db import Database, open_database
 
 log = logging.getLogger(__name__)
 
-# Changing these from a chat would either cut the bot off from Telegram or move
-# the database out from under itself.
-LOCKED = frozenset({"telegram_token", "data_dir"})
+# Changing these from a chat would cut the bot off from Telegram, move the
+# database out from under itself, or hand the panel to somebody else.
+LOCKED = frozenset({"telegram_token", "data_dir", "master_id", "master_username"})
 
 # Keys live in the secrets table, encrypted, never in the settings table.
 SECRET_ENV = (

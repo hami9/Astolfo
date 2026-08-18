@@ -141,6 +141,7 @@ def build_application(settings: Settings, database=None) -> Application:
     for name, handler in (
         ("start", commands.start),
         ("help", commands.help_),
+        ("about", commands.about),
         ("reset", commands.reset),
         ("chance", commands.chance),
         ("mode", commands.mode),

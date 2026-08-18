@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from . import branding
+
 try:
     from dotenv import load_dotenv
 
@@ -165,6 +167,12 @@ class Settings:
     donate_amounts: list[int] = _env(
         "DONATE_AMOUNTS", default_factory=lambda: [15, 50, 150]
     )
+
+    # --- ownership ---------------------------------------------------
+    # The panel answers to one person. A numeric id is the only thing trusted at
+    # runtime; the username below is used once, to learn that id.
+    master_id: int = _env("MASTER_ID", default=0)
+    master_username: str = _env("MASTER_USERNAME", default=branding.CREATOR)
 
     # --- runtime -----------------------------------------------------
     app_title: str = _env("APP_TITLE", default="Astolfo Telegram Bot")
