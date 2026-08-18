@@ -133,12 +133,21 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now astolfo
+systemctl enable astolfo
+# restart, not `enable --now`: --now only starts a stopped service, so re-running
+# this script would pull new code and leave the old process serving it.
+systemctl restart astolfo
 sleep 3
 
 echo
 echo "==> status"
 systemctl --no-pager --lines=15 status astolfo || true
+if ! systemctl is-active --quiet astolfo; then
+  echo
+  echo "the service is not running; see: journalctl -u astolfo -n 50 --no-pager" >&2
+  exit 1
+fi
+echo "running $($GIT -C "$APP_DIR" log --oneline -1)"
 echo
 echo "Done. Useful commands:"
 echo "  journalctl -u astolfo -f      # follow the log"
