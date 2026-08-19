@@ -214,3 +214,18 @@ async def test_every_change_is_written_to_the_audit_trail(owned):
     owned.registry.add_key("google", "AIza-key")
     await _press(owned, "ap:svc:s:google:off")
     assert owned.db.audit_trail()[0]["action"] == "service_off"
+
+
+# -- choosing a service by hand ------------------------------------------
+async def test_a_service_can_be_pinned_and_released(owned):
+    _query, context = await _press(owned, "ap:svc:s:google:addkey")
+    await _say(owned, context, "AIza-key")
+
+    await _press(owned, "ap:svc:pin:google")
+    assert owned.settings.pinned_service == "google", "no restart needed"
+
+    query, _ = await _press(owned, "ap:svc")
+    assert "pinned to google" in query.edits[0]
+
+    await _press(owned, "ap:svc:pin:-")
+    assert owned.settings.pinned_service == ""

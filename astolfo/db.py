@@ -18,7 +18,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Provider keys used to live in `secrets`, one per service. They are credentials
 # now, so a service can hold more than one and each carries its own state.
@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS chats (
     locale      TEXT,
     notes       TEXT    NOT NULL DEFAULT '',
     messages    INTEGER NOT NULL DEFAULT 0,
-    replies     INTEGER NOT NULL DEFAULT 0
+    replies     INTEGER NOT NULL DEFAULT 0,
+    daily_limit INTEGER NOT NULL DEFAULT 0,
+    mode        TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -56,7 +58,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_seen   REAL,
     messages    INTEGER NOT NULL DEFAULT 0,
     blocked     INTEGER NOT NULL DEFAULT 0,
-    is_master   INTEGER NOT NULL DEFAULT 0
+    is_master   INTEGER NOT NULL DEFAULT 0,
+    daily_limit INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS members (
@@ -192,11 +195,24 @@ class Database:
         # an upgrade end up in the same place; only data moves belong here.
         if current and current < 2:
             self._adopt_stored_keys()
+        if current and current < 3:
+            # Limits and the reply mode used to be one global setting each.
+            self._add_column("chats", "daily_limit", "INTEGER NOT NULL DEFAULT 0")
+            self._add_column("chats", "mode", "TEXT NOT NULL DEFAULT ''")
+            self._add_column("users", "daily_limit", "INTEGER NOT NULL DEFAULT 0")
 
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
         if current:
             log.info("database schema upgraded from %s to %s", current, SCHEMA_VERSION)
+
+    def _add_column(self, table: str, name: str, spec: str) -> None:
+        """Add a column unless it is already there, so re-running is harmless."""
+        existing = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
+        if name in existing:
+            return
+        self._db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")  # noqa: S608
+        log.info("added %s.%s", table, name)
 
     def _adopt_stored_keys(self) -> None:
         """Carry keys saved under the old one-per-service scheme into credentials."""
@@ -292,7 +308,10 @@ class Database:
 
     def save_chat_state(self, chat_id: int, **columns: Any) -> None:
         """Persist the per-chat knobs the bot itself changes."""
-        allowed = {"muted", "reply_chance", "forced_mode", "locale", "notes", "title"}
+        allowed = {
+            "muted", "reply_chance", "forced_mode", "locale", "notes", "title",
+            "daily_limit", "mode",
+        }
         fields = {k: v for k, v in columns.items() if k in allowed}
         if not fields:
             return
@@ -309,9 +328,11 @@ class Database:
         """Rows worth restoring into memory after a restart."""
         return self.query(
             """
-            SELECT chat_id, notes, reply_chance, forced_mode, muted, title, locale
+            SELECT chat_id, notes, reply_chance, forced_mode, muted, title, locale,
+                   mode, daily_limit
             FROM chats
-            WHERE notes <> '' OR reply_chance IS NOT NULL OR forced_mode IS NOT NULL OR muted = 1
+            WHERE notes <> '' OR reply_chance IS NOT NULL OR forced_mode IS NOT NULL
+               OR muted = 1 OR mode <> '' OR daily_limit > 0
             """
         )
 
@@ -385,6 +406,41 @@ class Database:
 
     def user(self, user_id: int) -> sqlite3.Row | None:
         return self.one("SELECT * FROM users WHERE user_id = ?", (user_id,))
+
+    def set_user_limit(self, user_id: int, limit: int) -> None:
+        now = time.time()
+        self.execute(
+            """
+            INSERT INTO users (user_id, first_seen, last_seen, daily_limit) VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET daily_limit = excluded.daily_limit
+            """,
+            (user_id, now, now, max(0, limit)),
+        )
+
+    def limits(self) -> tuple[dict[int, int], dict[int, int]]:
+        """Every per-chat and per-person cap, for the copy the bot keeps in memory."""
+        chats = {
+            int(row["chat_id"]): int(row["daily_limit"])
+            for row in self.query("SELECT chat_id, daily_limit FROM chats WHERE daily_limit > 0")
+        }
+        users = {
+            int(row["user_id"]): int(row["daily_limit"])
+            for row in self.query("SELECT user_id, daily_limit FROM users WHERE daily_limit > 0")
+        }
+        return chats, users
+
+    def set_every_chat(self, **columns: Any) -> int:
+        """Apply the same knob to every group at once."""
+        allowed = {"daily_limit", "mode", "reply_chance", "muted"}
+        fields = {k: v for k, v in columns.items() if k in allowed}
+        if not fields:
+            return 0
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        cursor = self.execute(
+            f"UPDATE chats SET {assignments} WHERE left_at IS NULL",  # noqa: S608 - allowlist above
+            tuple(fields.values()),
+        )
+        return cursor.rowcount
 
     def set_blocked(self, user_id: int, blocked: bool) -> None:
         # An upsert, not an update: blocking somebody the bot has never recorded

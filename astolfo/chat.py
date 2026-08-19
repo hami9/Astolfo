@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import random
 import time
 
 from telegram import LinkPreviewOptions, Update
@@ -11,7 +10,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.ext import ContextTypes
 
 from . import media as media_mod
-from . import persona, runtime
+from . import offline, participation, persona, runtime
 from .budget import STOPPED, Allowance
 from .cache import normalize
 from .llm import ChatResult, Usage, cacheable_system
@@ -178,7 +177,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     bot_user = context.bot.bot
     addressed = (not is_group) or is_addressed(message, bot_user)
 
-    allowance = rt.budget.check(chat_id=chat.id, addressed=addressed)
+    allowance = rt.budget.check(
+        chat_id=chat.id,
+        addressed=addressed,
+        user_id=message.from_user.id,
+        chat_limit=state.daily_limit,
+        user_limit=rt.limit_for(message.from_user.id),
+    )
     if not allowance.allowed:
         log.info("chat %s skipped: %s", chat.id, allowance.reason)
         # Tell the chat once an hour instead of on every message.
@@ -188,9 +193,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await send_reply(message, rt.strings("budget_stopped"))
         return
 
-    if not addressed and not _should_join(rt, state, kind):
+    if not addressed and not participation.should_join(rt, state, kind):
         return
     if state.lock.locked():  # already composing a reply for this chat
+        return
+
+    if addressed and not kind and not rt.llm.usable_now():
+        # Every service is resting. Answer what needs no model and skip the rest
+        # rather than spending a turn discovering that again.
+        async with state.lock:
+            state.last_reply_at = time.monotonic()
+            said = offline.answer(text, locale=resolve_locale(rt, state))
+            state.add_assistant(said or "")
+        await send_reply(message, said or _offline_excuse(rt, state))
         return
 
     async with state.lock:
@@ -221,7 +236,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 allow_llm=allowance.allow_router_llm,
             )
             rt.record(mode="router", model=settings.model_router, usage=router_usage,
-                      chat_id=chat.id)
+                      chat_id=chat.id, user_id=message.from_user.id)
 
             if not allowance.allow_web and decision.web:
                 decision = Decision(decision.mode, False, decision.source, "web disabled by budget")
@@ -264,7 +279,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             }
             result: ChatResult = await rt.llm.chat(messages, **call)
             rt.record(mode=decision.mode, model=result.model or params["model"],
-                      usage=result.usage, chat_id=chat.id)
+                      usage=result.usage, chat_id=chat.id, user_id=message.from_user.id)
 
             reply = polish(result.text or "")
             # Small models leak the prompt or parrot the question. One more go on a
@@ -277,7 +292,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     rt.llm.mark_unusable(result.model)
                     result = await rt.llm.chat(messages, **call)
                     rt.record(mode=decision.mode, model=result.model or params["model"],
-                              usage=result.usage, chat_id=chat.id)
+                              usage=result.usage, chat_id=chat.id,
+                              user_id=message.from_user.id)
                     reply = polish(result.text or "")
                     if looks_broken(reply, echoes=text, previous=_last_reply(state)):
                         rt.llm.mark_unusable(result.model)
@@ -285,9 +301,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
-            if addressed:
+            if not addressed:
+                return
+            # No model answered. Some things need no model at all, and saying one
+            # of those is better than an apology.
+            reply = offline.answer(text, locale=resolve_locale(rt, state))
+            if reply:
+                log.info("chat %s answered without a model", chat.id)
+            else:
                 await _announce_failure(rt, state, message, result)
-            return
+                return
 
         state.add_assistant(reply)
         rt.store.mark_dirty()
@@ -302,6 +325,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if settings.summaries:
         context.application.create_task(_summarize(rt, state))
+
+
+def _offline_excuse(rt: Runtime, state: ChatState) -> str:
+    return offline.excuse(resolve_locale(rt, state))
 
 
 def _track(rt: Runtime, message, sender: str) -> None:
@@ -357,18 +384,6 @@ def _can_read_media(rt: Runtime, bundle: media_mod.MediaBundle) -> bool:
     if wants_audio:
         return False
     return rt.llm.supports_free_vision()
-
-
-def _should_join(rt: Runtime, state: ChatState, kind: str) -> bool:
-    """Random participation, throttled by a cooldown."""
-    settings = rt.settings
-    if time.monotonic() - state.last_reply_at < settings.reply_cooldown:
-        return False
-    base = state.reply_chance if state.reply_chance is not None else settings.group_reply_chance
-    if base <= 0:
-        return False
-    chance = max(base, settings.media_reply_chance) if kind else base
-    return random.random() < chance  # noqa: S311 - a coin flip, not a secret
 
 
 async def _summarize(rt: Runtime, state: ChatState) -> None:

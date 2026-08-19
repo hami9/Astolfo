@@ -710,7 +710,7 @@ async def test_two_broken_replies_do_not_reach_the_chat(rt, llm):
     llm.chat = always_broken
     llm.mark_unusable = lambda *a, **k: None
 
-    message = FakeMessage("astolfo hey")
+    message = FakeMessage("astolfo what do you make of this")
     await chat.handle_message(make_update(message), FakeContext(rt, FakeBot()))
 
     assert len(llm.calls) == 2, "one retry, then give up"

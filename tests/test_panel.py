@@ -31,6 +31,9 @@ class _Client:
         ]
         self.probed: list[str] = []
 
+    def usable_now(self) -> bool:
+        return True
+
     async def load_catalog(self) -> None:
         return None
 
@@ -254,3 +257,52 @@ async def test_an_ordinary_private_message_still_reaches_the_chat_pipeline(owned
     message = _private("hello astolfo")
     await on_text(make_update(message), context)  # must not raise
     assert message.sent == []
+
+
+# -- limits and modes -----------------------------------------------------
+async def test_a_group_can_be_told_to_answer_only_when_spoken_to(owned):
+    _busy_group(owned)
+    await _press(owned, "ap:chat:-100:mode:manual")
+
+    assert owned.store.get(-100).mode == "manual"
+    assert owned.db.chat(-100)["mode"] == "manual"
+
+    await _press(owned, "ap:chat:-100:mode:-")
+    assert owned.store.get(-100).mode == "", "back to following the global mode"
+
+
+async def test_a_group_gets_its_own_daily_limit(owned):
+    _busy_group(owned)
+    _query, context = await _press(owned, "ap:chat:-100:limit")
+    await _say(owned, "40", context)
+
+    assert owned.store.get(-100).daily_limit == 40
+    assert owned.db.chat(-100)["daily_limit"] == 40
+
+
+async def test_a_limit_that_is_not_a_number_is_refused(owned):
+    _busy_group(owned)
+    _query, context = await _press(owned, "ap:chat:-100:limit")
+    message = await _say(owned, "plenty", context)
+
+    assert "not a number" in message.sent[0]
+    assert owned.store.get(-100).daily_limit == 0
+
+
+async def test_every_group_can_be_set_from_one_press(owned):
+    for chat_id in (-100, -200):
+        owned.db.joined_chat(chat_id, kind="supergroup", title=f"Group {chat_id}")
+
+    query, _ = await _press(owned, "ap:chats:all:manual")
+
+    assert "2 group(s)" in (query.answers[0] or "")
+    assert all(row["mode"] == "manual" for row in owned.db.list_chats())
+
+
+async def test_a_person_gets_their_own_daily_limit(owned):
+    _busy_group(owned)
+    _query, context = await _press(owned, "ap:ppl:7:limit")
+    await _say(owned, "5", context)
+
+    assert owned.limit_for(7) == 5
+    assert owned.db.user(7)["daily_limit"] == 5

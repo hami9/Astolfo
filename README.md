@@ -111,7 +111,7 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 294 tests, fully offline
+pytest -q          # 351 tests, fully offline
 ruff check .
 ```
 
@@ -136,6 +136,8 @@ astolfo/crypto.py       encryption for the stored keys
 astolfo/master.py       who owns the bot
 astolfo/admin/          the owner's panel
 astolfo/services.py     the stored services and keys, and what the client learns
+astolfo/participation.py  manual, auto and smart: how talkative the bot is
+astolfo/offline.py      the answers that need no model at all
 astolfo/server_ops.py   machine health, and asking the root helper for a job
 astolfo/chat.py         the message pipeline
 astolfo/commands.py     command handlers
