@@ -40,7 +40,7 @@ class Runtime:
     def __post_init__(self) -> None:
         self.responses = TTLCache(maxsize=512, ttl=self.settings.response_cache_ttl)
         self.blocked = self.db.blocked_ids()
-        _chats, self.user_limits = self.db.limits()
+        self.user_limits = self.db.user_limits()
 
     def limit_for(self, user_id: int) -> int:
         """This person's own daily cap, or 0 when they follow the global one."""

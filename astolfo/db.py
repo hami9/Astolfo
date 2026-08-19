@@ -417,17 +417,16 @@ class Database:
             (user_id, now, now, max(0, limit)),
         )
 
-    def limits(self) -> tuple[dict[int, int], dict[int, int]]:
-        """Every per-chat and per-person cap, for the copy the bot keeps in memory."""
-        chats = {
-            int(row["chat_id"]): int(row["daily_limit"])
-            for row in self.query("SELECT chat_id, daily_limit FROM chats WHERE daily_limit > 0")
-        }
-        users = {
+    def user_limits(self) -> dict[int, int]:
+        """Every per-person cap, for the copy the bot keeps in memory.
+
+        Chats need no equivalent: a chat's limit rides along with the rest of its
+        settings when the store loads it.
+        """
+        return {
             int(row["user_id"]): int(row["daily_limit"])
             for row in self.query("SELECT user_id, daily_limit FROM users WHERE daily_limit > 0")
         }
-        return chats, users
 
     def set_every_chat(self, **columns: Any) -> int:
         """Apply the same knob to every group at once."""

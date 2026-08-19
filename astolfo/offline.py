@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import math
 import operator
 import re
 from datetime import datetime, timezone
@@ -131,7 +132,7 @@ def calculate(text: str) -> str | None:
         value = _arithmetic(ast.parse(expression, mode="eval"))
     except (SyntaxError, ValueError, TypeError, ZeroDivisionError, RecursionError):
         return None
-    if value != value or value in (float("inf"), float("-inf")):  # NaN or overflow
+    if not math.isfinite(value):  # a NaN or an overflow is not an answer
         return None
     return str(int(value)) if float(value).is_integer() else f"{value:.6g}"
 
