@@ -116,6 +116,11 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
         return sections.config(ctx)
 
     if head == "chats":
+        action = rest[0] if rest else ""
+        if action == "all" and len(rest) > 1:
+            return sections.chats_all_mode(ctx, rest[1])
+        if action == "alllimit":
+            return sections.chats_all_limit_prompt(ctx)
         return sections.chats(ctx)
 
     if head == "chat":
@@ -125,6 +130,10 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
             return sections.chat_mute(ctx, chat_id, muted=rest[2] == "1")
         if action == "people":
             return sections.people(ctx, chat_id)
+        if action == "mode" and len(rest) > 2:
+            return sections.chat_mode(ctx, chat_id, rest[2])
+        if action == "limit":
+            return sections.chat_limit_prompt(ctx, chat_id)
         if action in ("leave", "leave!"):
             return await sections.chat_leave(ctx, chat_id, confirmed=action.endswith("!"))
         return sections.chat_detail(ctx, chat_id)
@@ -137,6 +146,8 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
         user_id = int(rest[0])
         if len(rest) > 2 and rest[1] == "block":
             return sections.person_block(ctx, user_id, blocked=rest[2] == "1")
+        if len(rest) > 1 and rest[1] == "limit":
+            return sections.person_limit_prompt(ctx, user_id)
         return sections.person_detail(ctx, user_id)
 
     if head == "srv":
@@ -169,6 +180,8 @@ async def _services(ctx: Ctx, rest: list[str]) -> View:
         return await services_section.test_all(ctx)
     if head == "new":
         return services_section.ask_new_service(ctx)
+    if head == "pin" and len(rest) > 1:
+        return services_section.pin(ctx, rest[1])
 
     if head == "k" and len(rest) > 1:
         credential_id = int(rest[1])
@@ -234,6 +247,15 @@ async def _answer(ctx: Ctx, kind: str, target: str, text: str, message) -> View:
         view.text = f"↩️ {text.strip()} follows the .env value again\n\n{view.text}"
         view.extras["reload"] = True
         return view
+
+    if kind == "chatlimit":
+        return sections.chat_limit(ctx, int(target), text)
+
+    if kind == "userlimit":
+        return sections.person_limit(ctx, int(target), text)
+
+    if kind == "alllimit":
+        return sections.chats_all_limit(ctx, text)
 
     if kind == "person":
         found = ctx.rt.db.find_people(text.lstrip("@"))

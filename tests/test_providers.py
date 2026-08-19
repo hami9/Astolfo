@@ -350,3 +350,27 @@ def test_a_service_stored_by_the_panel_joins_without_touching_providers():
     stored = [{"name": "sambanova", "credentials": [{"id": 1, "value": "sn-key"}]}]
     found = providers_mod.discover(["openrouter"], fallback_key="or", stored=stored)
     assert "sambanova" in [p.name for p in found]
+
+
+# -- choosing by hand -----------------------------------------------------
+async def test_pinning_a_service_stops_the_failover(settings, monkeypatch):
+    """Manual means manual: the pinned one answers or the turn fails."""
+    seen: list[tuple[str, str]] = []
+    client = _multi(settings, monkeypatch, _router({"openrouter.ai": 429}, seen))
+    client._s = client._s.replace(pinned_service="openrouter")
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+
+    assert not result.ok
+    assert {host for host, _ in seen} == {"openrouter.ai"}, "google was never asked"
+
+
+async def test_unpinning_restores_the_order(settings, monkeypatch):
+    seen: list[tuple[str, str]] = []
+    client = _multi(settings, monkeypatch, _router({"openrouter.ai": 429}, seen))
+    client._s = client._s.replace(pinned_service="")
+    await client.load_catalog()
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
+    assert result.ok

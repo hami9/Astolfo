@@ -33,12 +33,25 @@ class Runtime:
     box: SecretBox
     registry: ServiceRegistry
     responses: TTLCache = field(init=False)
-    # Read on every message, changed only from the panel, so it lives in memory.
+    # Read on every message, changed only from the panel, so they live in memory.
     blocked: set[int] = field(default_factory=set)
+    user_limits: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.responses = TTLCache(maxsize=512, ttl=self.settings.response_cache_ttl)
         self.blocked = self.db.blocked_ids()
+        self.user_limits = self.db.user_limits()
+
+    def limit_for(self, user_id: int) -> int:
+        """This person's own daily cap, or 0 when they follow the global one."""
+        return self.user_limits.get(user_id, 0)
+
+    def set_user_limit(self, user_id: int, limit: int) -> None:
+        self.db.set_user_limit(user_id, limit)
+        if limit > 0:
+            self.user_limits[user_id] = limit
+        else:
+            self.user_limits.pop(user_id, None)
 
     def set_blocked(self, user_id: int, blocked: bool) -> None:
         self.db.set_blocked(user_id, blocked)
@@ -88,9 +101,19 @@ class Runtime:
         await previous.aclose()
         log.info("settings reloaded: %s", ", ".join(p.name for p in self.llm.providers))
 
-    def record(self, *, mode: str, model: str, usage: Usage, chat_id: int | None = None) -> None:
+    def record(
+        self,
+        *,
+        mode: str,
+        model: str,
+        usage: Usage,
+        chat_id: int | None = None,
+        user_id: int | None = None,
+    ) -> None:
         if usage.total_tokens or usage.cost:
-            self.budget.record(mode=mode, model=model, usage=usage, chat_id=chat_id)
+            self.budget.record(
+                mode=mode, model=model, usage=usage, chat_id=chat_id, user_id=user_id
+            )
 
     def save(self, force: bool = False) -> None:
         self.store.save(force=force)

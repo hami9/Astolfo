@@ -22,8 +22,8 @@ confirm the command exists. Repeated attempts are logged and recorded.
 |---|---|
 | **services** | Every service: keys, health, today's calls, order, on/off, and adding your own |
 | **settings** | Any setting by name, plus switches for the common ones |
-| **groups** | Every group the bot is in: activity, mute, leave |
-| **people** | Who has spoken to it, where, and blocking |
+| **groups** | Every group: activity, mute, leave, how talkative it is, daily limit |
+| **people** | Who has spoken to it, where, blocking, and per-person limits |
 | **server** | Health, log, update, restart |
 | **data** | Row counts, the audit trail, a backup of the database |
 
@@ -58,6 +58,45 @@ key, leaving a group, blocking, updating, restarting — take a second press.
 
 Changing a key or a setting takes effect immediately. There is no restart, and
 the conversations in progress are not disturbed.
+
+### How talkative it is
+
+Three modes, set globally or on one group, from **groups → a group**:
+
+- **manual** — answers only when it is replied to, mentioned, or called by name.
+- **auto** — also jumps into conversations on its own, at the chance you set.
+- **smart** (the default) — auto while that makes sense, manual when it does not:
+  every service is resting, most of the day's budget is gone, or the chat is
+  moving faster than a dozen messages a minute.
+
+The group's own setting beats the global one; **follow the global mode** hands it
+back. The row of buttons on the groups list applies a mode to *every* group at
+once, which is what you want after adding the bot to several at a time.
+
+Being spoken to always gets an answer. Manual is "only when asked", never silence
+— that is what **mute** is for.
+
+### Limits
+
+A daily cap on model calls can be set on one group, on one person, or on every
+group at once. The specific one wins over the global `CHAT_DAILY_CALL_LIMIT` and
+`USER_DAILY_CALL_LIMIT`; 0 means "follow the global one". Both screens show how
+much of the cap has been used today.
+
+### Choosing a service by hand
+
+Services are normally tried top to bottom, failing over as each runs out. **📌 use
+only this** on a service pins everything to it, and nothing else is tried — if it
+is out of allowance the turn fails rather than quietly spending somewhere else.
+The list then shows a **🔀 automatic order** button to undo it.
+
+### When nothing can answer
+
+If every service is resting or out of quota, the bot still handles what needs no
+model at all: greetings, goodbyes, thanks, "who are you", the time, the date, and
+plain arithmetic — in character, in the chat's language. Anything that needs
+actual knowledge gets an honest "my brain is offline right now" rather than a
+guess. It never invents an answer to cover an outage.
 
 ## Updating the server from the panel
 

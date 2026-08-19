@@ -31,9 +31,18 @@ class FakeLLM:
         self.json_calls: list[dict] = []
         self.json_result: dict | None = None
         self.providers = [SimpleNamespace(name="openrouter")]
+        self.reachable = True
 
     def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         return model
+
+    def usable_now(self) -> bool:
+        # A failing model is not the same as an unreachable service; a test that
+        # wants "everything is down" sets this to False itself.
+        return self.reachable
+
+    def throttled_for(self) -> float:
+        return 0.0
 
     async def chat(self, messages, **kwargs):
         self.calls.append({"messages": messages, **kwargs})
@@ -99,7 +108,9 @@ class FakeMessage:
         self.message_id = 1
         self.text = text
         self.caption = caption
-        self.chat = SimpleNamespace(id=chat_id, type=chat_type, title="Test Group")
+        self.chat = SimpleNamespace(
+            id=chat_id, type=chat_type, title="Test Group", username=None
+        )
         self.chat_id = chat_id
         self.from_user = SimpleNamespace(id=user_id, is_bot=is_bot, first_name=name, username=None)
         self.reply_to_message = reply_to

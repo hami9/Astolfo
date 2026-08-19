@@ -189,8 +189,17 @@ class LLMClient:
                 )
 
     def _live_providers(self) -> list[providers_mod.Provider]:
+        """Services that could take a request now, in the order they are tried.
+
+        Pinning one is a deliberate choice to stop failing over: if it is out of
+        allowance the turn fails rather than quietly spending somewhere else.
+        """
         now = time.monotonic()
-        return [p for p in self.providers if p.paused_until <= now]
+        usable = [p for p in self.providers if p.paused_until <= now]
+        pinned = (self._s.pinned_service or "").strip().lower()
+        if pinned:
+            return [p for p in usable if p.name == pinned]
+        return usable
 
     def _pause_provider(
         self, provider: providers_mod.Provider, seconds: float, error: str = ""
@@ -250,6 +259,10 @@ class LLMClient:
         return False, result.error or "no answer"
 
     # -- allowances -------------------------------------------------------
+    def usable_now(self) -> bool:
+        """True while at least one service could take a request this moment."""
+        return bool(self._live_providers())
+
     def throttled_for(self) -> float:
         """Seconds until any service is usable again, 0 while one still is."""
         now = time.monotonic()

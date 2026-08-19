@@ -89,6 +89,8 @@ class Settings:
         default_factory=lambda: ["openai/gpt-4o-mini", "anthropic/claude-3.5-haiku"],
     )
     provider_sort: str | None = _env("PROVIDER_SORT", default=None)  # price | throughput
+    # Empty means the usual failover order; a name means use only that service.
+    pinned_service: str = _env("PINNED_SERVICE", default="")
 
     # Free mode: run on OpenRouter's zero-cost models. The limit there is requests
     # per minute and per day rather than tokens, so anything that spends an extra
@@ -124,6 +126,9 @@ class Settings:
     router_min_words: int = _env("ROUTER_MIN_WORDS", default=4)
 
     # --- chat behaviour ----------------------------------------------
+    # manual = only when addressed, auto = joins in on its own, smart = auto until
+    # the allowance is tight or the chat is busy, then manual.
+    reply_mode: str = _env("REPLY_MODE", default="smart")
     group_reply_chance: float = _env("GROUP_REPLY_CHANCE", default=0.30)
     media_reply_chance: float = _env("MEDIA_REPLY_CHANCE", default=0.75)
     reply_cooldown: float = _env("REPLY_COOLDOWN", default=20.0)
@@ -144,6 +149,7 @@ class Settings:
     daily_budget_usd: float = _env("DAILY_BUDGET_USD", default=0.0)  # 0 = unlimited
     monthly_budget_usd: float = _env("MONTHLY_BUDGET_USD", default=0.0)
     chat_daily_call_limit: int = _env("CHAT_DAILY_CALL_LIMIT", default=0)
+    user_daily_call_limit: int = _env("USER_DAILY_CALL_LIMIT", default=0)
     response_cache: bool = _env("RESPONSE_CACHE", default=True)
     response_cache_ttl: float = _env("RESPONSE_CACHE_TTL", default=600.0)
     router_cache_ttl: float = _env("ROUTER_CACHE_TTL", default=3600.0)

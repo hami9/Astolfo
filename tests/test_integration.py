@@ -105,7 +105,7 @@ async def test_provider_outage_falls_back_to_in_character_line(rt, monkeypatch):
     rt.settings = rt.settings.replace(max_retries=2)
     _install_transport(rt, handler)
 
-    message = FakeMessage("astolfo hey")
+    message = FakeMessage("astolfo what do you make of this")
     await chat.handle_message(make_update(message), FakeContext(rt, FakeBot()))
     assert message.sent == [rt.strings("error_reply")]
 

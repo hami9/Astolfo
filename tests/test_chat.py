@@ -115,9 +115,18 @@ async def test_sources_only_in_search_mode(rt, llm):
     assert llm.calls[1]["web"] is False
 
 
-async def test_model_failure_returns_in_character_line(rt, llm):
+async def test_a_greeting_survives_an_outage(rt, llm):
+    """Some things need no model, and an apology for those would be silly."""
     llm.reply = None
     message = FakeMessage("astolfo hi")
+    await run(rt, message)
+
+    assert message.sent and message.sent != [rt.strings("error_reply")]
+
+
+async def test_model_failure_returns_in_character_line(rt, llm):
+    llm.reply = None
+    message = FakeMessage("astolfo what do you make of this")
     await run(rt, message)
     assert message.sent and message.sent[0] == rt.strings("error_reply")
 
@@ -316,8 +325,9 @@ async def test_backlog_reaches_the_model_as_one_block(rt, llm):
 async def test_failure_apology_is_throttled(rt, llm):
     """A provider outage must not turn every message into an apology."""
     llm.reply = None
-    messages = [FakeMessage("astolfo hi"), FakeMessage("astolfo hello"),
-                FakeMessage("astolfo anyone there")]
+    messages = [FakeMessage("astolfo what do you make of this"),
+                FakeMessage("astolfo and the other thing"),
+                FakeMessage("astolfo any thoughts")]
     for message in messages:
         await run(rt, message)
 
@@ -329,7 +339,7 @@ async def test_failure_apology_is_throttled(rt, llm):
 
 async def test_apology_returns_after_the_window(rt, llm):
     llm.reply = None
-    first = FakeMessage("astolfo hi")
+    first = FakeMessage("astolfo what do you make of this")
     await run(rt, first)
 
     rt.store.get(-100).error_notice_at -= chat.ERROR_NOTICE_INTERVAL + 1
@@ -347,7 +357,7 @@ async def test_out_of_credit_says_so_instead_of_the_generic_apology(rt, llm):
         return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
 
     llm.chat = broke
-    message = FakeMessage("astolfo hi")
+    message = FakeMessage("astolfo what do you make of this")
     await run(rt, message)
 
     assert message.sent == [rt.strings("no_credit")]
@@ -361,7 +371,8 @@ async def test_out_of_credit_notice_is_rare(rt, llm):
         return ChatResult(error="HTTP 402", error_kind="payment")
 
     llm.chat = broke
-    first, second = FakeMessage("astolfo hi"), FakeMessage("astolfo hello")
+    first = FakeMessage("astolfo what do you make of this")
+    second = FakeMessage("astolfo and this one")
     await run(rt, first)
     await run(rt, second)
 

@@ -57,6 +57,7 @@ def _empty_day() -> dict:
         "by_mode": {},
         "by_model": {},
         "chats": {},
+        "users": {},
         "saved_by_cache": 0,
         "stars": 0,
     }
@@ -108,7 +109,15 @@ class BudgetTracker:
             log.warning("could not persist usage history: %s", exc)
 
     # -- recording -------------------------------------------------------
-    def record(self, *, mode: str, model: str, usage: Usage, chat_id: int | None = None) -> None:
+    def record(
+        self,
+        *,
+        mode: str,
+        model: str,
+        usage: Usage,
+        chat_id: int | None = None,
+        user_id: int | None = None,
+    ) -> None:
         day = self._days[_today()]
         day["cost"] += usage.cost
         day["calls"] += 1
@@ -121,6 +130,9 @@ class BudgetTracker:
         if chat_id is not None:
             key = str(chat_id)
             day["chats"][key] = day["chats"].get(key, 0) + 1
+        if user_id is not None:
+            who = str(user_id)
+            day["users"][who] = day["users"].get(who, 0) + 1
         self._dirty = True
 
     def record_donation(self, stars: int) -> None:
@@ -146,22 +158,43 @@ class BudgetTracker:
     def chat_calls_today(self, chat_id: int) -> int:
         return self.today()["chats"].get(str(chat_id), 0)
 
+    def user_calls_today(self, user_id: int) -> int:
+        return self.today().get("users", {}).get(str(user_id), 0)
+
     def cache_hit_rate(self) -> float:
         day = self.today()
         prompt = day["prompt_tokens"]
         return round(day["cached_tokens"] / prompt, 3) if prompt else 0.0
 
     # -- policy ----------------------------------------------------------
-    def check(self, *, chat_id: int, addressed: bool) -> Allowance:
+    def check(
+        self,
+        *,
+        chat_id: int,
+        addressed: bool,
+        user_id: int | None = None,
+        chat_limit: int = 0,
+        user_limit: int = 0,
+    ) -> Allowance:
+        """Whether this message may be answered, and how expensively.
+
+        A limit set on one group or one person beats the global one, so a busy
+        group can be capped without quieting the rest.
+        """
         limit = self._s.daily_budget_usd
         monthly = self._s.monthly_budget_usd
 
         if monthly > 0 and self.month_cost() >= monthly:
             return Allowance(False, STOPPED, "monthly budget reached", allow_web=False)
 
-        call_cap = self._s.chat_daily_call_limit
+        call_cap = chat_limit or self._s.chat_daily_call_limit
         if call_cap > 0 and self.chat_calls_today(chat_id) >= call_cap:
             return Allowance(False, STOPPED, "chat daily call limit reached", allow_web=False)
+
+        person_cap = user_limit or self._s.user_daily_call_limit
+        spent = self.user_calls_today(user_id) if user_id is not None else 0
+        if person_cap > 0 and spent >= person_cap:
+            return Allowance(False, STOPPED, "personal daily limit reached", allow_web=False)
 
         if limit <= 0:
             return Allowance()

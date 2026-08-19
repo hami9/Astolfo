@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .. import branding, master, settings_store
+from .. import branding, master, participation, settings_store
 from ..config import ConfigError
 from .guard import audit
 from .ui import ago, back_row, button, confirm_rows, keyboard, trim, yes_no
@@ -146,7 +146,66 @@ def chats(ctx) -> View:
             f"{ago(row['last_seen'])}"
         )
         rows.append([button(title, "chat", row["chat_id"])])
-    return View("\n".join(lines), keyboard(*rows, back_row()))
+
+    lines.append(f"\nglobal mode: {ctx.rt.settings.reply_mode}")
+    return View(
+        "\n".join(lines),
+        keyboard(
+            *rows,
+            [
+                button("all → 🗣 manual", "chats", "all", participation.MANUAL),
+                button("all → 💬 auto", "chats", "all", participation.AUTO),
+                button("all → 🧠 smart", "chats", "all", participation.SMART),
+            ],
+            [
+                button("↩️ all follow global", "chats", "all", "-"),
+                button("🔢 limit for all", "chats", "alllimit"),
+            ],
+            back_row(),
+        ),
+    )
+
+
+def chats_all_mode(ctx, mode: str) -> View:
+    """Set every group at once, for when the answer is the same everywhere."""
+    chosen = "" if mode == "-" else participation.normalize(mode)
+    rt = ctx.rt
+    touched = rt.db.set_every_chat(mode=chosen)
+    for state in rt.store.all_states():
+        state.mode = chosen
+    audit(rt, ctx.user, "chats_mode", f"{touched} groups → {chosen or 'global'}")
+
+    view = chats(ctx)
+    view.alert = f"{touched} group(s) now answer: {chosen or 'as the global mode says'}"
+    return view
+
+
+def chats_all_limit_prompt(ctx) -> View:
+    return View(
+        "How many model calls a day may each group use?\n\n"
+        "Send a number, or 0 to hand them all back to the global limit.",
+        keyboard(back_row("chats")),
+        prompt=("alllimit", "*"),
+    )
+
+
+def chats_all_limit(ctx, raw: str) -> View:
+    try:
+        limit = max(0, int(raw.strip()))
+    except ValueError:
+        view = chats(ctx)
+        view.text = f"❌ {raw.strip()} is not a number\n\n{view.text}"
+        return view
+
+    rt = ctx.rt
+    touched = rt.db.set_every_chat(daily_limit=limit)
+    for state in rt.store.all_states():
+        state.daily_limit = limit
+    audit(rt, ctx.user, "chats_limit", f"{touched} groups → {limit}")
+
+    view = chats(ctx)
+    view.text = f"✅ {touched} group(s): {limit or 'no limit of their own'}\n\n{view.text}"
+    return view
 
 
 def chat_detail(ctx, chat_id: int) -> View:
@@ -159,6 +218,10 @@ def chat_detail(ctx, chat_id: int) -> View:
     chance = state.reply_chance
     if chance is None:
         chance = rt.settings.group_reply_chance
+    mode, why = participation.effective(rt, state)
+    if participation.mode_for(rt, state) == participation.SMART:
+        mode = f"smart → {mode}"
+    limit = state.daily_limit or rt.settings.chat_daily_call_limit or "none"
     text = (
         f"💬 {row['title'] or chat_id}\n\n"
         f"id: {row['chat_id']}\ntype: {row['type'] or '?'}\n"
@@ -166,6 +229,9 @@ def chat_detail(ctx, chat_id: int) -> View:
         f"last activity: {ago(row['last_seen'])}\n"
         f"muted: {yes_no(row['muted'])}\n"
         f"joins in: {round(chance * 100)}% of the time\n"
+        f"answers: {mode} ({why})\n"
+        f"daily limit: {limit}\n"
+        f"used today: {rt.budget.chat_calls_today(chat_id)} calls\n"
         f"mode: {state.forced_mode or 'auto'}\n"
         f"notes: {trim(row['notes'] or '-', 60)}"
     )
@@ -177,10 +243,63 @@ def chat_detail(ctx, chat_id: int) -> View:
                 button("unmute" if unmute else "mute", "chat", chat_id, "mute", 0 if unmute else 1),
                 button("👥 people", "chat", chat_id, "people"),
             ],
+            [
+                button("🗣 manual", "chat", chat_id, "mode", participation.MANUAL),
+                button("💬 auto", "chat", chat_id, "mode", participation.AUTO),
+                button("🧠 smart", "chat", chat_id, "mode", participation.SMART),
+            ],
+            [
+                button("↩️ follow the global mode", "chat", chat_id, "mode", "-"),
+                button("🔢 daily limit", "chat", chat_id, "limit"),
+            ],
             [button("🚪 leave this group", "chat", chat_id, "leave")],
             back_row("chats"),
         ),
     )
+
+
+def chat_mode(ctx, chat_id: int, mode: str) -> View:
+    """Set how talkative the bot is here, or hand it back to the global setting."""
+    chosen = "" if mode == "-" else participation.normalize(mode)
+    rt = ctx.rt
+    rt.store.get(chat_id).mode = chosen
+    rt.store.mark_dirty()
+    rt.db.save_chat_state(chat_id, mode=chosen)
+    audit(rt, ctx.user, "chat_mode", f"{chat_id} {chosen or 'global'}")
+
+    view = chat_detail(ctx, chat_id)
+    view.alert = f"answers here: {chosen or 'whatever the global mode says'}"
+    return view
+
+
+def chat_limit_prompt(ctx, chat_id: int) -> View:
+    state = ctx.rt.store.get(chat_id)
+    return View(
+        f"How many model calls a day may this group use?\n"
+        f"Now: {state.daily_limit or 'no limit of its own'}\n\n"
+        "Send a number, or 0 to follow the global limit.",
+        keyboard(back_row("chat", chat_id)),
+        prompt=("chatlimit", str(chat_id)),
+    )
+
+
+def chat_limit(ctx, chat_id: int, raw: str) -> View:
+    try:
+        limit = max(0, int(raw.strip()))
+    except ValueError:
+        view = chat_detail(ctx, chat_id)
+        view.text = f"❌ {raw.strip()} is not a number\n\n{view.text}"
+        return view
+
+    rt = ctx.rt
+    rt.store.get(chat_id).daily_limit = limit
+    rt.store.mark_dirty()
+    rt.db.save_chat_state(chat_id, daily_limit=limit)
+    audit(rt, ctx.user, "chat_limit", f"{chat_id} {limit}")
+
+    view = chat_detail(ctx, chat_id)
+    view.text = f"✅ daily limit: {limit or 'follows the global one'}\n\n{view.text}"
+    return view
 
 
 def chat_mute(ctx, chat_id: int, muted: bool) -> View:
@@ -265,13 +384,17 @@ def person_detail(ctx, user_id: int) -> View:
     where = (
         "\n".join(f"• {trim(r['title'] or '?')}: {r['messages']}" for r in seen_in) or "• nowhere"
     )
+    limit = rt.limit_for(user_id) or rt.settings.user_daily_call_limit or "none"
     text = (
         f"👤 {row['name']}\n\n"
         f"id: {row['user_id']}\n"
         f"username: @{row['username'] or '-'}\n"
         f"messages: {row['messages']}\n"
         f"first seen: {ago(row['first_seen'])}\nlast seen: {ago(row['last_seen'])}\n"
-        f"blocked: {yes_no(row['blocked'])}\n\nseen in:\n{where}"
+        f"blocked: {yes_no(row['blocked'])}\n"
+        f"daily limit: {limit}\n"
+        f"used today: {rt.budget.user_calls_today(user_id)} calls\n"
+        f"\nseen in:\n{where}"
     )
     blocked = bool(row["blocked"])
     return View(
@@ -281,11 +404,38 @@ def person_detail(ctx, user_id: int) -> View:
                 button(
                     "unblock" if blocked else "🚫 block",
                     "ppl", user_id, "block", 0 if blocked else 1,
-                )
+                ),
+                button("🔢 daily limit", "ppl", user_id, "limit"),
             ],
             back_row("ppl"),
         ),
     )
+
+
+def person_limit_prompt(ctx, user_id: int) -> View:
+    current = ctx.rt.limit_for(user_id)
+    return View(
+        f"How many model calls a day may this person use?\n"
+        f"Now: {current or 'no limit of their own'}\n\n"
+        "Send a number, or 0 to follow the global limit.",
+        keyboard(back_row("ppl", user_id)),
+        prompt=("userlimit", str(user_id)),
+    )
+
+
+def person_limit(ctx, user_id: int, raw: str) -> View:
+    try:
+        limit = max(0, int(raw.strip()))
+    except ValueError:
+        view = person_detail(ctx, user_id)
+        view.text = f"❌ {raw.strip()} is not a number\n\n{view.text}"
+        return view
+
+    ctx.rt.set_user_limit(user_id, limit)
+    audit(ctx.rt, ctx.user, "user_limit", f"{user_id} {limit}")
+    view = person_detail(ctx, user_id)
+    view.text = f"✅ daily limit: {limit or 'follows the global one'}\n\n{view.text}"
+    return view
 
 
 def person_block(ctx, user_id: int, blocked: bool) -> View:

@@ -13,6 +13,7 @@ import time
 from telegram import InlineKeyboardButton
 
 from .. import providers as providers_mod
+from .. import settings_store
 from ..crypto import SecretsUnavailable
 from .guard import audit
 from .sections import View
@@ -75,12 +76,19 @@ def overview(ctx) -> View:
         lines.append(f"{mark} {name}{note} — {detail}{counted}")
         rows.append([button(f"{mark} {name}", "svc", "s", name)])
 
-    lines.append("\nThey are tried top to bottom. The first that answers wins.")
+    pinned = ctx.rt.settings.pinned_service
+    if pinned:
+        lines.append(f"\n📌 pinned to {pinned}: nothing else is tried.")
+    else:
+        lines.append("\nThey are tried top to bottom. The first that answers wins.")
     return View(
         "\n".join(lines),
         keyboard(
             *rows,
             [button("🧪 test all", "svc", "testall"), button("➕ add a service", "svc", "new")],
+            [button("🔀 auto" if pinned else "🔀 automatic order", "svc", "pin", "-")]
+            if pinned
+            else [],
             back_row(),
         ),
     )
@@ -159,7 +167,10 @@ def detail(ctx, name: str) -> View:
             button("⬆️", "svc", "s", name, "up"),
             button("⬇️", "svc", "s", name, "down"),
         ],
-        [button("⏰ wake it now", "svc", "s", name, "wake")],
+        [
+            button("⏰ wake it now", "svc", "s", name, "wake"),
+            button("📌 use only this", "svc", "pin", name),
+        ],
         [
             button("✏️ models", "svc", "s", name, "models"),
             button("✏️ endpoint", "svc", "s", name, "url"),
@@ -175,6 +186,18 @@ async def test(ctx, name: str) -> View:
     view = detail(ctx, name)
     view.alert = f"{'✅' if ok else '❌'} {note}"
     view.text = f"{'✅' if ok else '❌'} {note}\n\n{view.text}"
+    return view
+
+
+def pin(ctx, name: str) -> View:
+    """Use one service and stop failing over, or go back to the usual order."""
+    chosen = "" if name == "-" else name
+    settings_store.set_override(ctx.rt.db, "pinned_service", chosen, by=ctx.user.id)
+    audit(ctx.rt, ctx.user, "service_pin", chosen or "auto")
+
+    view = overview(ctx)
+    view.alert = f"pinned to {chosen}" if chosen else "back to the automatic order"
+    view.extras["reload"] = True
     return view
 
 

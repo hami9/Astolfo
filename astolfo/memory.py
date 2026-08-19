@@ -42,6 +42,10 @@ class ChatState:
     summarizing: bool = False
     title: str = ""
     locale: str | None = None
+    mode: str = ""  # manual | auto | smart, empty means follow the global one
+    daily_limit: int = 0  # 0 means follow the global one
+    # Just the arrival times, for telling a busy chat from a quiet one.
+    seen_at: deque[float] = field(default_factory=lambda: deque(maxlen=60))
 
     def touch_participant(self, name: str) -> None:
         self.participants[name] = time.time()
@@ -52,7 +56,15 @@ class ChatState:
     def add_user(self, name: str, text: str) -> None:
         self.history.append({"role": "user", "content": f"{name}: {text}"})
         self.turn_count += 1
+        self.seen_at.append(time.monotonic())
         self.touch_participant(name)
+
+    def pace(self) -> float:
+        """Messages a minute lately, from the arrival times alone."""
+        if len(self.seen_at) < 2:
+            return 0.0
+        span = self.seen_at[-1] - self.seen_at[0]
+        return len(self.seen_at) / (span / 60) if span > 1 else float(len(self.seen_at))
 
     def add_assistant(self, text: str) -> None:
         self.history.append({"role": "assistant", "content": text})
@@ -167,6 +179,8 @@ class ChatStore:
                 muted=bool(row["muted"]),
                 title=str(row["title"] or ""),
                 locale=row["locale"],
+                mode=str(row["mode"] or ""),
+                daily_limit=int(row["daily_limit"] or 0),
             )
         if self._chats:
             log.info("restored settings for %d chats", len(self._chats))
@@ -215,6 +229,8 @@ class ChatStore:
                 muted=1 if state.muted else 0,
                 title=state.title,
                 locale=state.locale,
+                mode=state.mode,
+                daily_limit=state.daily_limit,
             )
         self._dirty = False
 
