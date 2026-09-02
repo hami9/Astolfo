@@ -7,10 +7,20 @@ small ones — a typo in a doc is a real contribution.
 
 ```bash
 git clone https://github.com/hami9/Astolfo && cd Astolfo
+make install       # virtualenv + dev dependencies
+make check         # ruff and the full suite
+```
+
+`make help` lists every target. Without make it is the same three commands:
+
+```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest -q
 ```
+
+`pre-commit install` runs ruff, the secret scan and the suite before each commit, so a
+red CI run is something you rarely see.
 
 The suite is fully offline. It needs no API key, no bot token and no network, so a clean
 clone should go green on the first run. If it does not, that is a bug worth an issue.
@@ -70,6 +80,34 @@ The code is written to be read. A few things it is consistent about:
 
 Commit messages use a short type prefix (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
 `chore:`) and describe the effect rather than the diff.
+
+## Cutting a release
+
+Only a maintainer does this, but it is written down so it is the same every time.
+
+1. Bump `__version__` in [`astolfo/__init__.py`](astolfo/__init__.py). Nothing else holds
+   a version number — `pyproject.toml` reads it from there.
+2. Move the `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under a new
+   `## [X.Y.Z] - YYYY-MM-DD` heading, and add the compare link at the bottom.
+3. `make release-check` — lint, the suite, the build, the wheel's package list, and that
+   the changelog has notes for this version.
+4. Merge, then tag the merge commit and push it:
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+   ```
+
+The `Release` workflow takes it from there: it refuses a tag that disagrees with
+`__version__`, runs everything again, builds the sdist and wheel, publishes a GitHub
+release with that version's changelog section and the artifacts attached, and pushes
+`ghcr.io/hami9/astolfo:X.Y.Z` and `:latest`.
+
+What counts as which number, for a bot rather than a library:
+
+| Bump | For |
+|---|---|
+| major | a migration that cannot be rolled back, or a setting that changes meaning |
+| minor | a new command, panel screen, provider or capability |
+| patch | fixes and documentation |
 
 ## Security
 

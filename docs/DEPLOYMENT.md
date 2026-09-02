@@ -63,20 +63,40 @@ See [ADMIN.md](ADMIN.md).
 
 ## Docker
 
+Every release publishes an image, so there is nothing to build:
+
 ```bash
-docker build -t astolfo .
 docker run -d --name astolfo --restart unless-stopped \
   -e TELEGRAM_BOT_TOKEN=... \
   -e OPENROUTER_API_KEY=... \
   -e MASTER_ID=... \
   -e DAILY_BUDGET_USD=1 \
   -v astolfo-data:/data \
-  astolfo
+  ghcr.io/hami9/astolfo:latest
 ```
+
+Pin a version (`ghcr.io/hami9/astolfo:2.0.0`) if you would rather decide when to move.
+`docker build -t astolfo .` builds the same image from a clone.
+
+With the bundled [docker-compose.yml](../docker-compose.yml), put the credentials in a
+`.env` beside it and run `docker compose up -d`. It sets a restart policy, a health check
+against the keepalive endpoint, log rotation and the named volume.
 
 The image includes ffmpeg and sets `DATA_DIR=/data`, so the volume carries the database,
 the encryption key and the usage history. The panel's **update** and **restart** buttons do
-not apply here: rebuild the image and recreate the container instead.
+not apply here: pull the new image and recreate the container instead.
+
+## As a package
+
+```bash
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.0.0"
+astolfo --version
+astolfo
+```
+
+The console script reads the same environment and `.env` as `python main.py`. Each release
+also attaches a built wheel and sdist, so an air-gapped install can take the file rather
+than the repository.
 
 ## Replit
 

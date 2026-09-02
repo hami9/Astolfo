@@ -1,0 +1,35 @@
+# docker compose up -d
+#
+# Put the credentials in a .env file beside this one - compose reads it, and it
+# is git-ignored. Only the token is required; add a provider key here or from
+# the bot's own panel once it is running.
+services:
+  astolfo:
+    build: .
+    # Or run a published image instead of building:
+    # image: ghcr.io/hami9/astolfo:latest
+    container_name: astolfo
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set it in .env}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MASTER_ID: ${MASTER_ID:-}
+      BOT_LANG: ${BOT_LANG:-en}
+      DAILY_BUDGET_USD: ${DAILY_BUDGET_USD:-0}
+      FREE_MODE: ${FREE_MODE:-0}
+      DATA_DIR: /data
+    volumes:
+      - astolfo-data:/data
+    # The keepalive endpoint doubles as the health check.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/')"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  astolfo-data:

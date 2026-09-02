@@ -7,6 +7,7 @@
 [![CI](https://github.com/hami9/Astolfo/actions/workflows/ci.yml/badge.svg)](https://github.com/hami9/Astolfo/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/hami9/Astolfo/actions/workflows/codeql.yml/badge.svg)](https://github.com/hami9/Astolfo/actions/workflows/codeql.yml)
 [![Audit](https://github.com/hami9/Astolfo/actions/workflows/audit.yml/badge.svg)](https://github.com/hami9/Astolfo/actions/workflows/audit.yml)
+[![Release](https://img.shields.io/github/v/release/hami9/Astolfo?label=release&color=8957e5)](https://github.com/hami9/Astolfo/releases/latest)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -66,6 +67,16 @@ Two values are required: `TELEGRAM_BOT_TOKEN` from [@BotFather](https://t.me/Bot
 and one API key from any provider in the table below. Everything else has a default.
 
 Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew install ffmpeg`).
+
+Or take it as a package or an image instead of a clone:
+
+```bash
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.0.0"
+astolfo                                  # same bot, on your PATH
+
+docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
+docker compose up -d                     # or with the bundled compose file
+```
 
 > [!IMPORTANT]
 > **Turn off Group Privacy** in BotFather so the bot can see normal group messages:
@@ -193,14 +204,34 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 ## Development
 
 ```bash
+make install       # virtualenv + dev dependencies
+make check         # ruff and the full suite, what CI runs
+make build         # sdist, wheel, and the check that no package is missing
+make help          # every target
+```
+
+Or without make:
+
+```bash
 pip install -r requirements-dev.txt
-pytest -q          # 376 tests, fully offline
+pytest -q          # 384 tests, fully offline
 ruff check .
 ```
 
 Tests use a mocked HTTP transport, so the exact request body sent to each provider is
 asserted without any network access or credentials. CI runs the suite on Python 3.10,
-3.12 and 3.13, with CodeQL and a dependency audit alongside it.
+3.12 and 3.13, with CodeQL and a dependency audit alongside it, and
+`pre-commit install` runs the same checks before each commit.
+
+### Releases
+
+The version in [`astolfo/__init__.py`](astolfo/__init__.py) is the single source of
+truth; `pyproject.toml` reads it, and a tag that disagrees with it fails the release
+build. Tagging `vX.Y.Z` runs the suite, builds the sdist and wheel, verifies the wheel
+carries every package, publishes a GitHub release with that version's changelog section
+attached, and pushes `ghcr.io/hami9/astolfo:X.Y.Z`. See
+[CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release) and the
+[changelog](CHANGELOG.md).
 
 ## Layout
 
@@ -236,6 +267,7 @@ astolfo/app.py             wiring, lifecycle, keepalive server
 deploy/                    VPS installer and the privileged helper
 docs/                      architecture, deployment, cost control, admin
 tests/                     the offline suite
+.github/                   CI, CodeQL, audit, release, issue templates
 ```
 
 ## Contributing
