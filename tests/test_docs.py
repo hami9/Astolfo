@@ -56,6 +56,51 @@ def test_every_relative_link_resolves(page: Path) -> None:
     assert not broken, f"{page.name} links to {broken}"
 
 
+def test_env_example_names_every_setting() -> None:
+    """A setting nobody can find is a setting nobody uses."""
+    from dataclasses import fields
+
+    from astolfo.config import Settings
+
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    declared = {f.metadata["env"] for f in fields(Settings) if f.metadata.get("env")}
+    missing = {name for name in declared if f"{name}=" not in example}
+    assert not missing, f".env.example does not mention {sorted(missing)}"
+
+
+def test_env_example_agrees_with_the_defaults() -> None:
+    """An example that contradicts the code teaches the wrong value.
+
+    Only lines that are actually set are checked: a commented-out line is an
+    illustration, and a few settings are deliberately shown with a placeholder.
+    """
+    from dataclasses import fields
+
+    from astolfo.config import Settings, _coerce
+
+    shown = {}
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        shown[name.strip()] = value.split("#")[0].strip()
+
+    defaults = Settings()
+    placeholders = {"TELEGRAM_BOT_TOKEN", "OPENROUTER_API_KEY"}
+    wrong = []
+    for f in fields(Settings):
+        name = f.metadata.get("env")
+        if name not in shown or name in placeholders:
+            continue
+        # Read the example line the way the bot itself would, so 0.30 and 0.3 agree.
+        written = _coerce(str(f.type), shown[name])
+        actual = getattr(defaults, f.name)
+        if written != actual:
+            wrong.append(f"{name}: example says {written!r}, code says {actual!r}")
+    assert not wrong, wrong
+
+
 def test_the_readme_lists_every_module_in_the_package() -> None:
     """The layout section drifts silently otherwise, and it is the first thing read."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")

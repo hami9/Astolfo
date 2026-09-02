@@ -45,6 +45,13 @@ Said plainly, because a security file that only lists strengths is not useful.
 
 ## If a key leaks
 
-Revoke it at the provider first, then set the new one from the panel
-(**keys → replace**). The old value is overwritten in the database; nothing else
-has to be edited and the bot does not need a restart.
+Revoke it at the provider first, then add the new one from the panel
+(**services → the service → add a key**) and remove the old one. A service can
+hold several keys, so the replacement can go in before the old one comes out and
+the chat never sees a gap. Nothing else has to be edited and the bot does not
+need a restart.
+
+The Telegram token is the exception: it is read from the environment at startup
+and cannot be set from the panel, because whoever could change it could point the
+bot at a different account. Revoke it with `/revoke` in BotFather, update `.env`,
+and restart.

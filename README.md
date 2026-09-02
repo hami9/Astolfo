@@ -194,7 +194,7 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 374 tests, fully offline
+pytest -q          # 376 tests, fully offline
 ruff check .
 ```
 

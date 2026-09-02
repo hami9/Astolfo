@@ -56,6 +56,29 @@ Videos and GIFs are reduced to `VIDEO_FRAMES` sampled frames; audio becomes 16 k
 `GROUP_REPLY_CHANCE` and `REPLY_COOLDOWN` bound unprompted participation, `MAX_TOKENS_FAST`
 keeps replies short, and one reply is generated per chat at a time.
 
+`REPLY_MODE` decides how that budget is spent. `manual` answers only when spoken to, which
+is the cheapest the bot gets while still being useful. `smart` (the default) is `auto`
+until spending or traffic says otherwise: it drops to manual once 70% of the daily budget
+is gone, while every service is resting, or while the chat is moving faster than a dozen
+messages a minute — an uninvited reply into a fast conversation is the least valuable call
+the bot makes. Any group can be set differently from **panel → groups**.
+
+## 8. Cap the loud ones individually
+
+A daily budget is global, so one busy group can spend everyone's. `CHAT_DAILY_CALL_LIMIT`
+and `USER_DAILY_CALL_LIMIT` cap model calls per day, and **panel → groups** and
+**panel → people** set either one on a single group or a single person, which beats the
+global value. Both screens show how much of the cap is used today. A capped chat still
+gets everything in the next section for free.
+
+## 9. Answer some things for nothing
+
+Greetings, goodbyes, thanks, "who are you", the time, the date and plain arithmetic are
+answered from `offline.py` with no model call at all when no service is usable. It is a
+small share of traffic, but it is the share that would otherwise waste a call to say
+"hello" back — and it is what keeps the bot present rather than silent when the allowance
+is gone.
+
 ## Budgets and degradation
 
 Set a cap and the bot manages itself:
