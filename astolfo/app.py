@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import platform
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -22,6 +23,7 @@ from telegram.ext import (
 )
 
 from . import (
+    __version__,
     admin,
     chat,
     commands,
@@ -79,6 +81,8 @@ async def post_init(app: Application) -> None:
     rt = Runtime.build(settings, app.bot_data.get("db"), app.bot_data.get("box"))
     app.bot_data[runtime.KEY] = rt
 
+    # First line in the log, so a bug report says which version produced it.
+    log.info("astolfo %s on python %s", __version__, platform.python_version())
     await rt.llm.load_catalog()
     # media rows resolve with the modality flags the real turn would carry, so the
     # startup log names the model that will actually read an image or a voice note

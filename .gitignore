@@ -4,6 +4,9 @@ data/*.json
 .deps_installed
 __pycache__/
 *.py[cod]
+build/
+dist/
+*.egg-info/
 .venv/
 venv/
 .pytest_cache/

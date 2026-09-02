@@ -4,43 +4,56 @@ All notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The project has not cut a tagged release yet; `main` is the released version. Entries are
-grouped by the change that introduced them, newest first.
+The version in [`astolfo/__init__.py`](astolfo/__init__.py) is the single source of
+truth: it names the package, and a release tag that disagrees with it fails CI.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.0.0] - 2026-09-02
+
+Run the whole bot from Telegram. The release that added the owner's panel, moved every
+piece of state into SQLite, and turned one API key into a managed stack of eleven
+services.
+
 ### Added
 
-- Public project documentation: contributing guide, code of conduct, issue and pull
-  request templates, and this changelog.
-
-## API management — services, keys, limits and offline answers
-
-*(pull requests #27, #28, #29)*
-
-### Added
-
-- **A services screen in the owner's panel.** Every service with its state — working,
-  resting until, no key, switched off — its keys, its models, its endpoint, today's calls
-  and how many failed. None of it costs an API call; only **test** spends one.
-- **Several keys per service.** Keys are stored encrypted, shown masked, added by a
-  message that is deleted straight away, and labelled. A refused key rests for a day and
-  the next takes over mid-conversation, so a key can be replaced with no gap.
+- **The owner's panel.** `/panel` in the owner's private chat: settings, services,
+  groups, people, server health, a database backup and the audit trail — gated on one
+  numeric Telegram id and re-checked on every button press, because a panel message can
+  be forwarded and its buttons travel with it.
+- **A services screen.** Every service with its state — working, resting until, no key,
+  switched off — its keys, models, endpoint, today's calls and how many failed. None of
+  it costs an API call; only **test** spends one.
+- **Several keys per service.** Stored encrypted, shown masked, added by a message that
+  is deleted straight away, and labelled. A refused key rests for a day and the next
+  takes over mid-conversation, so a key can be replaced with no gap.
 - **Custom services from Telegram.** Anything OpenAI-compatible can be added by name, URL
   and model list, with no code change and no restart.
-- **Six more services known out of the box**: cerebras, mistral, cohere, huggingface,
-  sambanova, deepinfra and aimlapi, each with its billing note and signup page in the
-  panel.
+- **Eleven services known out of the box** — openrouter, google, groq, github, cerebras,
+  mistral, cohere, huggingface, sambanova, deepinfra and aimlapi — each with its billing
+  note and signup page in the panel.
 - **Per-chat and per-person daily call limits**, set globally, on one group, on one
   person, or on every group at once. Both screens show how much of the cap is used.
-- **Manual, auto and smart reply modes**, set globally or per group. Smart is auto while
-  that makes sense and manual when it does not: every service resting, most of the budget
+- **Manual, auto and smart reply modes**, global or per group. Smart is auto while that
+  makes sense and manual when it does not: every service resting, most of the budget
   spent, or the chat moving faster than a dozen messages a minute.
 - **Pinning a service by hand.** *Use only this* stops the failover chain on one service;
   a button on the list undoes it.
 - **Answers that need no model.** Greetings, goodbyes, thanks, "who are you", the time,
   the date and plain arithmetic are answered in character with every service down.
   Anything needing knowledge gets an honest "my brain is offline" rather than a guess.
+- **Update and restart from the panel**, through a systemd path unit and a root helper
+  that understands exactly two words, with automatic rollback if the new version fails to
+  start within twelve seconds.
+- **SQLite (WAL) as the datastore** for chats, people, settings, services, keys and the
+  audit trail, with a versioned schema and additive migrations. Message text is never
+  written to it, and a test checks the database file and its write-ahead log to keep it
+  that way.
+- **Encrypted key storage** with a 0600 key file and masked display everywhere.
+- **Security workflows**: CodeQL, `pip-audit`, gitleaks and the bandit rules in ruff, plus
+  `SECURITY.md`.
 
 ### Changed
 
@@ -50,75 +63,54 @@ grouped by the change that introduced them, newest first.
   startup, so a quota that runs until tomorrow is still known tomorrow.
 - Per-service accounting: requests, failures and cost are recorded per service and shown
   in the panel and in `/usage`.
+- Settings changed from the panel are adopted in place — a new client is built and the old
+  one closed, while the chat store is deliberately kept so no group forgets mid-reply.
 
 ### Fixed
 
-- A 404 from a service now walks its model list instead of raising, and the response body
-  is logged, so a renamed model id names itself in the log rather than producing a bare
-  traceback.
-- Any other 4xx logs what the service actually said before moving on.
+- **`astolfo.admin` was missing from the built wheel**, so an installed package failed at
+  import. The package list is now discovered rather than written by hand.
+- A 404 from a service walks its model list instead of raising, and the response body is
+  logged, so a renamed model id names itself in the log rather than producing a bare
+  traceback. Any other 4xx logs what the service actually said before moving on.
+- A key refused by one service no longer costs the turn: the next key, then the next
+  service, is offered the same request.
 
-## Owner panel, SQLite store and a hardened deployment
+### Documentation
 
-*(pull request #21)*
+- A README written as a public front page, an architecture document covering the pipeline
+  and the provider stack, deployment and cost-control guides, `CONTRIBUTING.md`, a code of
+  conduct, issue and pull request templates, and this changelog.
+- `.env.example` names every setting the code reads, with its real default — checked by a
+  test, so it cannot drift again.
 
-### Added
+## [1.0.0] - 2026-08-18
 
-- `/panel` in the owner's private chat: settings, groups, people, server health, database
-  backup and the audit trail, gated on one numeric Telegram id and re-checked on every
-  button press.
-- SQLite (WAL) replacing the JSON state for chats, people, settings, keys and the audit
-  trail, with a versioned schema and additive migrations.
-- Encrypted key storage with a 0600 key file, masked display everywhere, and settings that
-  change at runtime with no restart.
-- Update and restart from the panel through a systemd path unit and a root helper that
-  understands exactly two words, with automatic rollback if the new version fails to
-  start.
-- Security workflows: CodeQL, `pip-audit`, gitleaks and the bandit rules in ruff, plus
-  `SECURITY.md`.
-
-## Several services behind one client
-
-*(pull requests #17, #18, #19, #20)*
+The bot itself: persona, routing, media, and enough cost control to leave it running.
 
 ### Added
 
-- Provider presets stacking OpenRouter, Google, Groq and GitHub Models behind one client,
-  failing over as each runs dry.
-- Model id verification per service at startup, replacing unknown ids from
-  `FALLBACK_MODELS`.
-
-### Changed
-
-- Each service is sent the request shape it accepts: OpenRouter-only fields are gated so a
-  plain OpenAI-compatible endpoint is not handed something it rejects.
-- A free-tier rate limit is treated as account-wide rather than per model.
-
-## Free mode and credit control
-
-*(pull requests #9 through #16)*
-
-### Added
-
+- The Astolfo persona as ordered prompt layers — narrative identity, voice markers, canon
+  anchors, group behaviour, language mirroring, banned assistant-isms and a
+  highest-priority truthfulness layer — with few-shot examples in four moods and a slim
+  reminder re-injected periodically so the voice does not flatten in long chats.
+- Adaptive routing: `fast`, `think`, `search` and `serious`, decided by regex heuristics
+  first and a small LLM dispatcher only when they are unsure, with cached verdicts.
+- Multimodal input: photos, stickers, GIFs, videos, video notes and voice, with ffmpeg and
+  a Telegram-thumbnail fallback. Text out only, always.
+- Group manners: reply chance with a cooldown, guaranteed answers when addressed, per-chat
+  settings, long-term notes about running jokes, and admin-gated commands.
 - `FREE_MODE`: discover and rotate OpenRouter's zero-cost models as their allowances run
-  out, with quality guards that move on from a model answering with nothing.
-- Telegram Stars donations (`/donate`).
+  out, with a compact persona, reply validation and behaviour ranking to keep a small
+  model in character.
+- Several services stacked behind one client, failing over as each runs dry, and model id
+  verification per service at startup.
+- Telegram Stars donations (`/donate`), which need no payment provider and no card.
 - A degradation ladder as spend approaches the daily cap — cheap model only, then replies
   only when addressed, then a polite stop with one notice per hour.
-
-## First release
-
-*(pull requests #1 through #8)*
-
-### Added
-
-- The Astolfo persona as ordered prompt layers, with few-shot examples in four moods and a
-  reminder re-injected periodically.
-- Adaptive routing: `fast`, `think`, `search` and `serious`, decided by heuristics first
-  and an LLM dispatcher only when they are unsure.
-- Multimodal input: photos, stickers, GIFs, videos, video notes and voice, with ffmpeg and
-  a Telegram-thumbnail fallback.
-- Group manners: reply chance with a cooldown, guaranteed answers when addressed, per-chat
-  settings, long-term notes and admin-gated commands.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
+
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/hami9/Astolfo/compare/v1.0.0...v2.0.0
+[1.0.0]: https://github.com/hami9/Astolfo/releases/tag/v1.0.0
