@@ -1,0 +1,74 @@
+name: Bug report
+description: Something the bot does that it should not
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste API keys, bot tokens or `.env` contents
+        — mask them. If this is a security problem, see
+        [SECURITY.md](https://github.com/hami9/Astolfo/blob/main/SECURITY.md) instead of
+        opening an issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What the bot did, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The message you sent, the chat type, and anything set differently from the defaults.
+      placeholder: |
+        1. In a group with the bot, send "..."
+        2. The bot replies with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: The relevant lines from `journalctl -u astolfo` or the console. Mask any key.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The commit you are running (`git rev-parse --short HEAD`).
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it runs
+      options:
+        - VPS with systemd
+        - Docker
+        - Replit
+        - Locally
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.3"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have masked every key, token and id in what I pasted
+          required: true
+        - label: I searched the open issues for this
+          required: true

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or setup help
+    url: https://github.com/hami9/Astolfo/discussions
+    about: Ask here rather than opening an issue.
+  - name: Security problem
+    url: https://github.com/hami9/Astolfo/security/advisories/new
+    about: Report privately. Please do not open a public issue.
+  - name: Telegram
+    url: https://t.me/ssh_to_mylinux
+    about: The project's channel.
