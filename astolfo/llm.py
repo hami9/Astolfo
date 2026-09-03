@@ -362,6 +362,13 @@ class LLMClient:
     _is_free = staticmethod(catalog.is_free)
     _is_chat = staticmethod(catalog.is_chat)
 
+    def context_window(self, model: str) -> int:
+        """Tokens this model can hold, or 0 when the catalog never named it."""
+        for entry in self._models:
+            if entry.id == model:
+                return entry.context
+        return 0
+
     def models_offered(self, *, free_only: bool = True, vision: bool = False) -> list[Model]:
         """The chat models the catalog listed, for the panel to show and choose from."""
         return [

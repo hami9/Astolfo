@@ -18,7 +18,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Provider keys used to live in `secrets`, one per service. They are credentials
 # now, so a service can hold more than one and each carries its own state.
@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS chats (
     messages    INTEGER NOT NULL DEFAULT 0,
     replies     INTEGER NOT NULL DEFAULT 0,
     daily_limit INTEGER NOT NULL DEFAULT 0,
-    mode        TEXT    NOT NULL DEFAULT ''
+    mode        TEXT    NOT NULL DEFAULT '',
+    dormant     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -200,6 +201,9 @@ class Database:
             self._add_column("chats", "daily_limit", "INTEGER NOT NULL DEFAULT 0")
             self._add_column("chats", "mode", "TEXT NOT NULL DEFAULT ''")
             self._add_column("users", "daily_limit", "INTEGER NOT NULL DEFAULT 0")
+        if current and current < 4:
+            # Switched off entirely, which is more than muted.
+            self._add_column("chats", "dormant", "INTEGER NOT NULL DEFAULT 0")
 
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
@@ -310,7 +314,7 @@ class Database:
         """Persist the per-chat knobs the bot itself changes."""
         allowed = {
             "muted", "reply_chance", "forced_mode", "locale", "notes", "title",
-            "daily_limit", "mode",
+            "daily_limit", "mode", "dormant",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
         if not fields:
@@ -329,10 +333,10 @@ class Database:
         return self.query(
             """
             SELECT chat_id, notes, reply_chance, forced_mode, muted, title, locale,
-                   mode, daily_limit
+                   mode, daily_limit, dormant
             FROM chats
             WHERE notes <> '' OR reply_chance IS NOT NULL OR forced_mode IS NOT NULL
-               OR muted = 1 OR mode <> '' OR daily_limit > 0
+               OR muted = 1 OR mode <> '' OR daily_limit > 0 OR dormant = 1
             """
         )
 
@@ -430,7 +434,7 @@ class Database:
 
     def set_every_chat(self, **columns: Any) -> int:
         """Apply the same knob to every group at once."""
-        allowed = {"daily_limit", "mode", "reply_chance", "muted"}
+        allowed = {"daily_limit", "mode", "reply_chance", "muted", "dormant"}
         fields = {k: v for k, v in columns.items() if k in allowed}
         if not fields:
             return 0
@@ -452,6 +456,13 @@ class Database:
             """,
             (user_id, now, now, 1 if blocked else 0),
         )
+
+    def dormant_ids(self) -> set[int]:
+        """Chats switched off entirely, read once at startup and kept in memory."""
+        return {
+            int(row["chat_id"])
+            for row in self.query("SELECT chat_id FROM chats WHERE dormant = 1")
+        }
 
     def blocked_ids(self) -> set[int]:
         return {row["user_id"] for row in self.query("SELECT user_id FROM users WHERE blocked = 1")}

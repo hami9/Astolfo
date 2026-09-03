@@ -36,6 +36,9 @@ class FakeLLM:
     def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         return model
 
+    def context_window(self, model: str) -> int:
+        return 0  # unknown, so the configured budget is used as written
+
     def usable_now(self) -> bool:
         # A failing model is not the same as an unreachable service; a test that
         # wants "everything is down" sets this to False itself.

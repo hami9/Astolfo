@@ -11,6 +11,38 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.2.0] - 2026-09-03
+
+Three things a busy group made obvious.
+
+### Added
+
+- **A group can be switched off entirely**, from **panel → groups → a group**. Muted stops
+  the bot talking; this stops it listening — nothing said there is read, stored, counted
+  or answered, and its commands go unanswered too, so the way back is the panel rather
+  than a command in the group. It survives a restart, and the screen says exactly what it
+  stops.
+
+### Fixed
+
+- **Being spoken to during someone else's turn got no answer at all.** A second message
+  arriving while a reply was being composed was dropped outright. Addressed messages now
+  wait their turn and are answered one after the other; unprompted chatter is still
+  dropped, because it is background. Waiting is capped, so a burst of fifty mentions does
+  not become fifty replies.
+- **The bot lost the thread on small models.** `HISTORY_CHAR_BUDGET` was one number for
+  every model, and the models now run from 8k of context to a million — 9000 characters
+  of history plus a 10 KB persona overflows a small window, and what falls out of the
+  front is the persona and the oldest turns. The budget is now derived from the context
+  window the catalog reports for the model that will actually run, measured against the
+  real size of the prompt being built, with a floor so there is always some conversation
+  left.
+- **Long-term notes never formed in most chats.** Folding only ran once the history
+  window was completely full — 80 turns — so a chat that had said 79 things had no
+  long-term memory at all, and by the time the eightieth arrived the oldest were already
+  being evicted. Notes are folded every 12 turns instead, and each turn is folded once:
+  how far the folding has got is tracked rather than re-summarising the same messages.
+
 ## [2.1.1] - 2026-09-03
 
 ### Fixed
@@ -156,7 +188,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/hami9/Astolfo/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/hami9/Astolfo/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/hami9/Astolfo/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/hami9/Astolfo/compare/10753be...v2.0.0

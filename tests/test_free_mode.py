@@ -193,6 +193,9 @@ class _VisionLLM:
     def resolve(self, model, *, vision=False, audio=False):
         return model
 
+    def context_window(self, model) -> int:
+        return 0
+
     def supports_free_vision(self) -> bool:
         return self.vision
 

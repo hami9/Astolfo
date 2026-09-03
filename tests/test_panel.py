@@ -306,3 +306,33 @@ async def test_a_person_gets_their_own_daily_limit(owned):
 
     assert owned.limit_for(7) == 5
     assert owned.db.user(7)["daily_limit"] == 5
+
+
+# -- switching a group off ------------------------------------------------
+async def test_a_group_can_be_switched_off_from_the_panel(owned):
+    owned.db.joined_chat(-500, kind="supergroup", title="Loud Group", username="")
+
+    query, _ = await _press(owned, "ap:chat:-500:off:1")
+
+    assert owned.store.get(-500).off is True
+    assert -500 in owned.dormant
+    assert "switched off: on" in query.edits[0]
+
+
+async def test_the_screen_says_what_being_switched_off_means(owned):
+    owned.db.joined_chat(-500, kind="supergroup", title="Loud Group", username="")
+    await _press(owned, "ap:chat:-500:off:1")
+    query, _ = await _press(owned, "ap:chat:-500")
+
+    text = query.edits[0]
+    assert "read, stored, counted or answered" in text
+    assert "commands do not work" in text, "otherwise the way back is not obvious"
+
+
+async def test_a_group_switched_off_can_be_switched_back_on(owned):
+    owned.db.joined_chat(-500, kind="supergroup", title="Loud Group", username="")
+    await _press(owned, "ap:chat:-500:off:1")
+    await _press(owned, "ap:chat:-500:off:0")
+
+    assert owned.store.get(-500).off is False
+    assert -500 not in owned.dormant

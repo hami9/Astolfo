@@ -132,6 +132,8 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
         action = rest[1] if len(rest) > 1 else ""
         if action == "mute":
             return sections.chat_mute(ctx, chat_id, muted=rest[2] == "1")
+        if action == "off":
+            return sections.chat_off(ctx, chat_id, off=rest[2] == "1")
         if action == "people":
             return sections.people(ctx, chat_id)
         if action == "mode" and len(rest) > 2:

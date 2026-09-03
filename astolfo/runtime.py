@@ -36,11 +36,13 @@ class Runtime:
     # Read on every message, changed only from the panel, so they live in memory.
     blocked: set[int] = field(default_factory=set)
     user_limits: dict[int, int] = field(default_factory=dict)
+    dormant: set[int] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.responses = TTLCache(maxsize=512, ttl=self.settings.response_cache_ttl)
         self.blocked = self.db.blocked_ids()
         self.user_limits = self.db.user_limits()
+        self.dormant = self.db.dormant_ids()
 
     def limit_for(self, user_id: int) -> int:
         """This person's own daily cap, or 0 when they follow the global one."""
@@ -52,6 +54,17 @@ class Runtime:
             self.user_limits[user_id] = limit
         else:
             self.user_limits.pop(user_id, None)
+
+    def set_chat_off(self, chat_id: int, off: bool) -> None:
+        """Switch a chat off entirely: nothing read, stored, counted or answered."""
+        state = self.store.get(chat_id)
+        state.off = off
+        self.store.mark_dirty()
+        self.store.save(force=True)
+        if off:
+            self.dormant.add(chat_id)
+        else:
+            self.dormant.discard(chat_id)
 
     def set_blocked(self, user_id: int, blocked: bool) -> None:
         self.db.set_blocked(user_id, blocked)

@@ -72,7 +72,7 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 Or take it as a package or an image instead of a clone:
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.1.1"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.2.0"
 astolfo                                  # same bot, on your PATH
 
 docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
@@ -216,7 +216,7 @@ Or without make:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 414 tests, fully offline
+pytest -q          # 428 tests, fully offline
 ruff check .
 ```
 

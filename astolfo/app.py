@@ -10,15 +10,18 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import BotCommand, BotCommandScopeChat, Update
+from telegram.constants import ChatType
 from telegram.ext import (
     AIORateLimiter,
     Application,
     ApplicationBuilder,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
+    TypeHandler,
     filters,
 )
 
@@ -169,6 +172,19 @@ CONTENT_FILTER = (
 )
 
 
+async def _dormant_guard(update: Update, context) -> None:
+    """A group switched off from the panel hears nothing, commands included.
+
+    This runs before every other handler, so there is one place where "off"
+    means off rather than a check repeated in each of them.
+    """
+    chat = update.effective_chat
+    if chat is None or chat.type == ChatType.PRIVATE:
+        return
+    if chat.id in runtime.get(context).dormant:
+        raise ApplicationHandlerStop
+
+
 def build_application(settings: Settings, database=None, box=None) -> Application:
     builder = (
         ApplicationBuilder()
@@ -200,6 +216,9 @@ def build_application(settings: Settings, database=None, box=None) -> Applicatio
         ("panel", admin.open_panel),
     ):
         app.add_handler(CommandHandler(name, handler))
+
+    # Group -2, ahead of everything: a switched-off group is dropped whole.
+    app.add_handler(TypeHandler(Update, _dormant_guard), group=-2)
 
     app.add_handler(CallbackQueryHandler(admin.on_button, pattern=admin.PATTERN))
     # Group -1 so a typed answer to the panel is seen before the chat pipeline,

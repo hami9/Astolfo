@@ -61,17 +61,63 @@ async def test_muted_chat_stays_silent(rt):
     assert not message.sent
 
 
-async def test_no_concurrent_replies_per_chat(rt, llm):
-    async def slow(messages, **kwargs):
-        await asyncio.sleep(0.15)
-        return await FakeLLMChat(llm)(messages, **kwargs)
+def _serialised(llm, overlaps: list[int]):
+    """A slow model call that records whether two ever ran at the same time."""
+    inflight = 0
 
-    llm.chat = slow
+    async def slow(messages, **kwargs):
+        nonlocal inflight
+        inflight += 1
+        overlaps.append(inflight)
+        try:
+            await asyncio.sleep(0.05)
+            return await FakeLLMChat(llm)(messages, **kwargs)
+        finally:
+            inflight -= 1
+
+    return slow
+
+
+async def test_two_people_talking_to_it_at_once_both_get_an_answer(rt, llm):
+    """Being spoken to during someone else's turn used to get silence."""
+    overlaps: list[int] = []
+    llm.chat = _serialised(llm, overlaps)
+
     first, second = FakeMessage("astolfo one"), FakeMessage("astolfo two")
     await asyncio.gather(run(rt, first), run(rt, second))
 
+    assert first.sent and second.sent, "both were addressed, both get an answer"
+    assert len(llm.calls) == 2
+    assert max(overlaps) == 1, "answered one after the other, never at the same time"
+
+
+async def test_chatter_during_a_reply_is_not_answered_on_its_own(rt, llm):
+    """Only what is addressed waits its turn; the rest is background."""
+    rt.settings = rt.settings.replace(group_reply_chance=1.0, reply_cooldown=0.0)
+    overlaps: list[int] = []
+    llm.chat = _serialised(llm, overlaps)
+
+    asked, chatter = FakeMessage("astolfo one"), FakeMessage("unrelated talk")
+    await asyncio.gather(run(rt, asked), run(rt, chatter))
+
+    assert asked.sent
+    assert not chatter.sent
     assert len(llm.calls) == 1
-    assert bool(first.sent) != bool(second.sent)
+
+
+async def test_a_flood_of_mentions_does_not_queue_without_end(rt, llm):
+    """A burst of fifty mentions must not become fifty replies."""
+    from astolfo.memory import MAX_WAITING
+
+    overlaps: list[int] = []
+    llm.chat = _serialised(llm, overlaps)
+
+    messages = [FakeMessage(f"astolfo {i}") for i in range(8)]
+    await asyncio.gather(*(run(rt, m) for m in messages))
+
+    answered = [m for m in messages if m.sent]
+    assert 1 <= len(answered) <= MAX_WAITING + 1
+    assert max(overlaps) == 1
 
 
 class FakeLLMChat:
@@ -377,3 +423,35 @@ async def test_out_of_credit_notice_is_rare(rt, llm):
     await run(rt, second)
 
     assert first.sent and not second.sent, "credit runs out once, not every message"
+
+
+# -- switched off entirely ------------------------------------------------
+async def test_a_switched_off_group_is_not_read_at_all(rt):
+    """Muted stops it talking; off stops it listening."""
+    rt.set_chat_off(-100, True)
+    message = FakeMessage("astolfo answer me")
+    await run(rt, message)
+
+    state = rt.store.get(-100)
+    assert not message.sent
+    assert not state.history, "nothing said there is even remembered"
+    assert rt.db.chat(-100) is None or rt.db.chat(-100)["messages"] == 0
+
+
+async def test_switching_a_group_back_on_restores_it(rt):
+    rt.set_chat_off(-100, True)
+    await run(rt, FakeMessage("astolfo one"))
+
+    rt.set_chat_off(-100, False)
+    message = FakeMessage("astolfo two")
+    await run(rt, message)
+    assert message.sent
+
+
+def test_being_switched_off_survives_a_restart(rt, settings):
+    from astolfo.memory import ChatStore
+
+    rt.set_chat_off(-100, True)
+    fresh = ChatStore(settings, rt.db)
+    assert fresh.get(-100).off is True
+    assert -100 in rt.db.dormant_ids()

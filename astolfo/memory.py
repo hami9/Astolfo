@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from collections import OrderedDict, deque
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from .config import Settings
@@ -19,6 +20,35 @@ log = logging.getLogger(__name__)
 MAX_NOTES_CHARS = 900
 SUMMARY_BATCH = 8
 MAX_PARTICIPANTS = 20
+
+# Fold turns into notes once this many have gone unfolded, rather than waiting
+# for the window to fill: a chat that has said 79 things had no long-term memory
+# at all, and by the time the eightieth arrived the oldest were already leaving.
+SUMMARY_EVERY = 12
+
+# Characters per token, deliberately pessimistic. English averages around four,
+# Persian is closer to two because most of it is outside the byte-pair vocabulary,
+# and guessing high here is what makes a prompt overflow.
+CHARS_PER_TOKEN = 2.5
+# Never trim history below this, however small the model: a couple of turns of
+# context is the difference between a reply and a non sequitur.
+MIN_HISTORY_CHARS = 1200
+
+
+def history_budget(
+    wanted: int, *, context_tokens: int, overhead_chars: int, reply_tokens: int
+) -> int:
+    """Characters of history that will actually fit, not the ones we would like.
+
+    HISTORY_CHAR_BUDGET is one number for every model, and the models now range
+    from 8k of context to a million. Sending 9000 characters of history to a
+    small model pushes the persona out of the front of the window, which reads
+    exactly like the bot losing the thread mid-conversation.
+    """
+    if context_tokens <= 0:
+        return wanted  # nothing known about this model; trust the setting
+    room = int(context_tokens * CHARS_PER_TOKEN) - overhead_chars - int(reply_tokens * 4)
+    return max(MIN_HISTORY_CHARS, min(wanted, room))
 
 
 @dataclass
@@ -44,6 +74,13 @@ class ChatState:
     locale: str | None = None
     mode: str = ""  # manual | auto | smart, empty means follow the global one
     daily_limit: int = 0  # 0 means follow the global one
+    # Dormant: not muted but switched off. Nothing is read, stored or answered.
+    off: bool = False
+    # How many turns have already been folded into notes, counted against
+    # turn_count, so the same messages are not summarised again and again.
+    folded_turns: int = 0
+    # Messages waiting for this chat's lock, so a flood cannot queue without end.
+    waiting: int = 0
     # Just the arrival times, for telling a busy chat from a quiet one.
     seen_at: deque[float] = field(default_factory=lambda: deque(maxlen=60))
 
@@ -101,6 +138,28 @@ class ChatState:
             used += cost
         selected.reverse()
         return merge_runs(selected)
+
+
+# More than this many messages already waiting for one chat and the rest are
+# dropped: a flood should not queue up replies nobody is waiting for any more.
+MAX_WAITING = 2
+
+
+@asynccontextmanager
+async def composing(state: ChatState):
+    """Hold the chat's lock, counting who is queued behind it.
+
+    A second message used to be dropped outright while a reply was being
+    composed, so being spoken to during someone else's turn got no answer at
+    all. Waiting is bounded, because a burst of fifty messages should not
+    become fifty replies.
+    """
+    state.waiting += 1
+    try:
+        async with state.lock:
+            yield
+    finally:
+        state.waiting -= 1
 
 
 def merge_runs(turns: list[dict]) -> list[dict]:
@@ -181,6 +240,7 @@ class ChatStore:
                 locale=row["locale"],
                 mode=str(row["mode"] or ""),
                 daily_limit=int(row["daily_limit"] or 0),
+                off=bool(row["dormant"]),
             )
         if self._chats:
             log.info("restored settings for %d chats", len(self._chats))
@@ -231,6 +291,7 @@ class ChatStore:
                 locale=state.locale,
                 mode=state.mode,
                 daily_limit=state.daily_limit,
+                dormant=1 if state.off else 0,
             )
         self._dirty = False
 
@@ -254,18 +315,26 @@ async def update_notes(llm: LLMClient, settings: Settings, state: ChatState) -> 
     """Fold the oldest turns into long-term notes. Runs in the background."""
     if not settings.summaries or state.summarizing:
         return Usage()
-    if len(state.history) < (state.history.maxlen or 0):
+    if state.turn_count - state.folded_turns < SUMMARY_EVERY:
         return Usage()
 
     state.summarizing = True
     try:
+        turns = list(state.history)
+        # The window holds the newest turns, so the oldest one in it is this far
+        # along in the chat's whole life. Anything before folded_turns is done.
+        oldest = state.turn_count - len(turns)
+        start = max(0, state.folded_turns - oldest)
         batch = [
             turn["content"]
-            for turn in list(state.history)[:SUMMARY_BATCH]
+            for turn in turns[start : start + SUMMARY_BATCH]
             if isinstance(turn.get("content"), str)
         ]
         if not batch:
+            # Everything unfolded fell out of the window before we got to it.
+            state.folded_turns = state.turn_count
             return Usage()
+        state.folded_turns = min(state.turn_count, oldest + start + SUMMARY_BATCH)
 
         data, usage = await llm.json_chat(
             [
