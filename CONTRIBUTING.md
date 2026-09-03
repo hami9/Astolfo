@@ -95,6 +95,8 @@ Only a maintainer does this, but it is written down so it is the same every time
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
    ```
+   Or, where pushing a tag is not possible, *Actions → Release → Run workflow*, giving
+   the tag and the commit to put it on. The tag is then created as part of publishing.
 
 The `Release` workflow takes it from there: it refuses a tag that disagrees with
 `__version__`, runs everything again, builds the sdist and wheel, publishes a GitHub
