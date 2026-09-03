@@ -1,8 +1,15 @@
 name: Release
 
-# Tag a commit `vX.Y.Z` and this does the rest: it refuses a tag that disagrees
-# with the version in the source, runs the suite, builds the package, and
-# publishes a release with the changelog section for that version.
+# Two ways in, one path through.
+#
+#   git push origin vX.Y.Z    - the usual one: the tag is the trigger.
+#   Actions -> Release -> Run - name the tag and the commit to put it on. The
+#                               tag is created as part of publishing, for when
+#                               pushing one is not possible.
+#
+# Either way it refuses a tag that disagrees with the version in the source,
+# runs the suite, builds the package, and publishes a release with the
+# changelog section for that version.
 
 on:
   push:
@@ -10,11 +17,18 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)publish, e.g. v2.0.0"
+        description: "Tag to publish, e.g. v2.0.0. Created if it does not exist yet."
         required: true
+      target:
+        description: "Commit or branch to tag, when the tag is new"
+        required: false
+        default: main
 
 permissions:
   contents: read
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -22,10 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.target || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -38,14 +53,14 @@ jobs:
       - name: The tag must match the version in the source
         id: version
         run: |
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
           source="$(python -c 'import astolfo; print(astolfo.__version__)')"
-          echo "tag $tag, source $source"
-          if [ "$tag" != "v$source" ]; then
-            echo "::error::tag $tag does not match astolfo.__version__ ($source)"
+          echo "tag $TAG, source $source, commit $(git rev-parse --short HEAD)"
+          if [ "$TAG" != "v$source" ]; then
+            echo "::error::tag $TAG does not match astolfo.__version__ ($source)"
             exit 1
           fi
           echo "version=$source" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - run: ruff check .
       - run: pytest -q
@@ -83,14 +98,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          # Ignored when the tag already exists, which is the tag-push case.
+          SHA: ${{ needs.build.outputs.sha }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --notes-file NOTES.md --title "$TAG"
             gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" dist/* --title "$TAG" --notes-file NOTES.md --verify-tag
+            gh release create "$TAG" dist/* \
+              --title "$TAG" --notes-file NOTES.md --target "$SHA"
           fi
+          gh release view "$TAG" --json tagName,url --jq '"published \(.tagName) at \(.url)"'
 
   image:
     name: Container image
@@ -102,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.build.outputs.sha }}
 
       - uses: docker/setup-buildx-action@v3
 

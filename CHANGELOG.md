@@ -87,6 +87,8 @@ services.
 ## [1.0.0] - 2026-08-18
 
 The bot itself: persona, routing, media, and enough cost control to leave it running.
+This one predates tagging, so it is a name for the history rather than a release you can
+download; the link below goes to the last commit it covers.
 
 ### Added
 
@@ -112,5 +114,5 @@ The bot itself: persona, routing, media, and enough cost control to leave it run
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
 [Unreleased]: https://github.com/hami9/Astolfo/compare/v2.0.0...HEAD
-[2.0.0]: https://github.com/hami9/Astolfo/compare/v1.0.0...v2.0.0
-[1.0.0]: https://github.com/hami9/Astolfo/releases/tag/v1.0.0
+[2.0.0]: https://github.com/hami9/Astolfo/compare/10753be...v2.0.0
+[1.0.0]: https://github.com/hami9/Astolfo/tree/10753be
