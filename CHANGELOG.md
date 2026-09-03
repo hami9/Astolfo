@@ -11,6 +11,30 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.3.0] - 2026-09-03
+
+### Added
+
+- **The database cleans up after itself.** Nothing in it was ever deleted, so on a small
+  host the audit trail and the per-day counters grew for as long as the bot ran. After
+  `RETAIN_DAYS` (90 by default) the audit trail, the per-service day counters, groups the
+  bot was removed from and people nobody has seen since are dropped, and the file is
+  compacted so the space actually comes back. Runs at startup and once a day, or on
+  demand from **panel → data → 🧽 clean up now**, which reports what went and how much
+  was freed. `RETAIN_DAYS=0` keeps everything.
+- **A block, a limit or the owner is never forgotten**, however old the row: those were
+  decisions somebody made, and dropping them would quietly undo the choice.
+- **The data screen shows the size on disk** — database, write-ahead log and all — and
+  what the retention window is.
+- **DeepSeek and OpenAI** are known out of the box: `deepseek-chat` and `deepseek-reasoner`
+  (moving aliases, so they do not go stale), and `gpt-4o-mini` and `gpt-4o` with vision.
+  Thirteen services now.
+
+### Note
+
+Long-term notes were never the thing filling the disk — they are capped at 900 characters
+per chat. The tables around them were.
+
 ## [2.2.0] - 2026-09-03
 
 Three things a busy group made obvious.
@@ -188,7 +212,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/hami9/Astolfo/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/hami9/Astolfo/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/hami9/Astolfo/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/hami9/Astolfo/compare/v2.0.0...v2.1.0

@@ -253,6 +253,8 @@ rather than a guess.
 | `huggingface` | huggingface.co/settings/tokens | monthly credit, then paid |
 | `github` | a GitHub token with models access | free within the account's limits |
 | `deepinfra` | deepinfra.com | pay as you go after the signup credit |
+| `deepseek` | platform.deepseek.com | pay as you go, cheap |
+| `openai` | platform.openai.com | pay as you go |
 | `aimlapi` | aimlapi.com | small free allowance, then paid |
 
 The billing column is what each service advertises, and the panel repeats it beside

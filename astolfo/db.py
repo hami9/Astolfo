@@ -9,11 +9,13 @@ are, never a single line of what anyone said.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sqlite3
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -264,6 +266,65 @@ class Database:
             t: self.query(f"SELECT COUNT(*) AS n FROM {t}")[0]["n"]  # noqa: S608
             for t in TABLES
         }
+
+    def size_bytes(self) -> int:
+        """What the database costs on disk, write-ahead log included."""
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
+            with contextlib.suppress(OSError):
+                total += os.path.getsize(self.path + suffix)
+        return total
+
+    def prune(self, retain_days: int) -> dict[str, int]:
+        """Forget what is old enough not to matter, and say what went.
+
+        Nothing here was ever deleted before, so on a small host the audit trail
+        and the per-day counters grew for as long as the bot ran. What is kept
+        is what somebody chose - a block, a limit, the owner - and what is
+        recent enough to still be true.
+        """
+        if retain_days <= 0:
+            return {}
+        cutoff = time.time() - retain_days * 86400
+        day = datetime.fromtimestamp(cutoff, tz=timezone.utc).strftime("%Y-%m-%d")
+        removed: dict[str, int] = {}
+
+        def drop(name: str, sql: str, args: tuple) -> None:
+            count = self.execute(sql, args).rowcount
+            if count > 0:
+                removed[name] = count
+
+        drop("audit", "DELETE FROM audit WHERE at < ?", (cutoff,))
+        drop("service_usage", "DELETE FROM service_usage WHERE day < ?", (day,))
+        # Groups the bot was removed from long ago, and everything about them.
+        drop(
+            "members",
+            "DELETE FROM members WHERE chat_id IN"
+            " (SELECT chat_id FROM chats WHERE left_at IS NOT NULL AND left_at < ?)",
+            (cutoff,),
+        )
+        drop("chats", "DELETE FROM chats WHERE left_at IS NOT NULL AND left_at < ?", (cutoff,))
+        # People who have not been seen since, unless something was decided
+        # about them: a block, a limit, or being the owner.
+        drop(
+            "members",
+            "DELETE FROM members WHERE last_seen IS NOT NULL AND last_seen < ?"
+            " AND user_id NOT IN (SELECT user_id FROM users"
+            " WHERE blocked = 1 OR is_master = 1 OR daily_limit > 0)",
+            (cutoff,),
+        )
+        drop(
+            "users",
+            "DELETE FROM users WHERE last_seen IS NOT NULL AND last_seen < ?"
+            " AND blocked = 0 AND is_master = 0 AND daily_limit = 0"
+            " AND user_id NOT IN (SELECT user_id FROM members)",
+            (cutoff,),
+        )
+        if removed:
+            # SQLite keeps the freed pages, so the file only shrinks here.
+            self.vacuum()
+            log.info("pruned %s", ", ".join(f"{n} {k}" for k, n in removed.items()))
+        return removed
 
     def vacuum(self) -> None:
         with self._lock:

@@ -18,7 +18,7 @@
 ---
 
 It decides for itself whether a message deserves an instant reply, real reasoning, or a
-web search. It reads photos, stickers, GIFs, videos and voice messages. It stacks eleven
+web search. It reads photos, stickers, GIFs, videos and voice messages. It stacks thirteen
 API providers behind one client and fails over between them without the chat noticing.
 And when every last one of them is out of allowance, it still answers the things that
 need no model at all — honestly, rather than by guessing.
@@ -47,11 +47,12 @@ flowchart LR
 | 🧭 **Adaptive routing** | Regex heuristics classify most messages for free — small talk goes to `fast`, technical questions to `think`, time-sensitive facts to `search`, distress to `serious`. Only ambiguous messages reach a small LLM dispatcher, and its verdicts are cached. The mode drives the model, temperature, token ceiling, reasoning budget and whether web search runs. |
 | 🔎 **Grounded answers** | Search-mode replies run at low temperature over live web results and cite their sources. Canon anchors keep the persona from inventing its own lore, and the truthfulness layer makes "I don't know" the in-character answer rather than a failure. |
 | 🖼 **Multimodal input** | Photos and stickers are downscaled and encoded, GIFs, videos and video notes are sampled into frames with ffmpeg (falling back to Telegram thumbnails), and voice messages are transcoded to mono mp3. |
-| 🔌 **Eleven providers, one client** | Services are tried in order and fail over on refusal, quota and rate limits. Each holds several keys; a refused key rests and the next takes over mid-conversation. Health survives a restart, so a quota that runs until tomorrow is still known tomorrow. |
+| 🔌 **Thirteen providers, one client** | Services are tried in order and fail over on refusal, quota and rate limits. Each holds several keys; a refused key rests and the next takes over mid-conversation. Health survives a restart, so a quota that runs until tomorrow is still known tomorrow. |
 | 🧠 **Models you pick, not models you hardcode** | The free catalog changes weekly. The panel reads it from the service, lists what is on offer with its context window, modalities and price, and a press assigns one to a job — no `.env`, no restart. Tokens spent are counted per model, which is the only number that separates one free model from another. |
 | 💸 **Credit controls** | Per-call cost is recorded and persisted. As spend approaches the daily cap the bot degrades instead of dying: cheap model only, then replies only when addressed, then a polite stop. Per-chat and per-person daily call limits sit on top. |
 | 💤 **Offline answers** | With every service resting, greetings, thanks, "who are you", the time, the date and plain arithmetic are still answered in character. Anything needing actual knowledge gets an honest "my brain is offline" — never a guess. |
 | 🎛 **Run it from Telegram** | A private-chat control panel for the owner: services and keys, every setting, groups, people, limits, server health, update and restart. Changes take effect immediately — no editing `.env`, no restart. |
+| 🧹 **It cleans up after itself** | The audit trail, the per-day counters, groups it was removed from and people nobody has seen since are dropped after `RETAIN_DAYS` and the file is compacted, so a small host does not fill up. A block, a limit or the owner is never forgotten — those were decisions. |
 | 🔐 **Built to be exposed** | Keys are encrypted at rest and only ever shown masked. Message text is never stored — a test checks the database file and its write-ahead log. The bot runs unprivileged and can ask a root helper for exactly two things. |
 
 ## Quick start
@@ -72,7 +73,7 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 Or take it as a package or an image instead of a clone:
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.2.0"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.0"
 astolfo                                  # same bot, on your PATH
 
 docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
@@ -143,7 +144,7 @@ here needs a restart. See [docs/ADMIN.md](docs/ADMIN.md).
 
 ## Providers
 
-Any OpenAI-compatible endpoint works. Eleven are known out of the box, and more can be
+Any OpenAI-compatible endpoint works. Thirteen are known out of the box, and more can be
 added from the panel — name, URL, models — with no code change.
 
 | Service | Endpoint | Notes |
@@ -158,6 +159,8 @@ added from the panel — name, URL, models — with no code change.
 | `huggingface` | `router.huggingface.co/v1` | monthly credit, then paid |
 | `sambanova` | `api.sambanova.ai/v1` | free tier |
 | `deepinfra` | `api.deepinfra.com/v1/openai` | pay as you go after the signup credit |
+| `deepseek` | `api.deepseek.com/v1` | pay as you go, cheap |
+| `openai` | `api.openai.com/v1` | pay as you go |
 | `aimlapi` | `api.aimlapi.com/v1` | small free allowance, then paid |
 
 > [!NOTE]
@@ -185,6 +188,7 @@ The ones worth knowing:
 | `CHAT_DAILY_CALL_LIMIT` | `0` (off) | model calls per chat per day |
 | `USER_DAILY_CALL_LIMIT` | `0` (off) | model calls per person per day |
 | `FREE_MODE` | `0` | zero-cost models only |
+| `RETAIN_DAYS` | `90` | how long the audit trail and counters are kept |
 | `RESPONSE_CACHE` | `1` | reuse answers to identical recent messages |
 | `WEB_SEARCH` | `1` | ground factual answers in live results |
 | `BOT_LANG` | `en` | language of command replies (`en` or `fa`) |
@@ -216,7 +220,7 @@ Or without make:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 428 tests, fully offline
+pytest -q          # 441 tests, fully offline
 ruff check .
 ```
 

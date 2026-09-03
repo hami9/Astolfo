@@ -172,6 +172,8 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
             return sections.audit_trail(ctx)
         if action == "vacuum":
             return sections.vacuum(ctx)
+        if action == "prune":
+            return sections.prune(ctx)
         if action == "backup":
             return sections.backup(ctx)
         return sections.data(ctx)

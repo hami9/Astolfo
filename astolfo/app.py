@@ -44,6 +44,9 @@ from .runtime import Runtime
 log = logging.getLogger(__name__)
 
 AUTOSAVE_INTERVAL = 120
+# Once a day is often enough to keep the file from growing, and cheap enough
+# that nobody notices it happening.
+PRUNE_INTERVAL = 24 * 3600
 
 
 class _AliveHandler(BaseHTTPRequestHandler):
@@ -74,9 +77,15 @@ def start_keepalive(port: int) -> None:
 
 
 async def _autosave(rt: Runtime) -> None:
+    since_prune = 0.0
     while True:
         await asyncio.sleep(AUTOSAVE_INTERVAL)
         rt.save()
+        since_prune += AUTOSAVE_INTERVAL
+        if since_prune >= PRUNE_INTERVAL:
+            since_prune = 0.0
+            with contextlib.suppress(Exception):
+                rt.db.prune(rt.settings.retain_days)
 
 
 async def post_init(app: Application) -> None:
@@ -115,6 +124,8 @@ async def post_init(app: Application) -> None:
     me = await app.bot.get_me()
     log.info("started as @%s (%s)", me.username, me.id)
     await _report_restart(app, rt)
+    with contextlib.suppress(Exception):
+        rt.db.prune(settings.retain_days)
     app.bot_data["autosave"] = asyncio.create_task(_autosave(rt))
 
 

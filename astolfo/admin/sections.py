@@ -476,18 +476,47 @@ def person_block(ctx, user_id: int, blocked: bool) -> View:
 
 # -- data -----------------------------------------------------------------
 def data(ctx) -> View:
-    counts = ctx.rt.db.counts()
+    rt = ctx.rt
+    counts = rt.db.counts()
     lines = ["🗄 Database\n"] + [f"{name}: {count}" for name, count in counts.items()]
-    lines.append(f"\nfile: {ctx.rt.db.path}")
+    lines.append(f"\non disk: {_megabytes(rt.db.size_bytes())}")
+    keep = rt.settings.retain_days
+    lines.append(
+        f"kept for: {keep} days, cleaned daily"
+        if keep > 0
+        else "kept for: forever (RETAIN_DAYS=0)"
+    )
+    lines.append(f"file: {rt.db.path}")
     return View(
         "\n".join(lines),
         keyboard(
             [button("📜 recent actions", "data", "audit")],
+            [button("🧽 clean up now", "data", "prune")],
             [button("⬇️ send me a backup", "data", "backup")],
             [button("🧹 compact", "data", "vacuum")],
             back_row(),
         ),
     )
+
+
+def _megabytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB" if size >= 1024 * 1024 else f"{size // 1024} KB"
+
+
+def prune(ctx) -> View:
+    """Drop what is past the retention window, and say what went."""
+    before = ctx.rt.db.size_bytes()
+    removed = ctx.rt.db.prune(ctx.rt.settings.retain_days)
+    audit(ctx.rt, ctx.user, "prune", ", ".join(f"{n} {k}" for k, n in removed.items()))
+
+    view = data(ctx)
+    if not removed:
+        view.alert = "nothing old enough to remove"
+        return view
+    freed = max(0, before - ctx.rt.db.size_bytes())
+    what = ", ".join(f"{count} {name}" for name, count in removed.items())
+    view.alert = f"removed {what}; {_megabytes(freed)} freed"
+    return view
 
 
 def audit_trail(ctx) -> View:

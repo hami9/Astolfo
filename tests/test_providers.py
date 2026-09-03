@@ -374,3 +374,19 @@ async def test_unpinning_restores_the_order(settings, monkeypatch):
 
     result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
     assert result.ok
+
+
+def test_deepseek_and_openai_are_known_out_of_the_box():
+    """Both are plain OpenAI-compatible endpoints, so nothing else is needed."""
+    for name in ("deepseek", "openai"):
+        preset = providers_mod.PRESETS[name]
+        assert preset.models, "a service with no models can never be called"
+        assert preset.base_url.startswith("https://")
+        assert not preset.openrouter_extensions, "only OpenRouter takes OpenRouter's fields"
+        assert preset.signup and preset.note, "the panel shows what it costs before you use it"
+
+
+def test_deepseek_is_not_offered_as_a_way_to_read_pictures():
+    """Its chat models are text only; offering them for media drops attachments."""
+    assert providers_mod.PRESETS["deepseek"].vision_models == []
+    assert providers_mod.PRESETS["openai"].vision_models
