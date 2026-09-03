@@ -47,6 +47,22 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _model_row(blob: object) -> dict:
+    """One model's day. History written before tokens were tracked is a bare cost."""
+    if isinstance(blob, dict):
+        return {
+            "calls": int(blob.get("calls") or 0),
+            "prompt": int(blob.get("prompt") or 0),
+            "completion": int(blob.get("completion") or 0),
+            "cost": float(blob.get("cost") or 0.0),
+        }
+    try:
+        cost = float(blob or 0.0)
+    except (TypeError, ValueError):
+        cost = 0.0
+    return {"calls": 0, "prompt": 0, "completion": 0, "cost": cost}
+
+
 def _empty_day() -> dict:
     return {
         "cost": 0.0,
@@ -126,7 +142,12 @@ class BudgetTracker:
         day["cached_tokens"] += usage.cached_tokens
         day["by_mode"][mode] = round(day["by_mode"].get(mode, 0.0) + usage.cost, 6)
         if model:
-            day["by_model"][model] = round(day["by_model"].get(model, 0.0) + usage.cost, 6)
+            row = _model_row(day["by_model"].get(model))
+            row["calls"] += 1
+            row["prompt"] += usage.prompt_tokens
+            row["completion"] += usage.completion_tokens
+            row["cost"] = round(row["cost"] + usage.cost, 6)
+            day["by_model"][model] = row
         if chat_id is not None:
             key = str(chat_id)
             day["chats"][key] = day["chats"].get(key, 0) + 1
@@ -225,9 +246,20 @@ class BudgetTracker:
         return Allowance()
 
     # -- reporting -------------------------------------------------------
+    def model_usage(self, day: str | None = None) -> list[tuple[str, dict]]:
+        """What each model did today: calls, tokens in and out, cost.
+
+        Busiest first, because on free models every cost is zero and the only
+        thing that separates them is how much work they did.
+        """
+        rows = self._days.get(day or _today(), {}).get("by_model") or {}
+        usage = [(model, _model_row(blob)) for model, blob in rows.items()]
+        return sorted(usage, key=lambda kv: (-kv[1]["calls"], -kv[1]["cost"], kv[0]))
+
     def summary(self) -> dict:
         day = self.today()
-        top_model = max(day["by_model"].items(), key=lambda kv: kv[1], default=("-", 0.0))
+        busiest = self.model_usage()
+        top_model = busiest[0][0] if busiest else "-"
         return {
             "cost_today": round(day["cost"], 4),
             "cost_month": self.month_cost(),
@@ -241,6 +273,7 @@ class BudgetTracker:
             "cache_replies": day["saved_by_cache"],
             "stars_today": day["stars"],
             "by_mode": dict(sorted(day["by_mode"].items(), key=lambda kv: -kv[1])),
-            "top_model": top_model[0],
+            "by_model": busiest,
+            "top_model": top_model,
             "generated_at": time.time(),
         }

@@ -12,13 +12,12 @@ from typing import Any
 
 import httpx
 
+from . import catalog
 from . import providers as providers_mod
+from .catalog import Model
 from .config import Settings
 
 log = logging.getLogger(__name__)
-
-# Text-to-text models that are not conversational partners.
-NOT_CONVERSATIONAL = ("content-safety", "guard", "moderation", "embed", "rerank", "classif")
 
 # OpenRouter rejects a longer `models` chain outright.
 MAX_FALLBACKS = 3
@@ -119,6 +118,7 @@ class LLMClient:
         self._clients = {p.name: self._build_client(p) for p in self.providers}
         self._client = self._clients[self.providers[0].name]
         self._catalog: set | None = None
+        self._models: list[Model] = []
         self._free_text: list[str] = []
         self._free_vision: list[str] = []
         self._free_audio: list[str] = []
@@ -359,63 +359,25 @@ class LLMClient:
         log.info("loaded model catalog (%d models)", len(self._catalog))
         self._index_free_models(entries)
 
-    @staticmethod
-    def _is_free(entry: dict) -> bool:
-        """Every priced dimension must be zero, not just tokens.
+    _is_free = staticmethod(catalog.is_free)
+    _is_chat = staticmethod(catalog.is_chat)
 
-        Image, audio and per-request charges live in their own pricing keys, so
-        checking prompt and completion alone marks paid models as free.
-        """
-        pricing = entry.get("pricing") or {}
-        if not pricing:
-            return False
-        for value in pricing.values():
-            if value in (None, ""):
-                continue
-            try:
-                if float(value) != 0.0:
-                    return False
-            except (TypeError, ValueError):
-                return False
-        return True
-
-    @staticmethod
-    def _is_chat(entry: dict) -> bool:
-        """Take text in and give back text and nothing else.
-
-        Generators list their extra output alongside text - a music model reports
-        `text+image->text+audio` - so merely requiring text among the outputs
-        still matches them. Only a model whose whole output is text can chat.
-        """
-        architecture = entry.get("architecture") or {}
-        inputs = architecture.get("input_modalities") or []
-        outputs = architecture.get("output_modalities") or []
-        if "text" not in inputs or set(outputs) != {"text"}:
-            return False
-        # Classifiers and retrieval models are text-to-text but cannot converse.
-        return not any(word in (entry.get("id") or "").lower() for word in NOT_CONVERSATIONAL)
+    def models_offered(self, *, free_only: bool = True, vision: bool = False) -> list[Model]:
+        """The chat models the catalog listed, for the panel to show and choose from."""
+        return [
+            m
+            for m in self._models
+            if (m.free or not free_only) and (m.vision or not vision)
+        ]
 
     def _index_free_models(self, entries: list[dict]) -> None:
         """Discover zero-cost models instead of shipping a list that goes stale."""
-        text: list[tuple[int, str]] = []
-        vision: list[tuple[int, str]] = []
-        audio: list[tuple[int, str]] = []
-        for entry in entries:
-            model_id = entry.get("id")
-            if not model_id or not self._is_free(entry) or not self._is_chat(entry):
-                continue
-            context = int(entry.get("context_length") or 0)
-            modalities = (entry.get("architecture") or {}).get("input_modalities") or []
-            if "image" in modalities:
-                vision.append((context, model_id))
-            if "audio" in modalities:
-                audio.append((context, model_id))
-            text.append((context, model_id))
-
+        self._models = catalog.read(entries)
+        free = [m for m in self._models if m.free]
         # Longest context first: the persona prompt alone is a few thousand tokens.
-        self._free_text = [m for _, m in sorted(text, reverse=True)]
-        self._free_vision = [m for _, m in sorted(vision, reverse=True)]
-        self._free_audio = [m for _, m in sorted(audio, reverse=True)]
+        self._free_text = [m.id for m in free]
+        self._free_vision = [m.id for m in free if m.vision]
+        self._free_audio = [m.id for m in free if m.audio]
         if self._s.free_mode:
             log.info(
                 "free mode: %d chat models available (%d read images, %d hear sound)",
@@ -428,6 +390,7 @@ class LLMClient:
 
     def _seed_free_models(self) -> None:
         """Fall back to the configured list when the catalog cannot be read."""
+        self._models = []
         self._free_text = list(self._s.free_models)
         self._free_vision = []
         self._free_audio = []

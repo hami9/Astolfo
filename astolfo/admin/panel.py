@@ -10,6 +10,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from .. import runtime, server_ops, settings_store
 from ..config import ConfigError
+from . import models as models_section
 from . import sections, server
 from . import services as services_section
 from .guard import allowed
@@ -102,6 +103,9 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
     if head in ("svc", "keys"):  # "keys" keeps older panel messages working
         return await _services(ctx, rest)
 
+    if head == "mdl":
+        return await _models(ctx, rest)
+
     if head == "cfg":
         action = rest[0] if rest else ""
         name = rest[1] if len(rest) > 1 else ""
@@ -173,6 +177,22 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
     return sections.home(ctx)
 
 
+async def _models(ctx: Ctx, rest: list[str]) -> View:
+    head = rest[0] if rest else ""
+
+    if head == "sync":
+        return await models_section.sync(ctx)
+    if head == "u":
+        return models_section.usage(ctx)
+    if head == "find" and len(rest) > 2:
+        return models_section.ask_search(ctx, rest[1], rest[2] != "0")
+    if head == "r" and len(rest) > 3:
+        return models_section.pick(ctx, rest[1], int(rest[2]), rest[3] != "0")
+    if head == "set" and len(rest) > 3:
+        return models_section.choose(ctx, rest[1], int(rest[3]), rest[2] != "0")
+    return models_section.overview(ctx)
+
+
 async def _services(ctx: Ctx, rest: list[str]) -> View:
     head = rest[0] if rest else ""
 
@@ -221,6 +241,9 @@ async def _answer(ctx: Ctx, kind: str, target: str, text: str, message) -> View:
 
     if kind == "svcnew":
         return services_section.take_new_service(ctx, text)
+
+    if kind == "mdlfind":
+        return models_section.take_search(ctx, target, text)
 
     if kind in ("svcmodels", "svcurl"):
         return services_section.take_field(

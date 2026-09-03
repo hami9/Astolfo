@@ -62,9 +62,10 @@ def home(ctx) -> View:
     return View(
         text,
         keyboard(
-            [button("🔌 services", "svc"), button("⚙️ settings", "cfg")],
-            [button("💬 groups", "chats"), button("👤 people", "ppl")],
-            [button("🖥 server", "srv"), button("🗄 data", "data")],
+            [button("🔌 services", "svc"), button("🧠 models", "mdl")],
+            [button("⚙️ settings", "cfg"), button("💬 groups", "chats")],
+            [button("👤 people", "ppl"), button("🖥 server", "srv")],
+            [button("🗄 data", "data")],
         ),
     )
 

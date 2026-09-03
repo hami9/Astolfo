@@ -77,3 +77,47 @@ def test_usage_survives_restart(settings):
     reloaded = BudgetTracker(settings)
     assert reloaded.today_cost() == 0.42
     assert reloaded.month_cost() >= 0.42
+
+
+# -- what each model did --------------------------------------------------
+def test_a_model_records_calls_and_tokens_not_just_cost(settings):
+    tracker = BudgetTracker(settings)
+    tracker.record(
+        mode="fast", model="a/b", usage=Usage(prompt_tokens=100, completion_tokens=20, cost=0.001)
+    )
+    tracker.record(
+        mode="fast", model="a/b", usage=Usage(prompt_tokens=50, completion_tokens=10, cost=0.0005)
+    )
+
+    (model, row), = tracker.model_usage()
+    assert model == "a/b"
+    assert row == {"calls": 2, "prompt": 150, "completion": 30, "cost": 0.0015}
+
+
+def test_free_models_are_ranked_by_work_since_they_all_cost_nothing(settings):
+    tracker = BudgetTracker(settings)
+    for _ in range(3):
+        tracker.record(mode="fast", model="busy/one", usage=Usage(prompt_tokens=10))
+    tracker.record(mode="fast", model="quiet/one", usage=Usage(prompt_tokens=10))
+
+    assert [model for model, _ in tracker.model_usage()] == ["busy/one", "quiet/one"]
+    assert tracker.summary()["top_model"] == "busy/one"
+
+
+def test_history_written_before_tokens_were_tracked_still_reads(settings, tmp_path):
+    """Old files recorded a bare cost per model; it must not crash or vanish."""
+    import json
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    path = tmp_path / "usage.json"
+    path.write_text(json.dumps({"days": {today: {"cost": 0.02, "by_model": {"old/model": 0.02}}}}))
+
+    tracker = BudgetTracker(settings.replace(data_dir=str(tmp_path)))
+    (model, row), = tracker.model_usage()
+    assert model == "old/model"
+    assert row == {"calls": 0, "prompt": 0, "completion": 0, "cost": 0.02}
+
+    tracker.record(mode="fast", model="old/model", usage=Usage(prompt_tokens=5, cost=0.001))
+    (_, row), = tracker.model_usage()
+    assert row == {"calls": 1, "prompt": 5, "completion": 0, "cost": 0.021}

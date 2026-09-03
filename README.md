@@ -48,8 +48,9 @@ flowchart LR
 | 🔎 **Grounded answers** | Search-mode replies run at low temperature over live web results and cite their sources. Canon anchors keep the persona from inventing its own lore, and the truthfulness layer makes "I don't know" the in-character answer rather than a failure. |
 | 🖼 **Multimodal input** | Photos and stickers are downscaled and encoded, GIFs, videos and video notes are sampled into frames with ffmpeg (falling back to Telegram thumbnails), and voice messages are transcoded to mono mp3. |
 | 🔌 **Eleven providers, one client** | Services are tried in order and fail over on refusal, quota and rate limits. Each holds several keys; a refused key rests and the next takes over mid-conversation. Health survives a restart, so a quota that runs until tomorrow is still known tomorrow. |
+| 🧠 **Models you pick, not models you hardcode** | The free catalog changes weekly. The panel reads it from the service, lists what is on offer with its context window, modalities and price, and a press assigns one to a job — no `.env`, no restart. Tokens spent are counted per model, which is the only number that separates one free model from another. |
 | 💸 **Credit controls** | Per-call cost is recorded and persisted. As spend approaches the daily cap the bot degrades instead of dying: cheap model only, then replies only when addressed, then a polite stop. Per-chat and per-person daily call limits sit on top. |
-| 🧠 **Offline answers** | With every service resting, greetings, thanks, "who are you", the time, the date and plain arithmetic are still answered in character. Anything needing actual knowledge gets an honest "my brain is offline" — never a guess. |
+| 💤 **Offline answers** | With every service resting, greetings, thanks, "who are you", the time, the date and plain arithmetic are still answered in character. Anything needing actual knowledge gets an honest "my brain is offline" — never a guess. |
 | 🎛 **Run it from Telegram** | A private-chat control panel for the owner: services and keys, every setting, groups, people, limits, server health, update and restart. Changes take effect immediately — no editing `.env`, no restart. |
 | 🔐 **Built to be exposed** | Keys are encrypted at rest and only ever shown masked. Message text is never stored — a test checks the database file and its write-ahead log. The bot runs unprivileged and can ask a root helper for exactly two things. |
 
@@ -71,7 +72,7 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 Or take it as a package or an image instead of a clone:
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.0.0"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.1.0"
 astolfo                                  # same bot, on your PATH
 
 docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
@@ -129,6 +130,7 @@ Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Screen | What it is for |
 |---|---|
 | **services** | Every service: keys, health, today's calls, order, on/off, and adding your own |
+| **models** | Pick which model does which job from the live catalog, and see the tokens each one spent |
 | **settings** | Any setting by name, plus switches for the common ones |
 | **groups** | Every group: activity, mute, leave, how talkative it is, daily limit |
 | **people** | Who has spoken to it, where, blocking, and per-person limits |
@@ -214,7 +216,7 @@ Or without make:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 384 tests, fully offline
+pytest -q          # 414 tests, fully offline
 ruff check .
 ```
 
@@ -241,6 +243,7 @@ astolfo/config.py          environment-driven settings
 astolfo/persona.py         layered prompt, few-shot examples, locale detection
 astolfo/routing.py         fast / think / search / serious dispatcher
 astolfo/providers.py       the known services and their keys
+astolfo/catalog.py         the models a service offers, as records
 astolfo/llm.py             the client: failover, key rotation, retries
 astolfo/services.py        stored services, keys and their health
 astolfo/participation.py   manual, auto and smart: how talkative the bot is
