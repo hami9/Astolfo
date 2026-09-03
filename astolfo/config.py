@@ -144,6 +144,10 @@ class Settings:
     max_chats: int = _env("MAX_CHATS", default=800)
     summaries: bool = _env("SUMMARIES", default=True)
     data_dir: str = _env("DATA_DIR", default="data")
+    # Nothing in the database is worth keeping forever on a 1 GB box: the audit
+    # trail, the per-day counters and people nobody has seen since are dropped
+    # after this long. 0 keeps everything.
+    retain_days: int = _env("RETAIN_DAYS", default=90)
 
     # --- cost control ------------------------------------------------
     daily_budget_usd: float = _env("DAILY_BUDGET_USD", default=0.0)  # 0 = unlimited

@@ -336,3 +336,29 @@ async def test_a_group_switched_off_can_be_switched_back_on(owned):
 
     assert owned.store.get(-500).off is False
     assert -500 not in owned.dormant
+
+
+# -- keeping the database small -------------------------------------------
+async def test_the_data_screen_reports_the_size_and_the_retention(owned):
+    query, _ = await _press(owned, "ap:data")
+
+    text = query.edits[0]
+    assert "on disk:" in text
+    assert f"kept for: {owned.settings.retain_days} days" in text
+
+
+async def test_cleaning_up_removes_what_is_past_the_window(owned):
+    import time as _time
+
+    old = _time.time() - 200 * 86400
+    owned.db.execute("INSERT INTO audit (at, actor, action) VALUES (?, 1, 'ancient')", (old,))
+
+    query, _ = await _press(owned, "ap:data:prune")
+
+    assert "removed" in query.answers[0]
+    assert not [r for r in owned.db.audit_trail(limit=50) if r["action"] == "ancient"]
+
+
+async def test_cleaning_up_says_so_when_there_is_nothing_to_remove(owned):
+    query, _ = await _press(owned, "ap:data:prune")
+    assert "nothing old enough" in query.answers[0]

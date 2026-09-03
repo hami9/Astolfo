@@ -184,6 +184,27 @@ Worth knowing: an update runs whatever is on the branch, so whoever controls the
 repository controls the server. That is true of any auto-update, and it is the
 reason the helper does not accept anything else.
 
+### Keeping the database small
+
+Nothing in it was ever deleted before, so on a small host the audit trail and the
+per-day counters grew for as long as the bot ran. **data** now shows the size on
+disk and cleans up once a day, plus once at startup:
+
+| Dropped after `RETAIN_DAYS` (90) | Never dropped |
+|---|---|
+| the audit trail | a person who is blocked |
+| per-day service counters | a person with a limit of their own |
+| groups it was removed from, and their members | the owner |
+| people nobody has seen since | anyone still in a group |
+
+A block or a limit was a decision somebody made; forgetting it would quietly undo
+the choice, so those rows stay however old they are. **🧽 clean up now** does it on
+demand and reports what went and how much space came back — SQLite does not shrink
+the file on a delete, so the compaction runs straight after.
+
+Long-term notes are capped at 900 characters per chat, so they were never the thing
+filling the disk. `RETAIN_DAYS=0` keeps everything.
+
 ## Where the data lives
 
 `data/astolfo.db` (SQLite, mode 600) holds chats, people, settings, encrypted

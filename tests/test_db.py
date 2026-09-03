@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import time
+
+import pytest
 
 from astolfo.db import SCHEMA_VERSION, open_database
 from astolfo.memory import ChatStore
@@ -216,3 +219,86 @@ def test_keys_saved_under_the_old_scheme_are_carried_over(settings, monkeypatch)
     assert upgraded.credentials("openrouter")[0]["value"] == b"cipher-or"
     assert upgraded.credentials("google")[0]["value"] == b"cipher-g"
     assert upgraded.credentials("something_else") == []
+
+
+# -- keeping the file from growing forever --------------------------------
+LONG_AGO = time.time() - 200 * 86400
+
+
+@pytest.fixture
+def db(settings):
+    return open_database(settings.data_dir)
+
+
+def test_the_audit_trail_does_not_grow_forever(db):
+    db.execute("INSERT INTO audit (at, actor, action) VALUES (?, 1, 'old')", (LONG_AGO,))
+    db.record(actor=1, action="recent")
+
+    removed = db.prune(90)
+
+    assert removed["audit"] == 1
+    assert [row["action"] for row in db.audit_trail()] == ["recent"]
+
+
+def test_day_counters_older_than_the_window_go(db):
+    db.add_service_usage("2020-01-01", "openrouter", requests=5)
+    db.add_service_usage(time.strftime("%Y-%m-%d"), "openrouter", requests=1)
+
+    db.prune(90)
+
+    days = {row["day"] for row in db.query("SELECT day FROM service_usage")}
+    assert "2020-01-01" not in days
+    assert len(days) == 1
+
+
+def test_a_group_the_bot_left_long_ago_is_forgotten_with_its_members(db):
+    db.joined_chat(-1, kind="supergroup", title="Gone", username="")
+    db.seen_member(user_id=7, chat_id=-1, name="someone")
+    db.execute("UPDATE chats SET left_at = ? WHERE chat_id = ?", (LONG_AGO, -1))
+
+    db.prune(90)
+
+    assert db.chat(-1) is None
+    assert db.query("SELECT * FROM members WHERE chat_id = -1") == []
+
+
+def test_a_group_it_is_still_in_is_never_touched(db):
+    db.joined_chat(-2, kind="supergroup", title="Alive", username="")
+    db.seen_member(user_id=7, chat_id=-2, name="someone")
+
+    db.prune(90)
+
+    assert db.chat(-2) is not None
+    assert db.query("SELECT * FROM members WHERE chat_id = -2")
+
+
+def test_a_decision_about_somebody_outlives_the_retention_window(db):
+    """A block or a limit was chosen on purpose; forgetting it undoes the choice."""
+    for user_id in (11, 22, 33, 44):
+        db.seen_member(user_id=user_id, chat_id=-9, name=f"person{user_id}")
+    db.execute("DELETE FROM members")  # nobody is in a group any more
+    db.set_blocked(11, True)
+    db.set_user_limit(22, 50)
+    db.execute("UPDATE users SET is_master = 1 WHERE user_id = 33")
+    db.execute("UPDATE users SET last_seen = ?", (LONG_AGO,))
+
+    db.prune(90)
+
+    kept = {row["user_id"] for row in db.query("SELECT user_id FROM users")}
+    assert kept == {11, 22, 33}, "only the one nobody decided anything about goes"
+
+
+def test_keeping_everything_is_still_possible(db):
+    db.execute("INSERT INTO audit (at, actor, action) VALUES (?, 1, 'old')", (LONG_AGO,))
+    assert db.prune(0) == {}
+    assert db.audit_trail()
+
+
+def test_pruning_reports_what_it_removed(db):
+    db.execute("INSERT INTO audit (at, actor, action) VALUES (?, 1, 'a')", (LONG_AGO,))
+    db.execute("INSERT INTO audit (at, actor, action) VALUES (?, 1, 'b')", (LONG_AGO,))
+    assert db.prune(90) == {"audit": 2}
+
+
+def test_the_size_on_disk_is_reported(db):
+    assert db.size_bytes() > 0

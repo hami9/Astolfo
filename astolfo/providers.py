@@ -120,6 +120,24 @@ PRESETS: dict[str, Preset] = {
         note="pay as you go after the signup credit",
         signup="deepinfra.com/dash/api_keys",
     ),
+    "deepseek": Preset(
+        name="deepseek",
+        base_url="https://api.deepseek.com/v1",
+        key_env="DEEPSEEK_API_KEY",
+        # Both are moving aliases DeepSeek keeps pointed at the current version.
+        models=["deepseek-chat", "deepseek-reasoner"],
+        note="pay as you go, cheap",
+        signup="platform.deepseek.com/api_keys",
+    ),
+    "openai": Preset(
+        name="openai",
+        base_url="https://api.openai.com/v1",
+        key_env="OPENAI_API_KEY",
+        models=["gpt-4o-mini", "gpt-4o"],
+        vision_models=["gpt-4o-mini", "gpt-4o"],
+        note="pay as you go",
+        signup="platform.openai.com/api-keys",
+    ),
     "aimlapi": Preset(
         name="aimlapi",
         base_url="https://api.aimlapi.com/v1",
