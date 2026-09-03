@@ -1,3 +1,3 @@
 """Astolfo: a Telegram persona bot with adaptive routing and multimodal input."""
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"

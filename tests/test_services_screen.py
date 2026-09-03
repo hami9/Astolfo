@@ -30,6 +30,7 @@ def _fake_client(settings, registry=None):
     return SimpleNamespace(
         providers=providers,
         resolve=lambda model, **kwargs: model,
+        context_window=lambda model: 0,
         load_catalog=_noop,
         aclose=_noop,
         probe=_probe,

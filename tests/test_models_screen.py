@@ -68,6 +68,9 @@ class CatalogLLM:
     def resolve(self, model, **kwargs):
         return model
 
+    def context_window(self, model):
+        return next((m.context for m in self._models if m.id == model), 0)
+
     async def aclose(self):
         return None
 

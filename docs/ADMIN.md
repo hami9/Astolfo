@@ -23,7 +23,7 @@ confirm the command exists. Repeated attempts are logged and recorded.
 | **services** | Every service: keys, health, today's calls, order, on/off, and adding your own |
 | **models** | Which model does which job, chosen from the live catalog, and the tokens each spent |
 | **settings** | Any setting by name, plus switches for the common ones |
-| **groups** | Every group: activity, mute, leave, how talkative it is, daily limit |
+| **groups** | Every group: activity, mute, switch off, leave, how talkative it is, daily limit |
 | **people** | Who has spoken to it, where, blocking, and per-person limits |
 | **server** | Health, log, update, restart |
 | **data** | Row counts, the audit trail, a backup of the database |
@@ -115,6 +115,16 @@ once, which is what you want after adding the bot to several at a time.
 Being spoken to always gets an answer. Manual is "only when asked", never silence
 — that is what **mute** is for.
 
+### Switching a group off
+
+**Mute** stops the bot talking. **⏻ switch off entirely**, on a group's screen, stops it
+listening: nothing said there is read, stored, counted or answered, and the group's
+commands go unanswered too — which is why it is switched back on from the panel rather
+than from inside the group. It survives a restart.
+
+Use mute for "be quiet in here" and off for "pretend you are not in this group", when
+leaving would lose the group's settings and notes.
+
 ### Limits
 
 A daily cap on model calls can be set on one group, on one person, or on every
@@ -128,6 +138,25 @@ Services are normally tried top to bottom, failing over as each runs out. **📌
 only this** on a service pins everything to it, and nothing else is tried — if it
 is out of allowance the turn fails rather than quietly spending somewhere else.
 The list then shows a **🔀 automatic order** button to undo it.
+
+### Answering several people at once
+
+Only one reply is composed per group at a time, so two people never get two half-written
+answers. Being spoken to while that is happening waits its turn rather than being dropped,
+and the waiting is capped at two — a burst of mentions produces a few answers, not fifty.
+Unprompted chatter that arrives mid-reply is dropped, because it is background rather than
+a question.
+
+### How much it remembers
+
+History is trimmed to what the chosen model can actually hold, not to a fixed number of
+characters: the catalog reports each model's context window, and the budget is measured
+against the real size of the prompt being built. Moving a job to a small model therefore
+shortens its memory rather than overflowing it — which is what "the bot lost the thread"
+usually turns out to be.
+
+Older turns are folded into long-term notes every twelve turns, each turn folded once.
+**panel → groups → a group** shows the notes a chat has accumulated.
 
 ### When nothing can answer
 

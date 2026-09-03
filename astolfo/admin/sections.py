@@ -229,6 +229,7 @@ def chat_detail(ctx, chat_id: int) -> View:
         f"messages seen: {row['messages']}\nreplies sent: {row['replies']}\n"
         f"last activity: {ago(row['last_seen'])}\n"
         f"muted: {yes_no(row['muted'])}\n"
+        f"switched off: {yes_no(state.off)}\n"
         f"joins in: {round(chance * 100)}% of the time\n"
         f"answers: {mode} ({why})\n"
         f"daily limit: {limit}\n"
@@ -237,9 +238,21 @@ def chat_detail(ctx, chat_id: int) -> View:
         f"notes: {trim(row['notes'] or '-', 60)}"
     )
     unmute = bool(row["muted"])
+    if state.off:
+        text += (
+            "\n\n⏻ This group is switched off. Nothing said here is read, stored, "
+            "counted or answered, and commands do not work either — so it is turned "
+            "back on from this screen."
+        )
     return View(
         text,
         keyboard(
+            [
+                button(
+                    "⏻ turn back on" if state.off else "⏻ switch off entirely",
+                    "chat", chat_id, "off", 0 if state.off else 1,
+                ),
+            ],
             [
                 button("unmute" if unmute else "mute", "chat", chat_id, "mute", 0 if unmute else 1),
                 button("👥 people", "chat", chat_id, "people"),
@@ -300,6 +313,20 @@ def chat_limit(ctx, chat_id: int, raw: str) -> View:
 
     view = chat_detail(ctx, chat_id)
     view.text = f"✅ daily limit: {limit or 'follows the global one'}\n\n{view.text}"
+    return view
+
+
+def chat_off(ctx, chat_id: int, *, off: bool) -> View:
+    """Switch a group off entirely, or bring it back.
+
+    Muted stops the bot talking. This stops it listening: nothing said there is
+    read, stored, counted or answered, and its commands go unanswered too, which
+    is why the way back is this screen rather than a command in the group.
+    """
+    ctx.rt.set_chat_off(chat_id, off)
+    audit(ctx.rt, ctx.user, "chat_off" if off else "chat_on", str(chat_id))
+    view = chat_detail(ctx, chat_id)
+    view.alert = "switched off - it reads nothing there now" if off else "back on"
     return view
 
 

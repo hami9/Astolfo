@@ -1,7 +1,7 @@
 from collections import deque
 
 from astolfo.db import open_database
-from astolfo.memory import ChatState, ChatStore, update_notes
+from astolfo.memory import SUMMARY_EVERY, ChatState, ChatStore, history_budget, update_notes
 
 
 def _state(maxlen: int = 10) -> ChatState:
@@ -81,8 +81,8 @@ def test_store_lru_eviction(settings):
 
 async def test_update_notes_merges(settings, llm):
     active = settings.replace(summaries=True)
-    state = ChatState(chat_id=1, history=deque(maxlen=4))
-    for i in range(4):
+    state = ChatState(chat_id=1, history=deque(maxlen=40))
+    for i in range(SUMMARY_EVERY):
         state.add_user("reza", f"message {i}")
 
     llm.json_result = {"notes": "Reza is planning a trip"}
@@ -154,3 +154,63 @@ def test_merge_runs_does_not_mutate_the_stored_history():
         "Sara: two",
         "Hami: current",
     ]
+
+
+# -- how much history actually fits ---------------------------------------
+def test_a_small_model_gets_less_history_than_it_was_asked_for():
+    """9000 characters into an 8k model pushes the persona out of the window."""
+    budget = history_budget(9000, context_tokens=8000, overhead_chars=10000, reply_tokens=260)
+    assert budget < 9000
+    assert budget >= 1200, "never so little that there is no conversation left"
+
+
+def test_a_large_model_gets_exactly_what_was_configured():
+    budget = history_budget(9000, context_tokens=1_000_000, overhead_chars=10000, reply_tokens=900)
+    assert budget == 9000
+
+
+def test_an_unknown_model_is_trusted_with_the_configured_budget():
+    """The catalog does not name every model; the setting is the fallback."""
+    assert history_budget(9000, context_tokens=0, overhead_chars=99999, reply_tokens=900) == 9000
+
+
+def test_the_floor_holds_even_when_the_prompt_alone_overflows():
+    budget = history_budget(9000, context_tokens=4000, overhead_chars=40000, reply_tokens=900)
+    assert budget == 1200
+
+
+# -- when notes are folded ------------------------------------------------
+async def test_notes_form_long_before_the_window_is_full(settings, llm):
+    """A chat that had said 79 things used to have no long-term memory at all."""
+    active = settings.replace(summaries=True)
+    state = ChatState(chat_id=1, history=deque(maxlen=80))
+    for i in range(SUMMARY_EVERY):
+        state.add_user("reza", f"message {i}")
+
+    llm.json_result = {"notes": "Reza is planning a trip"}
+    await update_notes(llm, active, state)
+
+    assert state.notes == "Reza is planning a trip"
+    assert len(state.history) < 80, "nowhere near full"
+
+
+async def test_the_same_turns_are_not_folded_twice(settings, llm):
+    active = settings.replace(summaries=True)
+    state = ChatState(chat_id=1, history=deque(maxlen=80))
+    llm.json_result = {"notes": "something"}
+
+    for i in range(SUMMARY_EVERY):
+        state.add_user("reza", f"message {i}")
+    await update_notes(llm, active, state)
+    assert len(llm.json_calls) == 1
+
+    # Nothing new has been said, so there is nothing new to remember.
+    await update_notes(llm, active, state)
+    assert len(llm.json_calls) == 1
+
+    for i in range(SUMMARY_EVERY):
+        state.add_user("reza", f"later {i}")
+    await update_notes(llm, active, state)
+    assert len(llm.json_calls) == 2
+    sent = llm.json_calls[-1]["messages"][-1]["content"]
+    assert "message 0" not in sent, "already folded once"

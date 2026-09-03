@@ -14,7 +14,7 @@ from . import offline, participation, persona, runtime
 from .budget import STOPPED, Allowance
 from .cache import normalize
 from .llm import ChatResult, Usage, cacheable_system
-from .memory import ChatState, update_notes
+from .memory import MAX_WAITING, ChatState, composing, history_budget, update_notes
 from .persona import FAST, SEARCH, SERIOUS, THINK
 from .routing import Decision
 from .runtime import Runtime
@@ -95,6 +95,7 @@ def build_messages(
     is_group: bool,
     bot_name: str,
     model: str,
+    reply_tokens: int = 0,
 ) -> list[dict]:
     settings = rt.settings
     has_media = bundle.has_content or bool(bundle.notes)
@@ -103,21 +104,28 @@ def build_messages(
     # Free models are small and drown in the full layered prompt.
     build = persona.compact_prompt if settings.free_mode else persona.static_prompt
     static_block = build(is_group=is_group, locale=locale)
+    dynamic_block = persona.dynamic_prompt(
+        mode=decision.mode,
+        has_media=has_media,
+        notes=state.notes,
+        participants=list(state.participants),
+        bot_name=bot_name,
+        search_query=decision.query if decision.mode == SEARCH else None,
+    )
     messages: list[dict] = [
         cacheable_system(static_block, model, settings.prompt_cache_control),
-        {
-            "role": "system",
-            "content": persona.dynamic_prompt(
-                mode=decision.mode,
-                has_media=has_media,
-                notes=state.notes,
-                participants=list(state.participants),
-                bot_name=bot_name,
-                search_query=decision.query if decision.mode == SEARCH else None,
-            ),
-        },
+        {"role": "system", "content": dynamic_block},
     ]
-    messages.extend(state.prompt_history(settings.history_char_budget))
+
+    # What fits, not what was asked for: the same setting used to be sent to a
+    # model with 8k of context and one with a million.
+    budget = history_budget(
+        settings.history_char_budget,
+        context_tokens=rt.llm.context_window(rt.llm.resolve(model)),
+        overhead_chars=len(static_block) + len(dynamic_block) + len(text) + 400,
+        reply_tokens=reply_tokens or settings.max_tokens_fast,
+    )
+    messages.extend(state.prompt_history(budget))
 
     every = settings.persona_reinject_every
     if every > 0 and state.turn_count and state.turn_count % every == 0:
@@ -156,7 +164,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message.from_user.id in rt.blocked:
         return
     state = rt.store.get(chat.id)
-    if state.muted:
+    if state.off or state.muted:
+        # Dormant is stronger than muted and is checked the same way: before a
+        # single word of this message is read, stored or counted.
         return
     if chat.title and state.title != chat.title:
         state.title = chat.title
@@ -195,20 +205,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not addressed and not participation.should_join(rt, state, kind):
         return
-    if state.lock.locked():  # already composing a reply for this chat
+    if state.lock.locked() and (not addressed or state.waiting >= MAX_WAITING):
+        # Unprompted chatter arriving mid-reply is noise and is dropped; being
+        # spoken to waits its turn instead, up to a point.
+        log.info("chat %s is busy, dropping this one", chat.id)
         return
 
     if addressed and not kind and not rt.llm.usable_now():
         # Every service is resting. Answer what needs no model and skip the rest
         # rather than spending a turn discovering that again.
-        async with state.lock:
+        async with composing(state):
             state.last_reply_at = time.monotonic()
             said = offline.answer(text, locale=resolve_locale(rt, state))
             state.add_assistant(said or "")
         await send_reply(message, said or _offline_excuse(rt, state))
         return
 
-    async with state.lock:
+    async with composing(state):
         state.last_reply_at = time.monotonic()
 
         cache_key = (chat.id, normalize(text))
@@ -269,6 +282,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 is_group=is_group,
                 bot_name=(bot_user.first_name if bot_user else "Astolfo"),
                 model=params["model"],
+                reply_tokens=params["max_tokens"],
             )
             call = {
                 "model": params["model"],
