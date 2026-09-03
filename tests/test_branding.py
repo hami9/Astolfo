@@ -16,10 +16,12 @@ from tests.conftest import FakeContext, FakeMessage, make_update
 # -- fixed values ---------------------------------------------------------
 def test_the_channel_and_creator_are_exactly_these(settings):
     """Pinned on purpose: a silent change to either is a bug, not a preference."""
-    assert branding.CHANNEL == "ssh_to_mylinux"
-    assert branding.CHANNEL_URL == "https://t.me/ssh_to_mylinux"
+    assert branding.CHANNEL == "hami249"
+    assert branding.CHANNEL_URL == "https://t.me/hami249"
     assert branding.CREATOR == "ham1235i"
     assert branding.CREATOR_URL == "https://t.me/ham1235i"
+    assert branding.SITE == "hami9.ir"
+    assert branding.SITE_URL == "https://hami9.ir"
 
 
 def test_every_about_text_names_both(settings):
@@ -27,7 +29,9 @@ def test_every_about_text_names_both(settings):
         text = branding.about(locale)
         assert branding.CHANNEL_URL in text
         assert branding.CREATOR_URL in text
+        assert branding.SITE_URL in text
         assert branding.CREATOR in branding.credit(locale)
+        assert branding.SITE in branding.credit(locale)
 
 
 def test_the_credit_cannot_be_overridden_from_the_panel(settings):

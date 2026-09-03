@@ -11,6 +11,15 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.3.1] - 2026-09-03
+
+### Changed
+
+- The channel is now [@hami249](https://t.me/hami249), and [hami9.ir](https://hami9.ir)
+  is named alongside it. Both appear in `/about`, in the credit line under every
+  `/start` and `/help`, and on the panel's home screen. The pinned branding test
+  carries the new values, so a silent change to either is still a failure.
+
 ## [2.3.0] - 2026-09-03
 
 ### Added
@@ -212,7 +221,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/hami9/Astolfo/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/hami9/Astolfo/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/hami9/Astolfo/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/hami9/Astolfo/compare/v2.1.0...v2.1.1

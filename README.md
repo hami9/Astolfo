@@ -73,7 +73,7 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 Or take it as a package or an image instead of a clone:
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.0"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.1"
 astolfo                                  # same bot, on your PATH
 
 docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
@@ -290,6 +290,11 @@ and it is worth saying so in the bot's Telegram bio.
 
 Keep your keys in a git-ignored `.env` or the panel's encrypted store, never in the
 repository.
+
+## Author
+
+Built by [@ham1235i](https://t.me/ham1235i) — [hami9.ir](https://hami9.ir), channel
+[@hami249](https://t.me/hami249).
 
 ## License
 
