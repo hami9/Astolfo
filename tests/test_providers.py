@@ -280,14 +280,14 @@ def _listing(models_by_host: dict[str, list[str]], seen: list[tuple[str, str]]):
 async def test_models_a_service_no_longer_offers_are_dropped(settings, monkeypatch):
     """Preset ids go stale; the service's own listing is the authority."""
     seen: list[tuple[str, str]] = []
-    listing = {"generativelanguage.googleapis.com": ["gemini-2.5-flash-lite"]}
+    listing = {"generativelanguage.googleapis.com": ["gemini-flash-lite-latest"]}
     client = _multi(settings, monkeypatch, _listing(listing, seen), order=("google",))
     await client.load_catalog()
 
     result = await client.chat([{"role": "user", "content": "hi"}], model="anything")
 
     assert result.ok
-    assert [model for _, model in seen] == ["gemini-2.5-flash-lite"], "retired ids never asked"
+    assert [model for _, model in seen] == ["gemini-flash-lite-latest"], "retired ids never asked"
 
 
 async def test_a_service_that_lists_nothing_useful_keeps_its_configured_ids(

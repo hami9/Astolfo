@@ -46,8 +46,14 @@ PRESETS: dict[str, Preset] = {
         name="google",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         key_env="GOOGLE_API_KEY",
-        models=["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"],
-        vision_models=["gemini-2.5-flash", "gemini-2.0-flash"],
+        # The moving aliases, not pinned versions. Google retires a numbered model
+        # "for new users" while still listing it, so a pinned id keeps working for
+        # an old key and answers 404 to anyone who signed up after the cutoff -
+        # which the model listing does not reveal, because it still names it.
+        models=["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest"],
+        vision_models=["gemini-flash-latest", "gemini-flash-lite-latest"],
+        note="free tier",
+        signup="aistudio.google.com/apikey",
     ),
     "groq": Preset(
         name="groq",

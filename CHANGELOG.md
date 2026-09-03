@@ -11,6 +11,20 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.1.1] - 2026-09-03
+
+### Fixed
+
+- **Google answered 404 to every request from a new key.** The preset pinned
+  `gemini-2.5-flash`, `gemini-2.5-flash-lite` and `gemini-2.0-flash`. Google has since
+  retired those *for new users* — `2.0-flash` is gone from the listing altogether, and
+  calling `2.5-flash` returns "no longer available to new users" even though the listing
+  still names it, so startup validation cannot catch it. The preset now uses the moving
+  aliases `gemini-flash-latest`, `gemini-flash-lite-latest` and `gemini-pro-latest`,
+  which do not rot. Both flash aliases were confirmed to accept images.
+- Google gains the billing note and signup page the other services already show in the
+  panel.
+
 ## [2.1.0] - 2026-09-03
 
 Pick the model from Telegram. Free models on OpenRouter appear and disappear weekly, and
@@ -142,7 +156,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/hami9/Astolfo/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/hami9/Astolfo/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/hami9/Astolfo/compare/10753be...v2.0.0
 [1.0.0]: https://github.com/hami9/Astolfo/tree/10753be
