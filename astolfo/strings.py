@@ -81,6 +81,7 @@ EN: dict[str, str] = {
         "• stars donated today: {stars_today}\n"
         "• router shortcuts: {router_saved}\n"
         "• cost by mode: {by_mode}\n"
+        "• busiest models: {by_model}\n"
         "• by service: {by_service}\n"
         "• state: {level}"
     ),
@@ -160,6 +161,7 @@ FA: dict[str, str] = {
         "• ستارهٔ دریافتی امروز: {stars_today}\n"
         "• میان‌بُرهای مسیریاب: {router_saved}\n"
         "• هزینه بر اساس حالت: {by_mode}\n"
+        "• پرکارترین مدل‌ها: {by_model}\n"
         "• به تفکیک سرویس: {by_service}\n"
         "• وضعیت: {level}"
     ),

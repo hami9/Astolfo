@@ -21,6 +21,7 @@ confirm the command exists. Repeated attempts are logged and recorded.
 | Screen | What it is for |
 |---|---|
 | **services** | Every service: keys, health, today's calls, order, on/off, and adding your own |
+| **models** | Which model does which job, chosen from the live catalog, and the tokens each spent |
 | **settings** | Any setting by name, plus switches for the common ones |
 | **groups** | Every group: activity, mute, leave, how talkative it is, daily limit |
 | **people** | Who has spoken to it, where, blocking, and per-person limits |
@@ -58,6 +59,44 @@ key, leaving a group, blocking, updating, restarting — take a second press.
 
 Changing a key or a setting takes effect immediately. There is no restart, and
 the conversations in progress are not disturbed.
+
+### The models screen
+
+Free models on OpenRouter appear and disappear weekly, and the old way to follow
+that was to edit `.env` and restart. This screen reads the catalog from the
+service instead and lets you press one.
+
+Six jobs, each set on its own:
+
+| Job | What runs on it |
+|---|---|
+| **fast** | everyday chatter — most messages land here |
+| **think** | code, maths, comparisons, explanations |
+| **search** | grounded answers over live web results |
+| **media** | photos, GIFs, video and voice |
+| **router** | the dispatcher deciding which of the above a message is |
+| **summary** | folding old turns into long-term notes |
+
+Open a job and the list shows what the service offers, longest context first,
+with its window, whether it can see or hear, and what it charges. **Free only**
+is the default; **show every model** includes the paid ones, and the price is on
+the screen before you choose rather than on the bill afterwards. The **media** job
+only lists models that can actually read a picture. Long lists page, and **🔎
+search** filters by name.
+
+Pressing one writes the setting and it applies to the next message — no restart,
+and conversations in progress are not disturbed. **🔄 sync catalog** reads the
+listing again, for when a service has added or retired something since startup.
+
+In free mode the bot rotates the whole free pool automatically and these settings
+are what it falls back to; turn free mode off to run exactly what you picked.
+
+### What the models cost you
+
+**📊 token usage** breaks today down per model: calls, tokens in, tokens out and
+cost. On free models every cost is zero, so the number that tells them apart is
+the work — which model is actually carrying the group, and which one you chose
+and never used. `/usage` shows the busiest three in the same terms.
 
 ### How talkative it is
 

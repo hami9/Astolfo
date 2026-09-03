@@ -71,7 +71,16 @@ and `USER_DAILY_CALL_LIMIT` cap model calls per day, and **panel → groups** an
 global value. Both screens show how much of the cap is used today. A capped chat still
 gets everything in the next section for free.
 
-## 9. Answer some things for nothing
+## 9. Choose the model rather than inheriting it
+
+`/panel → models` lists what the service offers with its context window and price, and a
+press assigns one to a job. The cheapest useful setting is usually a small model on
+`fast` and `router` — which together take most of the traffic — with the expensive one
+kept for `think`. **📊 token usage** then shows what each one actually did today: calls,
+tokens in, tokens out, cost. On free models every cost is zero, so the tokens are the
+only thing that tells you which model is carrying the group.
+
+## 10. Answer some things for nothing
 
 Greetings, goodbyes, thanks, "who are you", the time, the date and plain arithmetic are
 answered from `offline.py` with no model call at all when no service is usable. It is a

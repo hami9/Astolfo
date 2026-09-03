@@ -11,6 +11,35 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.1.0] - 2026-09-03
+
+Pick the model from Telegram. Free models on OpenRouter appear and disappear weekly, and
+following that used to mean editing `.env` and restarting.
+
+### Added
+
+- **A models screen in the panel.** The catalog is read from the service and shown as a
+  list — context window, whether it can see or hear, and what it charges — and a press
+  assigns one to a job. It applies to the next message: no `.env`, no restart, and
+  conversations in progress are not disturbed.
+- **Six jobs, set on their own**: fast, think, search, media, router and summary. The
+  media job only offers models that can actually read a picture.
+- **Paid models are hidden until asked for**, and the price is on the screen before the
+  choice rather than on the bill after it.
+- **Search and paging** for a catalog that runs to dozens of free models, and **sync**
+  to read the listing again when a service adds or retires something.
+- **Tokens counted per model** — calls, tokens in, tokens out and cost, today, in the
+  panel and in `/usage`. On free models nothing costs anything, so the work done is the
+  only thing that separates one from another.
+
+### Changed
+
+- The catalog is parsed into records (`astolfo/catalog.py`) rather than a set of ids, so
+  the panel can show what a model is rather than only its name. `llm.py` reads the same
+  records for free-mode rotation.
+- `by_model` in the usage history records calls and tokens as well as cost. A file
+  written by an older version, which held a bare cost, is read and upgraded in place.
+
 ## [2.0.0] - 2026-09-02
 
 Run the whole bot from Telegram. The release that added the owner's panel, moved every
@@ -113,6 +142,7 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/hami9/Astolfo/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/hami9/Astolfo/compare/10753be...v2.0.0
 [1.0.0]: https://github.com/hami9/Astolfo/tree/10753be

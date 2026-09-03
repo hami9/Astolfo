@@ -205,6 +205,14 @@ async def usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         or "-"
     )
+    # Cost separates paid models; on free ones only the work does, so show both.
+    by_model = (
+        ", ".join(
+            f"{model.split('/', 1)[-1]} {row['calls']}× {row['prompt'] + row['completion']}t"
+            for model, row in summary["by_model"][:3]
+        )
+        or "-"
+    )
     router_hits = rt.router.cache.hits
 
     await update.effective_message.reply_text(
@@ -222,6 +230,7 @@ async def usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             stars_today=summary["stars_today"],
             router_saved=router_hits,
             by_mode=by_mode,
+            by_model=by_model,
             by_service=by_service,
             level="normal" if allowance.level == FULL else allowance.level,
         )
