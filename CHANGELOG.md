@@ -11,6 +11,63 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.0] - 2026-09-04
+
+The bot could only see one service's models and remembered nothing about how any of
+them behaved. Both are fixed here, and nothing about the replies changes: this
+release only looks.
+
+### Added
+
+- **Every service is asked what it offers, not just OpenRouter.** Twelve of the
+  thirteen carried a hardcoded list of model ids written months ago - `groq` still
+  pointed at `llama-3.3-70b-versatile` while Groq had moved on to `llama-4-scout`,
+  `qwen3-32b` and both sizes of `gpt-oss`. Every service with a key is now read, and
+  the answers merge into one catalog. The consequence you can feel is elsewhere: the
+  history budget is sized from the model's real context window, and until now that
+  window was known for one service and guessed for the other twelve.
+- **A listing that says almost nothing is read anyway.** Only OpenRouter answers with
+  prices and modalities; Groq adds the window; the rest return an id and nothing else,
+  and all of it used to be thrown away. What is missing is now inferred - the window
+  from whichever field the service uses or from a table of model families, vision from
+  the name (`vl`, `pixtral`, `llama-4`, `gemma-3`), and silence about price read
+  against whether that service actually runs a free tier. A guessed window is shown
+  with a `~` so the panel never states a guess as fact.
+- **A service that renamed everything heals itself.** Reconciling the configured ids
+  against the listing only ever removed ids, never added one. A service that had
+  renamed its whole line-up was left with a stale list answering 404 to every message;
+  it now adopts the service's own models instead. What is *called* stays deliberately
+  short - that list is walked on failover, and a service offering four hundred models
+  must not become a four-hundred-deep retry chain.
+- **panel → models → 🆕 what is new.** Which models have appeared since this install
+  started watching, with the service, the window and whether they are free. Free tiers
+  gain and lose models weekly and the only way anyone noticed used to be a 404 in the
+  log. What has been listed before is kept in the database, so "new" means new to this
+  install rather than new since the last restart.
+- **What each model and prompt actually did (schema v7).** A new `outcomes` table
+  counts, per day and per service, model, prompt shape and mode: calls, replies a
+  human answered, replies that had to be repaired, replies rejected as broken, tokens,
+  cost and a running-mean latency. Every one of those signals already existed and went
+  to a log line and nowhere else. Bounded at 500 rows a day and pruned with everything
+  else.
+
+### Changed
+
+- Whether a reply arrived usable is now judged on every turn, not only in free mode.
+  The retry is still free mode's; the evidence belongs to whichever model produced it.
+- An answer is credited to the model and prompt that earned it. Whether anybody
+  replied is only known on the following turn, and by then free mode may well have
+  moved to another model.
+- The free pool is filtered by service. Now that every service is read, an unfiltered
+  pool would have offered OpenRouter one of Google's model ids.
+
+### Fixed
+
+- A model that outputs audio as well as text - a music generator, say - is no longer
+  treated as something you can talk to.
+- Speech, transcription and image models are recognised by name, which is all there is
+  to go on in a listing that carries no modalities.
+
 ## [2.5.1] - 2026-09-04
 
 All five from one evening of real group output.
@@ -410,7 +467,11 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.3...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.6.0
+[2.5.1]: https://github.com/hami9/Astolfo/compare/v2.5.0...v2.5.1
+[2.5.0]: https://github.com/hami9/Astolfo/compare/v2.4.0...v2.5.0
+[2.4.0]: https://github.com/hami9/Astolfo/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/hami9/Astolfo/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/hami9/Astolfo/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/hami9/Astolfo/compare/v2.3.0...v2.3.1

@@ -106,10 +106,18 @@ def test_entries_that_cannot_chat_are_dropped() -> None:
     assert [m.id for m in models] == ["good/one"]
 
 
-def test_a_missing_context_length_does_not_break_the_listing() -> None:
-    models = catalog.read([entry("x/y", context_length=None), entry("z/w", context_length="odd")])
-    assert [m.context for m in models] == [0, 0]
-    assert models[0].window == "?"
+def test_a_missing_context_length_is_guessed_from_the_name() -> None:
+    """A guess is what keeps the history budget bounded; zero left it unbounded."""
+    models = catalog.read([entry("x/qwen3-32b", context_length=None)])
+    assert models[0].context == catalog.window_for("qwen3-32b")
+    assert models[0].window.startswith("~"), "shown as a guess, not as fact"
+    assert not models[0].known
+
+
+def test_a_name_nobody_recognises_gets_the_cautious_window() -> None:
+    """Guessing high overflows the model; guessing low only shortens the history."""
+    model = catalog.parse(entry("some/thing-nobody-has-heard-of", context_length=None))
+    assert model is not None and model.context == catalog.UNKNOWN_WINDOW
 
 
 def test_the_window_is_written_the_way_people_say_it() -> None:
@@ -136,3 +144,69 @@ def test_search_matches_every_word_anywhere_in_the_id_or_name() -> None:
     ]
     assert len(catalog.search(models, "")) == 3
     assert catalog.search(models, "nothing here") == []
+
+
+# -- a listing that says almost nothing ------------------------------------
+def test_a_bare_listing_is_read_instead_of_thrown_away() -> None:
+    """Twelve of the thirteen services answer like this, and all of it was dropped."""
+    models = catalog.read(
+        [
+            {"id": "llama-4-scout-17b-16e-instruct"},
+            {"id": "qwen3-32b"},
+            {"id": "openai/gpt-oss-120b"},
+        ],
+        service="groq",
+        free_tier=True,
+    )
+    assert [m.id for m in models] == [
+        "llama-4-scout-17b-16e-instruct",
+        "openai/gpt-oss-120b",
+        "qwen3-32b",
+    ]
+    assert all(m.free and m.service == "groq" and not m.known for m in models)
+
+
+def test_a_bare_listing_still_drops_what_cannot_chat() -> None:
+    """The name is the only filter left, so it has to cover the neighbours."""
+    ids = [m.id for m in catalog.read(
+        [
+            {"id": "llama-guard-4-12b"},
+            {"id": "whisper-large-v3"},
+            {"id": "playai-tts"},
+            {"id": "black-forest-labs/flux-schnell"},
+            {"id": "qwen3-32b"},
+        ],
+        service="groq",
+    )]
+    assert ids == ["qwen3-32b"]
+
+
+def test_vision_is_read_from_the_name_when_there_are_no_modalities() -> None:
+    seen = {m.id: m.vision for m in catalog.read(
+        [{"id": "llama-4-scout"}, {"id": "Qwen/Qwen2.5-VL-7B-Instruct"},
+         {"id": "pixtral-12b-latest"}, {"id": "qwen3-32b"}],
+        service="x",
+    )}
+    assert seen["llama-4-scout"] and seen["Qwen/Qwen2.5-VL-7B-Instruct"]
+    assert seen["pixtral-12b-latest"]
+    assert not seen["qwen3-32b"]
+
+
+def test_the_window_is_taken_from_whatever_the_service_calls_it() -> None:
+    """Groq says context_window, others say max_model_len; only OpenRouter says context_length."""
+    for key in ("context_length", "context_window", "max_model_len", "max_input_tokens"):
+        model = catalog.parse({"id": "x/y", key: 65536})
+        assert model is not None and model.context == 65536 and model.known, key
+    nested = catalog.parse({"id": "x/y", "top_provider": {"context_length": 32768}})
+    assert nested is not None and nested.context == 32768
+
+
+def test_silence_about_price_follows_the_service() -> None:
+    """A bare listing quotes nothing; what that means depends on where it came from."""
+    assert catalog.parse({"id": "x/y"}, free_tier=True).free
+    assert not catalog.parse({"id": "x/y"}, free_tier=False).free
+
+
+def test_a_specific_name_beats_its_family() -> None:
+    assert catalog.window_for("qwen3-coder-480b") > catalog.window_for("qwen3-32b")
+    assert catalog.window_for("llama-3-8b") < catalog.window_for("llama-3.3-70b")

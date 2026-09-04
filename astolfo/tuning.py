@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,24 @@ def bucket(length: int) -> str:
     if length <= BOUNDS[MEDIUM]:
         return MEDIUM
     return LONG
+
+
+class Credit(NamedTuple):
+    """What produced one reply, so an answer to it can be credited correctly.
+
+    Whether anybody answered is only known on the following turn, and by then
+    free mode may well have moved to another model. Carrying these four along
+    with the waiting reply is what keeps the credit on the thing that earned it.
+    """
+
+    service: str = ""
+    model: str = ""
+    variant: str = ""
+    mode: str = ""
+
+    @property
+    def known(self) -> bool:
+        return bool(self.service)
 
 
 @dataclass

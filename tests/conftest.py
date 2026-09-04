@@ -53,6 +53,7 @@ class FakeLLM:
             return ChatResult(error="boom", usage=Usage())
         return ChatResult(
             text=self.reply, model=kwargs.get("model", "fake"),
+            service="openrouter", latency_ms=42,
             citations=self.citations, usage=self.usage,
         )
 

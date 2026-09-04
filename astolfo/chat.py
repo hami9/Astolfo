@@ -45,6 +45,21 @@ ERROR_NOTICE_INTERVAL = 120.0
 # for someone's essay twice.
 QUOTE_CHARS = 140
 
+# The two shapes the system prompt comes in. Recorded against every reply, so
+# that how each one fares on each model is measured before anything chooses
+# between them.
+COMPACT = "compact"
+LAYERED = "layered"
+
+
+def prompt_variant(settings) -> str:
+    """Which of the prompt shapes a turn will use.
+
+    Free models are small and drown in the full layered prompt, so free mode
+    takes the short one. One switch, and the name of what it chose.
+    """
+    return COMPACT if settings.free_mode else LAYERED
+
 
 def model_params(settings, decision: Decision, has_media: bool) -> dict:
     """Model, temperature, token ceiling and reasoning budget for a decision."""
@@ -146,8 +161,7 @@ def build_messages(
     has_media = bundle.has_content or bool(bundle.notes)
 
     locale = resolve_locale(rt, state)
-    # Free models are small and drown in the full layered prompt.
-    compact = settings.free_mode
+    compact = prompt_variant(settings) == COMPACT
     static_block = (
         persona.compact_prompt(is_group=is_group, locale=locale)
         if compact
@@ -260,7 +274,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Whether the last thing it said landed. One shot per reply, and the only
     # signal it has that people here read what it writes.
     if state.awaiting_reply:
-        state.note_reception(answered=addressed)
+        earned = state.note_reception(answered=addressed)
+        if addressed:
+            rt.credit_answer(earned)
     if addressed:
         # Being spoken to ends the daydream rather than moving it elsewhere.
         rt.attention.release(state.chat_id)
@@ -317,6 +333,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     async with composing(state):
         state.last_reply_at = time.monotonic()
+        # Empty unless a model produces the reply: a cached or offline answer
+        # earns nothing for anybody.
+        credit = tuning.Credit()
 
         cache_key = (chat.id, normalize(text))
         if settings.response_cache and not kind:
@@ -392,28 +411,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "reasoning": params["reasoning"],
                 "web": decision.web,
             }
-            result: ChatResult = await rt.llm.chat(messages, **call)
-            rt.record(mode=decision.mode, model=result.model or params["model"],
-                      usage=result.usage, chat_id=chat.id, user_id=message.from_user.id)
-
+            variant = prompt_variant(settings)
             speakers = _speakers(state, sender, bot_user)
-            reply = _shape(result.text, speakers)
+
+            result: ChatResult = await rt.llm.chat(messages, **call)
+            shaped = _shape(result.text, speakers)
+            # Whether it arrived usable is judged for every turn now, not only in
+            # free mode: the retry below is still free mode's, but the evidence
+            # belongs to whichever model produced it.
+            fault = _fault(result, shaped, text, state)
+            rt.record(mode=decision.mode, model=result.model or params["model"],
+                      usage=result.usage, chat_id=chat.id, user_id=message.from_user.id,
+                      service=result.service, variant=variant,
+                      latency_ms=result.latency_ms, repaired=shaped.repaired, broken=fault)
+            reply = shaped.text
+
             # Small models leak the prompt or parrot the question. One more go on a
             # different model is cheaper than sending that to the chat.
-            if settings.free_mode and result.ok:
-                fault = looks_broken(reply, echoes=text, previous=_last_reply(state))
+            if settings.free_mode and fault:
+                log.info("chat %s: %s returned a reply that %s, retrying",
+                         chat.id, result.model, fault)
+                rt.llm.mark_unusable(result.model)
+                result = await rt.llm.chat(messages, **call)
+                shaped = _shape(result.text, speakers)
+                fault = _fault(result, shaped, text, state)
+                rt.record(mode=decision.mode, model=result.model or params["model"],
+                          usage=result.usage, chat_id=chat.id,
+                          user_id=message.from_user.id, service=result.service,
+                          variant=variant, latency_ms=result.latency_ms,
+                          repaired=shaped.repaired, broken=fault)
+                reply = shaped.text
                 if fault:
-                    log.info("chat %s: %s returned a reply that %s, retrying",
-                             chat.id, result.model, fault)
                     rt.llm.mark_unusable(result.model)
-                    result = await rt.llm.chat(messages, **call)
-                    rt.record(mode=decision.mode, model=result.model or params["model"],
-                              usage=result.usage, chat_id=chat.id,
-                              user_id=message.from_user.id)
-                    reply = _shape(result.text, speakers)
-                    if looks_broken(reply, echoes=text, previous=_last_reply(state)):
-                        rt.llm.mark_unusable(result.model)
-                        reply = ""
+                    reply = ""
+
+            if reply:
+                # Carried with the reply so that an answer to it, which only
+                # arrives next turn, lands on what actually produced it.
+                credit = tuning.Credit(
+                    service=result.service,
+                    model=result.model or params["model"],
+                    variant=variant,
+                    mode=decision.mode,
+                )
 
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
@@ -428,7 +468,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await _announce_failure(rt, state, message, result)
                 return
 
-        state.add_assistant(reply)
+        state.add_assistant(reply, credit)
         if not addressed:
             # It walked into this conversation on its own, so it is now the one it
             # is thinking about, and the other groups get less of it for a while.
@@ -455,15 +495,41 @@ def _speakers(state: ChatState, sender: str, bot_user) -> list[str]:
     return [name for name in names if name]
 
 
-def _shape(raw: str | None, speakers: list[str]) -> str:
+class Shaped(NamedTuple):
+    """A reply, and whether it had to be repaired to become one."""
+
+    text: str
+    repaired: bool
+
+
+def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) -> str:
+    """Why this reply is unusable, or "" when it is fine or never arrived.
+
+    Judged on every turn now, not only in free mode. The retry it feeds is still
+    free mode's, but which prompts a model breaks under is worth knowing either
+    way, and it was going to a log line and nowhere else.
+    """
+    if not result.ok:
+        return ""  # nothing came back; that is a failed call, not a bad reply
+    return looks_broken(shaped.text, echoes=echoes, previous=_last_reply(state)) or ""
+
+
+def _shape(raw: str | None, speakers: list[str]) -> Shaped:
     """Turn what the model returned into one message from one person.
 
     Shown a transcript, a small model continues it: the reply arrives wearing the
     name of whoever it is answering, and sometimes carries two or three more
     invented turns with real members' names on them. The prompt forbids both;
     this is what catches the ones that do it anyway.
+
+    It also reports whether it had to step in. That used to happen silently, and
+    it is the clearest evidence there is that a prompt does not suit a model -
+    evidence the bot was throwing away on every message.
     """
-    return polish(cut_impersonation(strip_speaker(raw or "", speakers), speakers))
+    body = raw or ""
+    stripped = strip_speaker(body, speakers)
+    cut = cut_impersonation(stripped, speakers)
+    return Shaped(polish(cut), stripped != body.lstrip() or cut != stripped)
 
 
 def _offline_excuse(rt: Runtime, state: ChatState) -> str:

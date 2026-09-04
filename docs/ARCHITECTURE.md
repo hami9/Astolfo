@@ -25,7 +25,7 @@ flowchart TB
     end
     subgraph state["State"]
         K["memory.py + learning.py<br/>history, notes, learned style"]
-        L["db.py<br/>SQLite, schema v6"]
+        L["db.py<br/>SQLite, schema v7"]
         M["crypto.py<br/>encrypted keys"]
     end
     A --> B
@@ -181,9 +181,17 @@ flowchart LR
 - **Only OpenRouter gets OpenRouter's fields.** The fallback model list, the search plugin,
   the provider-sort hint and usage accounting are gated behind `openrouter_extensions`,
   because a plain OpenAI-compatible endpoint answers an unknown field with a 400.
-- **Model ids are verified at startup.** Every non-catalog service is asked for its own
-  listing, and configured ids it does not offer are dropped with a log line naming what it
-  does offer.
+- **Every service is asked what it offers at startup.** All of them, not just the one that
+  advertises a free catalog, and the answers merge into one catalog keyed by service and
+  id. Configured ids a service no longer offers are dropped; a service that has renamed
+  its whole line-up adopts its own instead of being left with a list that 404s. What is
+  *called* stays capped at `ADOPT_AT_MOST`, because that list is walked on failover.
+- **A listing that says almost nothing is still read.** `catalog.py` infers the window
+  from `context_length`, `top_provider.context_length`, `context_window`, `max_model_len`
+  or a table of model families, and vision from the id when no modalities are declared.
+  An inferred window is marked with a `~` so a guess is never shown as fact. Silence
+  about price is read against the service: free where its offer is a standing free tier,
+  paid otherwise.
 
 `PINNED_SERVICE`, or **📌 use only this** in the panel, stops the chain on one service.
 
@@ -220,9 +228,17 @@ answer in every mode; silence is what `/mute` is for.
   about whoever is in the current turn are ever sent, so a group of twenty pays for two.
   **panel → groups → a group** shows it and can forget it.
 - **Reception** (`tuning.Reception`) — six counters per chat: how many short, medium and
-  long replies were sent, and how many of each somebody answered. It is the only feedback
-  signal the bot has, it costs nothing to collect, and it is what shortens replies in a
-  group that ignores long ones.
+  long replies were sent, and how many of each somebody answered. It costs nothing to
+  collect, and it is what shortens replies in a group that ignores long ones. The reply
+  waiting on an answer carries a `tuning.Credit` — service, model, prompt shape and mode —
+  because whether anybody replied is only known on the following turn, and in free mode
+  the model has moved on by then.
+- **Outcomes** (`db.outcomes`) — the same evidence, per model rather than per chat. Every
+  turn already produced it: whether `_shape` had to strip a speaker label or cut a
+  fabricated turn, whether `looks_broken` fired, tokens, cost, how long the call took, and
+  whether a human answered. All of it went to a log line and nowhere else. It is now
+  counted per day, service, model, prompt shape and mode, bounded at `MAX_OUTCOME_ROWS` a
+  day, and pruned with everything else.
 - **Eviction** — chats idle beyond `CHAT_TTL` are dropped, and an LRU bound caps memory at
   `MAX_CHATS`; a chat that is mid-reply is never evicted.
 
@@ -237,7 +253,7 @@ answer in every mode; silence is what `/mute` is for.
 | `usage.json` | daily cost buckets, kept 35 days |
 | `control/` | the spool the root helper watches, when it is installed |
 
-The schema is versioned with `PRAGMA user_version` (currently **3**) and migrated
+The schema is versioned with `PRAGMA user_version` (currently **7**) and migrated
 additively — a column is added only if it is not already there, so re-running a migration
 is harmless. A file written by a newer version is left alone with a warning rather than
 migrated backwards.
@@ -252,6 +268,8 @@ migrated backwards.
 | `services` | a preset override, or a service the code has never heard of |
 | `credentials` | keys: encrypted value, label, order, health, what it last said |
 | `service_usage` | requests, failures, tokens and cost per service per day |
+| `outcomes` | per day, service, model, prompt shape and mode: calls, answered, repaired, broken, tokens, cost, latency |
+| `seen_models` | every model id any service has listed, and when it first appeared |
 | `audit` | who pressed what in the panel |
 
 **Message text is never written to disk.** History lives in memory; the database keeps

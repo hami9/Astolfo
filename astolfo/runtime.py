@@ -10,13 +10,14 @@ from .budget import BudgetTracker
 from .cache import TTLCache
 from .config import Settings
 from .crypto import SecretBox
-from .db import Database, open_database
+from .db import Database, open_database, today
 from .llm import LLMClient, Usage
 from .memory import ChatStore
 from .roles import Roles
 from .routing import Router
 from .services import ServiceRegistry
 from .strings import Strings
+from .tuning import Credit
 
 log = logging.getLogger(__name__)
 
@@ -129,11 +130,52 @@ class Runtime:
         usage: Usage,
         chat_id: int | None = None,
         user_id: int | None = None,
+        service: str = "",
+        variant: str = "",
+        latency_ms: int = 0,
+        repaired: bool = False,
+        broken: str = "",
     ) -> None:
+        """Fold one model call into the running totals.
+
+        The budget has always been told what a call cost. The outcomes table is
+        the other half: which service, model and prompt produced the reply, and
+        whether it arrived usable. Without a service there is nothing to file it
+        under - the router and the failed turns - so only the spend is counted.
+        """
         if usage.total_tokens or usage.cost:
             self.budget.record(
                 mode=mode, model=model, usage=usage, chat_id=chat_id, user_id=user_id
             )
+        if not service:
+            return
+        self.db.add_outcome(
+            today(),
+            service=service,
+            model=model,
+            variant=variant,
+            mode=mode,
+            calls=1,
+            repaired=int(repaired),
+            broken=int(bool(broken)),
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cost=usage.cost,
+            latency_ms=latency_ms,
+        )
+
+    def credit_answer(self, credit: Credit) -> None:
+        """Somebody answered the bot. Credit whatever produced what they answered."""
+        if not credit.known:
+            return
+        self.db.add_outcome(
+            today(),
+            service=credit.service,
+            model=credit.model,
+            variant=credit.variant,
+            mode=credit.mode,
+            answered=1,
+        )
 
     def save(self, force: bool = False) -> None:
         self.store.save(force=force)

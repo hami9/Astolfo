@@ -16,7 +16,7 @@ from .db import Database
 from .learning import LEARN_RULES, Style
 from .llm import LLMClient, Usage
 from .text import shorten
-from .tuning import Reception
+from .tuning import Credit, Reception
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +81,9 @@ class ChatState:
     reception: Reception = field(default_factory=Reception)
     # True while the bot spoke last and nobody has answered it yet.
     awaiting_reply: bool = False
+    # What produced that waiting reply. In memory only: one pending credit is
+    # not worth a column, and losing it to a restart costs a single sample.
+    credit: Credit = field(default_factory=Credit)
     participants: OrderedDict[str, float] = field(default_factory=OrderedDict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # -inf, not 0.0: time.monotonic() starts near zero on a freshly booted host,
@@ -131,7 +134,7 @@ class ChatState:
         span = self.seen_at[-1] - self.seen_at[0]
         return len(self.seen_at) / (span / 60) if span > 1 else float(len(self.seen_at))
 
-    def add_assistant(self, text: str) -> None:
+    def add_assistant(self, text: str, credit: Credit | None = None) -> None:
         self.history.append({"role": "assistant", "content": text})
         self.turn_count += 1
         self.replies_sent += 1
@@ -140,16 +143,23 @@ class ChatState:
         if text:
             self.reception.note_sent(len(text))
             self.awaiting_reply = True
+            self.credit = credit or Credit()
 
-    def note_reception(self, *, answered: bool) -> None:
-        """Whether the last thing it said got an answer. Counted once."""
+    def note_reception(self, *, answered: bool) -> Credit:
+        """Whether the last thing it said got an answer. Counted once.
+
+        Returns what produced that reply, so the answer can be credited to the
+        model and prompt that earned it rather than to whichever runs next.
+        """
         if not self.awaiting_reply:
-            return
+            return Credit()
         self.awaiting_reply = False
+        credit, self.credit = self.credit, Credit()
         if answered:
             self.reception.note_answered()
         else:
             self.reception.note_ignored()
+        return credit
 
     def recent_texts(self, count: int = 6) -> list[str]:
         return [

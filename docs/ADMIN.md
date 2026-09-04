@@ -62,9 +62,9 @@ the conversations in progress are not disturbed.
 
 ### The models screen
 
-Free models on OpenRouter appear and disappear weekly, and the old way to follow
-that was to edit `.env` and restart. This screen reads the catalog from the
-service instead and lets you press one.
+Free models appear and disappear weekly, and the old way to follow that was to
+edit `.env` and restart. This screen reads the catalog from every service that
+has a key and lets you press one.
 
 Six jobs, each set on its own:
 
@@ -90,6 +90,24 @@ listing again, for when a service has added or retired something since startup.
 
 In free mode the bot rotates the whole free pool automatically and these settings
 are what it falls back to; turn free mode off to run exactly what you picked.
+
+Only OpenRouter answers a listing in full. Groq adds the context window; the rest
+return an id and nothing else, so the window is inferred from whichever field the
+service uses or from the model family's name, and vision is read from the name.
+An inferred window is shown with a `~` in front of it, because it is a guess and
+the screen should not pretend otherwise.
+
+### What is new
+
+**🆕 what is new** lists the models that have appeared since this install started
+watching — newest first, with the service, the window, whether it is free, and how
+long ago it showed up. Anything first seen in the last week is badged.
+
+What has been listed before is kept in the database rather than in memory, so
+"new" means new to this install and not merely new since the last restart. A model
+no service has listed for a long time is forgotten, and counts as new again if it
+comes back — which by then is what it is. **🔄 scan again** re-reads every service
+and stays on this screen so you can see what came back.
 
 ### What the models cost you
 
