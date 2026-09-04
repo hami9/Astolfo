@@ -5,7 +5,9 @@ from astolfo.text import (
     clean_name,
     format_sources,
     is_addressed,
+    normalize_input,
     polish,
+    shorten,
     split_message,
 )
 
@@ -32,6 +34,14 @@ def test_polish_strips_markdown_and_prefix():
     assert "as an AI" not in polish("as an AI language model I cannot")
 
 
+def test_polish_strips_the_transcript_notation_it_was_shown():
+    """Small models copy the shape of the prompt, arrow and all."""
+    assert polish("Astolfo → Sara: hi there") == "hi there"
+    assert polish("Astolfo -> Sara: hi there") == "hi there"
+    assert polish("آستولفو → رضا: سلام") == "سلام"
+    assert polish("Astolfo went to the shop: it was closed").startswith("Astolfo went")
+
+
 def test_polish_keeps_code_blocks():
     code = "here:\n```py\nx = 1\n```"
     assert polish(code) == code
@@ -48,6 +58,39 @@ def test_format_sources_dedupes():
     out = format_sources([cite, cite])
     assert out.count("https://a.example") == 1
     assert format_sources([]) == ""
+
+
+def test_normalize_folds_arabic_letters_into_persian():
+    """An Arabic keyboard gives ي and ك where Persian wants ی and ک."""
+    assert normalize_input("ميخوام كتاب بخونم") == "میخوام کتاب بخونم"
+    assert normalize_input("مسئلة") == "مسئله"
+
+
+def test_normalize_makes_numbers_readable():
+    assert normalize_input("قيمتش ٢٥٠٠٠ تومنه") == "قیمتش 25000 تومنه"
+    assert normalize_input("۱۴۰۳") == "1403"
+
+
+def test_normalize_drops_what_costs_tokens_and_says_nothing():
+    assert normalize_input("مُحَمَّد") == "محمد"  # diacritics
+    assert normalize_input("ميـــگم") == "میگم"  # kashida
+    assert normalize_input("سلاااااام") == "سلاام"  # a stretched word
+    assert normalize_input("heyyyyy!!!!!!!") == "heyy!!!"
+    assert normalize_input("a​b﻿c") == "abc"  # invisible marks
+
+
+def test_normalize_keeps_what_carries_meaning():
+    # The zero-width non-joiner separates Persian words; dropping it glues them.
+    assert normalize_input("می‌دونم") == "می‌دونم"
+    # Digits are not enthusiasm: 1000 must not become 100.
+    assert normalize_input("1000 تومن") == "1000 تومن"
+    assert normalize_input("") == ""
+
+
+def test_shorten_cuts_on_a_word_boundary():
+    assert shorten("the quick brown fox jumps", 20) == "the quick brown fox…"
+    assert shorten("short", 20) == "short"
+    assert len(shorten("x" * 50, 10)) == 11  # the ellipsis is the eleventh
 
 
 def _message(text="", *, entities=None, reply_to=None):
@@ -67,6 +110,9 @@ def test_is_addressed_variants():
     assert is_addressed(_message("astolfo what do you think"), bot_user)
     assert is_addressed(_message("آستولفو نظرت چیه"), bot_user)
     assert not is_addressed(_message("just chatting"), bot_user)
+    # Typed on an Arabic keyboard, or stretched out.
+    assert is_addressed(_message("آستولفو نظرت چيه"), bot_user)
+    assert is_addressed(_message("astolfooooo hey"), bot_user)
 
     reply = SimpleNamespace(from_user=SimpleNamespace(id=999))
     assert is_addressed(_message("exactly", reply_to=reply), bot_user)

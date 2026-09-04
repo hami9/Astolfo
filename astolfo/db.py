@@ -20,7 +20,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Provider keys used to live in `secrets`, one per service. They are credentials
 # now, so a service can hold more than one and each carries its own state.
@@ -33,6 +33,10 @@ KEY_ENV_TO_SERVICE = {
 }
 
 _SCHEMA = """
+-- chats.style is how this chat likes to be talked to, learned as it goes. JSON,
+-- and small: one line for the chat and one for each of a dozen people at most.
+-- Comments live above a table rather than inside it, because SQLite re-parses
+-- the body on ALTER TABLE and a trailing comment there is a syntax error.
 CREATE TABLE IF NOT EXISTS chats (
     chat_id     INTEGER PRIMARY KEY,
     type        TEXT    NOT NULL DEFAULT '',
@@ -50,7 +54,8 @@ CREATE TABLE IF NOT EXISTS chats (
     replies     INTEGER NOT NULL DEFAULT 0,
     daily_limit INTEGER NOT NULL DEFAULT 0,
     mode        TEXT    NOT NULL DEFAULT '',
-    dormant     INTEGER NOT NULL DEFAULT 0
+    dormant     INTEGER NOT NULL DEFAULT 0,
+    style       TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -206,6 +211,9 @@ class Database:
         if current and current < 4:
             # Switched off entirely, which is more than muted.
             self._add_column("chats", "dormant", "INTEGER NOT NULL DEFAULT 0")
+        if current and current < 5:
+            # The learned speaking style, per chat and per person in it.
+            self._add_column("chats", "style", "TEXT NOT NULL DEFAULT ''")
 
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
@@ -375,7 +383,7 @@ class Database:
         """Persist the per-chat knobs the bot itself changes."""
         allowed = {
             "muted", "reply_chance", "forced_mode", "locale", "notes", "title",
-            "daily_limit", "mode", "dormant",
+            "daily_limit", "mode", "dormant", "style",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
         # An empty title means "this state never learned one", not "clear it".
@@ -399,10 +407,11 @@ class Database:
         return self.query(
             """
             SELECT chat_id, notes, reply_chance, forced_mode, muted, title, locale,
-                   mode, daily_limit, dormant
+                   mode, daily_limit, dormant, style
             FROM chats
             WHERE notes <> '' OR reply_chance IS NOT NULL OR forced_mode IS NOT NULL
                OR muted = 1 OR mode <> '' OR daily_limit > 0 OR dormant = 1
+               OR style <> ''
             """
         )
 
@@ -514,11 +523,6 @@ class Database:
         """Apply the same knob to every group at once."""
         allowed = {"daily_limit", "mode", "reply_chance", "muted", "dormant"}
         fields = {k: v for k, v in columns.items() if k in allowed}
-        # An empty title means "this state never learned one", not "clear it".
-        # Writing it back erased the title Telegram gave us when the bot joined,
-        # which is how a named group ended up showing as a bare numeric id.
-        if not str(fields.get("title") or "").strip():
-            fields.pop("title", None)
         if not fields:
             return 0
         assignments = ", ".join(f"{name} = ?" for name in fields)
@@ -697,11 +701,6 @@ class Database:
             "rested_until",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
-        # An empty title means "this state never learned one", not "clear it".
-        # Writing it back erased the title Telegram gave us when the bot joined,
-        # which is how a named group ended up showing as a bare numeric id.
-        if not str(fields.get("title") or "").strip():
-            fields.pop("title", None)
         if not fields:
             return
         assignments = ", ".join(f"{column} = ?" for column in fields)

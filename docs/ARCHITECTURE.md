@@ -19,12 +19,12 @@ flowchart TB
     end
     subgraph out["Getting an answer"]
         H["llm.py<br/>failover, key rotation, retries"]
-        I["providers.py + services.py<br/>11 services, their keys and health"]
+        I["providers.py + services.py<br/>13 services, their keys and health"]
         J["offline.py<br/>answers that need no model"]
     end
     subgraph state["State"]
-        K["memory.py<br/>history and notes"]
-        L["db.py<br/>SQLite, schema v3"]
+        K["memory.py + learning.py<br/>history, notes, learned style"]
+        L["db.py<br/>SQLite, schema v5"]
         M["crypto.py<br/>encrypted keys"]
     end
     A --> B
@@ -44,41 +44,50 @@ flowchart TB
 
 1. **Filter** — other bots, blocked people and muted chats are dropped before anything
    else. An empty message with no attachment is not a message.
-2. **Remember** — every message enters the chat history exactly once, whether or not the
-   bot answers, so it hears the conversation it is sitting in. Media is stored as a short
-   placeholder, never as base64. A counting row is written for the chat and the sender.
-3. **Address check** (`text.is_addressed`) — replies to the bot, `@mentions`, text mentions
+2. **Normalise** (`text.normalize_input`) — Persian arrives in several spellings of the
+   same word, so Arabic letter forms, Arabic-Indic digits, diacritics, kashida, stretched
+   words and invisible marks are folded once, on the way in. Everything downstream — the
+   prompt, the history, the response-cache key — then sees one spelling. Nothing is
+   normalised on the way out: the chat sees what the person typed.
+3. **Remember** — every message enters the chat history exactly once, whether or not the
+   bot answers, so it hears the conversation it is sitting in. A message that replies to
+   another is stored as `Sara → Reza: ...`, which is what keeps two conversations in one
+   group from reaching the model as one. Media is stored as a short placeholder, never as
+   base64. A counting row is written for the chat and the sender.
+4. **Address check** (`text.is_addressed`) — replies to the bot, `@mentions`, text mentions
    and the name "astolfo" all count. Private chats always count.
-4. **Budget and limits** (`budget.BudgetTracker.check`) — the monthly cap, the per-chat and
+5. **Budget and limits** (`budget.BudgetTracker.check`) — the monthly cap, the per-chat and
    per-person daily call limits, then the daily spend ladder. Returns an `Allowance` that
    can block the turn or strip capabilities from it. A limit set on one group or one person
    beats the global one.
-5. **Participation** — when not addressed, `participation.should_join` applies the chat's
+6. **Participation** — when not addressed, `participation.should_join` applies the chat's
    mode, the cooldown and the reply chance. Media raises the chance.
-6. **The offline shortcut** — if the bot is addressed with plain text and no service is
+7. **The offline shortcut** — if the bot is addressed with plain text and no service is
    usable, the turn is answered from `offline.py` and ends here rather than spending a
    round-trip to learn what it already knows.
-7. **Response cache** — an identical recent message in the same chat is answered from cache
+8. **Response cache** — an identical recent message in the same chat is answered from cache
    with no model call.
-8. **Media collection** (`media.collect`) — downloads and converts attachments. A bundle
+9. **Media collection** (`media.collect`) — downloads and converts attachments. A bundle
    the current model cannot read is dropped with an instruction to say so honestly.
-9. **Routing** (`routing.Router.decide`) — heuristics first, the LLM dispatcher only when
+10. **Routing** (`routing.Router.decide`) — heuristics first, the LLM dispatcher only when
    they are unsure and the budget allows.
-10. **Prompt assembly** (`chat.build_messages`) — static persona, dynamic context, trimmed
+11. **Prompt assembly** (`chat.build_messages`) — static persona, dynamic context, trimmed
     history, optional persona reminder, current turn.
-11. **Model call** (`llm.LLMClient.chat`) — service failover, key rotation, model fallbacks,
+12. **Model call** (`llm.LLMClient.chat`) — service failover, key rotation, model fallbacks,
     retries, optional web search.
-12. **Quality guard** (free mode only) — a reply that leaks the prompt, echoes the question
+13. **Quality guard** (free mode only) — a reply that leaks the prompt, echoes the question
     or repeats the last one is not sent; the model is retired and one other is asked.
-13. **Fallback** — with no completion at all, `offline.py` is tried before an apology, so a
+14. **Fallback** — with no completion at all, `offline.py` is tried before an apology, so a
     greeting is still answered when every model is gone.
-14. **Post-processing** (`text.polish`) — strip markdown, name prefixes and assistant-isms,
+15. **Post-processing** (`text.polish`) — strip markdown, name prefixes and assistant-isms,
     split to Telegram's length limit, append sources for search answers.
-15. **Background** — fold old turns into long-term notes.
+16. **Background** — fold old turns into long-term notes, and into the learned style, in
+    the same call.
 
-Steps 7 to 13 run under a per-chat lock, so a busy chat never produces two overlapping
-replies, and the lock is released before the reply is sent. A chat already composing a
-reply drops the new message rather than queueing it.
+Steps 8 to 14 run under a per-chat lock, so a busy chat never produces two overlapping
+replies, and the lock is released before the reply is sent. Being spoken to during
+someone else's turn waits for the lock, up to `memory.MAX_WAITING`; unprompted chatter
+arriving mid-reply is dropped, because it is background rather than a question.
 
 ## Prompt structure
 
@@ -88,10 +97,16 @@ The prompt is deliberately split in two so that providers can cache the expensiv
 messages[0]  system   static persona   identity, voice, canon, group rules, language,
                                        banned behaviour, meta answers, truthfulness,
                                        few-shot examples, output rules   (~10 KB, stable)
-messages[1]  system   dynamic context  response mode, media rules, participants, notes
-messages[2:] history  trimmed to HISTORY_CHAR_BUDGET characters
+messages[1]  system   dynamic context  response mode, media rules, learned style,
+                                       notes, reply-arrow notation
+messages[2:] history  trimmed to what the chosen model can hold
 messages[-1] user     current turn (text, or text + image/audio parts)
 ```
+
+The current turn carries the thread. `Sara → Reza: yeah it works now` names who is being
+answered, and a short quote of the message being replied to follows it in brackets — after
+the message rather than before it, because the last thing a small model reads is the thing
+it answers. Neither is sent when the message replies to nothing.
 
 `messages[0]` is byte-identical for every turn of the same chat type and locale, which is
 what makes provider-side prefix caching effective. For Anthropic models an explicit
@@ -99,7 +114,13 @@ what makes provider-side prefix caching effective. For Anthropic models an expli
 own. A test asserts the static block does not change between turns.
 
 Free mode swaps in a compact persona under a quarter of the size: a 9-to-30B model drowns
-in the full one and starts quoting the scaffolding back.
+in the full one and starts quoting the scaffolding back. It gets the short media rules for
+the same reason.
+
+Only the lines that apply to this turn are sent. The learned style contributes the chat's
+own line plus one line each for the sender and whoever they are answering, never the whole
+book; the list of people recently talking is dropped once there is a transcript, because
+every line of it already starts with a name.
 
 ## Response modes
 
@@ -170,12 +191,21 @@ answer in every mode; silence is what `/mute` is for.
 
 ## Memory
 
-- **Short term** — a bounded deque per chat, trimmed to a character budget when building a
-  prompt so a pasted wall of text cannot blow up input cost. Consecutive turns from the
-  same role are merged, so a run of group messages reads as overheard conversation rather
-  than a queue of questions.
-- **Long term** — once history is full, the oldest turns are folded into notes (regulars,
-  running jokes, ongoing situations) by a cheap model in the background.
+- **Short term** — a bounded deque per chat, trimmed when building a prompt to what the
+  chosen model can actually hold: the catalog reports each model's context window and the
+  budget is measured against the real size of the prompt being built, so moving a job to a
+  small model shortens its memory instead of overflowing it. A single turn is clipped to
+  `MAX_TURN_CHARS` in the prompt — one pasted wall of text used to fill the budget on its
+  own and push every other turn out, which reads exactly like the bot losing the thread.
+  Consecutive turns from the same role are merged, so a run of group messages reads as
+  overheard conversation rather than a queue of questions.
+- **Long term** — every twelve turns, the oldest unfolded ones become notes (regulars,
+  running jokes, ongoing situations) via a cheap model in the background.
+- **Learned style** (`learning.py`) — the same background call also reports how this chat
+  likes to be talked to: one line for the chat, one for each of a dozen people at most,
+  about manner rather than facts. It rides in the chat's row as JSON and only the lines
+  about whoever is in the current turn are ever sent, so a group of twenty pays for two.
+  **panel → groups → a group** shows it and can forget it.
 - **Eviction** — chats idle beyond `CHAT_TTL` are dropped, and an LRU bound caps memory at
   `MAX_CHATS`; a chat that is mid-reply is never evicted.
 

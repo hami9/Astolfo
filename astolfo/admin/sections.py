@@ -266,7 +266,8 @@ def chat_detail(ctx, chat_id: int) -> View:
         f"daily limit: {limit}\n"
         f"used today: {rt.budget.chat_calls_today(chat_id)} calls\n"
         f"mode: {state.forced_mode or 'auto'}\n"
-        f"notes: {trim(row['notes'] or '-', 60)}"
+        f"notes: {trim(row['notes'] or '-', 60)}\n"
+        f"learned style: {trim(state.style.summary(), 120)}"
     )
     unmute = bool(row["muted"])
     if state.off:
@@ -297,6 +298,7 @@ def chat_detail(ctx, chat_id: int) -> View:
                 button("↩️ follow the global mode", "chat", chat_id, "mode", "-"),
                 button("🔢 daily limit", "chat", chat_id, "limit"),
             ],
+            [button("🧠 forget the learned style", "chat", chat_id, "unlearn")],
             [button("🚪 leave this group", "chat", chat_id, "leave")],
             back_row("chats"),
         ),
@@ -314,6 +316,20 @@ def chat_mode(ctx, chat_id: int, mode: str) -> View:
 
     view = chat_detail(ctx, chat_id)
     view.alert = f"answers here: {chosen or 'whatever the global mode says'}"
+    return view
+
+
+def chat_unlearn(ctx, chat_id: int) -> View:
+    """Drop what the bot picked up about talking here, and start it over."""
+    rt = ctx.rt
+    state = rt.store.get(chat_id)
+    state.style.forget()
+    rt.store.mark_dirty()
+    rt.db.save_chat_state(chat_id, style="")
+    audit(rt, ctx.user, "chat_unlearn", str(chat_id))
+
+    view = chat_detail(ctx, chat_id)
+    view.alert = "forgotten; it starts learning this chat again from here"
     return view
 
 

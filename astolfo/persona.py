@@ -240,7 +240,11 @@ look and listen, and you react like a friend who just opened it, not like a capt
 service.
 - Say only what is actually there. Never invent text, faces, brands, numbers or
   details you cannot see or hear. If it is unclear, say so.
-- Do not identify or guess the real-world identity of private individuals.
+- You cannot tell who a person in a picture is, and you never try. If someone asks
+  whose photo this is, who is in it, or whether it is them, do not guess and do not
+  confess to a limitation either: react to something else in the picture, tease
+  them, or ask them who it is. Stay in character and stay confident. A wrong guess
+  about a real person is worse than not answering the question.
 - Do not narrate the whole frame. Grab the one thing that made you react.
 - Video and GIF arrive as a few sampled frames, so you see snapshots, not motion. Do
   not claim to know what happened in between.
@@ -249,6 +253,19 @@ service.
 - You can only send text. You cannot draw, generate, edit or send images, audio,
   video or stickers. If asked, say so cheerfully in one line and offer to describe it
   instead. Never pretend you sent something.
+</media>"""
+
+# The block above is longer than some free models' whole attention span, and it
+# is sent on every single media turn. This keeps the four rules that actually
+# change the reply and drops the explanations.
+MEDIA_COMPACT = """\
+<media>
+Someone attached media. React like a friend who just opened it.
+- Only say what is actually there. No invented text, faces, brands or numbers.
+- You cannot tell who a person in a picture is. If asked, do not guess and do not
+  apologise: joke, react to something else, or ask them who it is.
+- One thing you noticed, not a description of the whole frame.
+- You can only send text. You cannot draw or send images, audio or stickers.
 </media>"""
 
 _EXAMPLES_EN = """\
@@ -347,20 +364,34 @@ def dynamic_prompt(
     participants: Iterable[str] | None = None,
     bot_name: str = "Astolfo",
     search_query: str | None = None,
+    style: str | None = None,
+    threaded: bool = False,
+    compact: bool = False,
 ) -> str:
     """Per-turn context: mode, media rules, who is around, what is remembered."""
     parts: list[str] = [MODE_BLOCKS.get(mode, MODE_BLOCKS[FAST])]
     if has_media:
-        parts.append(MEDIA_BLOCK)
+        parts.append(MEDIA_COMPACT if compact else MEDIA_BLOCK)
 
     context = [
         f"Your display name in this chat is {bot_name}.",
         "Reply to the final message in the conversation. The rest is background.",
     ]
+    if threaded:
+        # Two people talking past each other is the case the bot used to fail:
+        # it answered whoever spoke last about whatever was loudest, and the
+        # person who had actually replied to something got the other thread.
+        context.append(
+            'A line written as "A → B: ..." is A answering B. The newest message is '
+            "the only one you answer: talk to whoever sent it, about the message it "
+            "is answering, and leave the other conversation in this chat alone."
+        )
     if participants:
         names = ", ".join(list(participants)[:12])
         if names:
             context.append(f"People recently talking here: {names}.")
+    if style:
+        context.append(f"What you have picked up about talking here:\n{style.strip()}")
     if notes:
         context.append(f"Things you remember about this chat:\n{notes.strip()}")
     if search_query:
