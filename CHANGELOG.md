@@ -11,6 +11,68 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.4.0] - 2026-09-04
+
+### Fixed
+
+- **Persian input made it sound stupid.** A phone keyboard produces several spellings of
+  the same word — Arabic ي and ك where Persian wants ی and ک, diacritics and kashida that
+  survive a copy-paste, Arabic-Indic digits, stretched words, invisible marks — and a
+  small model reads each variant as something else. Input is now folded into one spelling
+  on its way to the model, which also costs fewer tokens. Nothing is changed on the way
+  out: the chat still sees exactly what was typed. Being called by name works through the
+  same fold, so a stretched or Arabic-typed "آستولفو" reaches it.
+- **Focus jumped off the person being replied to.** Telegram says which message a reply is
+  aimed at and the prompt never carried it, so two people talking at once arrived as one
+  flat transcript and the answer drifted to whoever was loudest. A turn now reaches the
+  model as `Sara → Reza`, with a short quote of what Reza had said, and the history keeps
+  the arrow so the thread survives into later turns.
+- **A pasted wall of text wiped the conversation.** One long message could fill the whole
+  history budget on its own and push every other turn out of the window, which reads
+  exactly like the bot losing the thread. A single turn is now clipped in the prompt; what
+  is stored is untouched.
+- **Notes and the learned style could be lost on a restart.** The background fold changed
+  them in memory without marking the store dirty, so they were only written if an ordinary
+  message happened to follow.
+- **A dropped column broke the schema.** A comment inside the `chats` table body made
+  SQLite reject `ALTER TABLE ... DROP COLUMN`, because it re-parses the body. Table
+  comments now live above the table.
+- Two copies of the title guard had been pasted into `set_every_chat` and
+  `update_credential`, neither of which has a title column.
+
+### Added
+
+- **It learns how to talk to each group and each person.** One line for the chat — which
+  language and register, how long a message they tolerate, what falls flat — and one line
+  each for up to a dozen regulars, about manner rather than facts. It is folded out of the
+  summary call that already runs every twelve turns, so it costs no extra request, and
+  only the lines about whoever is in the current turn are sent: a group of twenty pays for
+  two. **panel → groups → a group** shows it, and **🧠 forget the learned style** clears it.
+- **`/about` says where the code is, and what the bot can and cannot do.** The licence,
+  the repository, and that anyone can run their own copy with their own bot token and
+  their own key — plus a plain list of what it does and what it will not do (text only,
+  no identifying people in pictures, no seeing a chat it is not in, no pretending to know).
+  `/source` gives that half on its own.
+- **The info deliberately does not say which model it is running or whose API pays for
+  it.** That is the operator's business, it changes week to week, and a whole chat does
+  not need it. `/status` still reports both, to admins. A test asserts no provider or
+  model name appears in either text.
+- **It stops guessing who is in a photo.** A guess about a real person is wrong often
+  enough not to be worth having. Asked whose photo it is, it now dodges in character —
+  reacts to something else, teases, asks who it is — rather than guessing or announcing a
+  limitation.
+
+### Changed
+
+- **The token optimiser again.** Small models get a short form of the media rules (the
+  dynamic block halves on a media turn), the list of people recently talking is dropped
+  once there is a transcript that already names them on every line, and the normalisation
+  above removes characters that were paid for and understood by nobody.
+- A reply that comes back wearing the transcript notation it was shown
+  (`Astolfo → Sara: ...`) is stripped like any other name prefix.
+- The Persian "out of credit" line named the provider's account to the whole chat; it now
+  says only that the API account needs topping up, as the English one always did.
+
 ## [2.3.3] - 2026-09-04
 
 ### Fixed

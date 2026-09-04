@@ -202,6 +202,19 @@ async def test_a_group_can_be_muted_from_the_panel(owned):
     assert owned.db.chat(-100)["muted"] == 1
 
 
+async def test_a_learned_style_is_shown_and_can_be_forgotten(owned):
+    _busy_group(owned)
+    owned.store.get(-100).style.learn(chat="Finglish", people={"Reza": "only jokes"})
+
+    query, _ = await _press(owned, "ap:chat:-100")
+    assert "Finglish" in query.edits[0]
+
+    query, _ = await _press(owned, "ap:chat:-100:unlearn")
+    assert not owned.store.get(-100).style
+    assert owned.db.chat(-100)["style"] == ""
+    assert "nothing learned yet" in query.edits[0]
+
+
 async def test_leaving_a_group_needs_a_second_press(owned):
     _busy_group(owned)
     bot = FakeBot()

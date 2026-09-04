@@ -13,7 +13,12 @@ from telegram.constants import ChatAction
 TELEGRAM_MAX_LEN = 3900  # safety margin below the real 4096 limit
 DEFAULT_ALIASES = ("astolfo", "آستولفو", "استولفو")
 
-_NAME_PREFIX = re.compile(r"^\s*(astolfo|آستولفو|استولفو)\s*[:：\-–]\s*", re.I)
+# The optional arrow is the transcript notation the prompt uses for a reply
+# ("Sara → Reza: ..."). Small models copy the shape of what they were shown, so
+# "Astolfo → Sara:" comes back often enough to be worth stripping.
+_NAME_PREFIX = re.compile(
+    r"^\s*(astolfo|آستولفو|استولفو)\s*(?:(?:→|->)\s*[^\n:]{1,32})?\s*[:：\-–]\s*", re.I
+)
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _UNDERLINE = re.compile(r"__(.+?)__", re.S)
 _HEADER = re.compile(r"^\s{0,3}#{1,6}\s+", re.M)
@@ -32,6 +37,69 @@ _PROMPT_LEAK = re.compile(
     re.I,
 )
 _ROLE_PREFIX = re.compile(r"^\s*(system|user|assistant)\s*:", re.I)
+
+# Persian typed on a phone arrives in several spellings of the same word: an
+# Arabic keyboard gives ي and ك where Persian wants ی and ک, diacritics and
+# kashida survive copy-paste, and Arabic-Indic digits are a different codepoint
+# from the ones a model was mostly trained on. A small model reads each variant
+# as a different token, which is exactly when it starts sounding stupid.
+_ARABIC_FORMS = str.maketrans(
+    {
+        "ي": "ی", "ى": "ی", "ﻯ": "ی", "ﻰ": "ی",
+        "ك": "ک", "ﻙ": "ک", "ﻚ": "ک",
+        "ة": "ه", "ۀ": "ه",
+        "أ": "ا", "إ": "ا", "ٱ": "ا",
+        "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+        "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+        "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+        "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+        # Persian punctuation stays as it is: it is part of writing Persian, and
+        # replacing it would nudge the reply into the wrong register.
+        # Kashida and the invisible marks a phone keyboard sprinkles in. The
+        # zero-width non-joiner is deliberately absent: it separates words in
+        # Persian, so dropping it would glue them together.
+        "ـ": "", "​": "", "‍": "", "‎": "", "‏": "",
+        "﻿": "", "­": "",
+    }
+)
+_HARAKAT = re.compile("[ً-ْٰـ]")
+_ZWNJ_RUN = re.compile("‌{2,}")
+# Three of the same letter is someone stretching a word; the meaning is in the
+# first two. Four of anything else is decoration. Digits are left alone, because
+# 1000 is a number rather than an enthusiastic 100.
+_LETTER_RUN = re.compile(r"([^\W\d_])\1{2,}", re.UNICODE)
+_OTHER_RUN = re.compile(r"([^\w\s])\1{3,}", re.UNICODE)
+_SPACES = re.compile(r"[ \t ]{2,}")
+_MANY_LINES = re.compile(r"\n{3,}")
+
+
+def normalize_input(text: str) -> str:
+    """Fold the many spellings of a Persian message into one.
+
+    This runs on the way to the model, never on the way back: what the chat sees
+    is what the person typed. It is also the cheapest token saving there is,
+    because a stretched "سلاااااام" and a kashida are tokens paid for and
+    understood by nobody.
+    """
+    body = (text or "").strip()
+    if not body:
+        return ""
+    body = body.translate(_ARABIC_FORMS)
+    body = _HARAKAT.sub("", body)
+    body = _ZWNJ_RUN.sub("‌", body)
+    body = _LETTER_RUN.sub(r"\1\1", body)
+    body = _OTHER_RUN.sub(r"\1\1\1", body)
+    body = _SPACES.sub(" ", body)
+    return _MANY_LINES.sub("\n\n", body).strip()
+
+
+def shorten(text: str, limit: int) -> str:
+    """Cut to a length a model will not choke on, on a word boundary if there is one."""
+    body = " ".join((text or "").split())
+    if len(body) <= limit:
+        return body
+    cut = body.rfind(" ", 0, limit)
+    return body[: cut if cut > limit // 2 else limit].rstrip() + "…"
 
 
 def clean_name(raw: str | None) -> str:
@@ -95,7 +163,9 @@ def is_addressed(
     if reply and reply.from_user and bot_user and reply.from_user.id == bot_user.id:
         return True
 
-    text = (message.text or message.caption or "").lower()
+    # Normalised, so being called by name still works when the name is typed on
+    # an Arabic keyboard or stretched out.
+    text = normalize_input(message.text or message.caption or "").lower()
     if bot_user and bot_user.username and f"@{bot_user.username.lower()}" in text:
         return True
 

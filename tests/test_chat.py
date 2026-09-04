@@ -209,6 +209,81 @@ async def test_persona_reminder_is_reinjected(rt, llm):
     assert any(m.get("content") == REMINDER for m in llm.calls[0]["messages"])
 
 
+def _reply_to(text, *, name="Reza", user_id=1):
+    """A message to hang a reply off, as Telegram delivers it."""
+    return FakeMessage(text, name=name, user_id=user_id)
+
+
+async def test_a_reply_names_who_is_being_answered(rt, llm):
+    """Two conversations in one group used to reach the model as one transcript."""
+    earlier = _reply_to("did you fix the build?", name="Reza", user_id=1)
+    message = FakeMessage(
+        "astolfo yeah it works now", name="Sara", user_id=2, reply_to=earlier
+    )
+    await run(rt, message)
+
+    head = llm.calls[0]["messages"][-1]["content"]
+    assert "Sara → Reza:" in head
+    assert 'Reza had said: "did you fix the build?"' in head
+
+
+async def test_the_reply_arrow_stays_in_the_history(rt, llm):
+    earlier = _reply_to("what time?", name="Reza")
+    await run(rt, FakeMessage("astolfo nine", name="Sara", user_id=2, reply_to=earlier))
+    assert rt.store.get(-100).history[0]["content"].startswith("Sara → Reza:")
+
+
+async def test_a_reply_to_the_bot_is_marked_as_such(rt, llm):
+    bot = FakeBot()
+    earlier = FakeMessage("hello!", name="Astolfo", user_id=999, is_bot=True)
+    message = FakeMessage("and you?", name="Sara", user_id=2, reply_to=earlier)
+    await run(rt, message, bot)
+
+    head = llm.calls[0]["messages"][-1]["content"]
+    assert "Sara → you:" in head
+
+
+async def test_a_quoted_essay_is_cut_before_it_reaches_the_model(rt, llm):
+    earlier = _reply_to("x " * 400, name="Reza")
+    await run(rt, FakeMessage("astolfo ok", name="Sara", user_id=2, reply_to=earlier))
+
+    head = llm.calls[0]["messages"][-1]["content"]
+    assert len(head) < 400 and head.endswith('…")')
+
+
+async def test_the_arrow_is_explained_only_when_one_is_there(rt, llm):
+    await run(rt, FakeMessage("astolfo hey"))
+    assert "→" not in llm.calls[0]["messages"][1]["content"]
+
+    earlier = _reply_to("morning", name="Reza")
+    await run(rt, FakeMessage("astolfo hi", name="Sara", user_id=2, reply_to=earlier))
+    assert "A → B" in llm.calls[1]["messages"][1]["content"]
+
+
+async def test_persian_is_normalised_on_the_way_to_the_model(rt, llm):
+    await run(rt, FakeMessage("astolfo ميـــگم ٢٠٠ تومنه"))
+    head = llm.calls[0]["messages"][-1]["content"]
+    assert "میگم 200 تومنه" in head
+    assert "ـ" not in head and "٢" not in head
+
+
+async def test_what_it_learned_about_this_chat_reaches_the_prompt(rt, llm):
+    state = rt.store.get(-100)
+    state.style.learn(chat="Finglish and short", people={"Reza": "only jokes"})
+    await run(rt, FakeMessage("astolfo hey"))
+
+    dynamic = llm.calls[0]["messages"][1]["content"]
+    assert "Finglish and short" in dynamic
+    assert "Reza: only jokes" in dynamic
+
+
+async def test_a_style_learned_about_someone_else_is_not_sent(rt, llm):
+    state = rt.store.get(-100)
+    state.style.learn(people={"Sara": "asks real questions"})
+    await run(rt, FakeMessage("astolfo hey", name="Reza"))
+    assert "asks real questions" not in llm.calls[0]["messages"][1]["content"]
+
+
 async def test_history_is_trimmed_by_char_budget(rt, llm):
     rt.settings = rt.settings.replace(history_char_budget=200)
     state = rt.store.get(-100)

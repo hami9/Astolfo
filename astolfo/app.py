@@ -216,6 +216,7 @@ def build_application(settings: Settings, database=None, box=None) -> Applicatio
         ("start", commands.start),
         ("help", commands.help_),
         ("about", commands.about),
+        ("source", commands.source),
         ("reset", commands.reset),
         ("chance", commands.chance),
         ("mode", commands.mode),

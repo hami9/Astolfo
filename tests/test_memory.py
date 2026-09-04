@@ -1,7 +1,14 @@
 from collections import deque
 
 from astolfo.db import open_database
-from astolfo.memory import SUMMARY_EVERY, ChatState, ChatStore, history_budget, update_notes
+from astolfo.memory import (
+    MAX_TURN_CHARS,
+    SUMMARY_EVERY,
+    ChatState,
+    ChatStore,
+    history_budget,
+    update_notes,
+)
 
 
 def _state(maxlen: int = 10) -> ChatState:
@@ -71,6 +78,41 @@ def test_store_persists_settings_but_not_messages(settings):
     assert len(reloaded.history) == 0
 
 
+def test_a_pasted_wall_of_text_cannot_evict_the_conversation():
+    """One long paste used to fill the budget on its own and drop every other turn."""
+    state = _state(20)
+    state.add_user("reza", "so about the trip")
+    state.add_user("sara", "x" * 4000)
+    state.add_user("reza", "anyway")
+
+    selected = state.prompt_history(char_budget=2000)
+    body = "\n".join(turn["content"] for turn in selected)
+    assert "so about the trip" in body, "the earlier turn survived the paste"
+    assert len(body) < 2 * MAX_TURN_CHARS + 200
+    assert "…" in body
+    assert len(state.history[1]["content"]) == 4006, "the stored turn is untouched"
+
+
+def test_a_reply_marks_who_it_answers():
+    state = _state()
+    state.add_user("Sara", "yeah", answering="Reza")
+    assert state.history[-1]["content"] == "Sara → Reza: yeah"
+
+    state.add_user("Sara", "hm", answering="Sara")
+    assert state.history[-1]["content"] == "Sara: hm", "answering yourself is not a thread"
+
+
+def test_style_survives_a_restart(settings):
+    store = ChatStore(settings, open_database(settings.data_dir))
+    store.get(202).style.learn(chat="Finglish", people={"Reza": "only jokes"})
+    store.mark_dirty()
+    store.save()
+
+    reloaded = ChatStore(settings, open_database(settings.data_dir)).get(202)
+    assert reloaded.style.chat == "Finglish"
+    assert reloaded.style.note_for("Reza") == "only jokes"
+
+
 def test_store_lru_eviction(settings):
     small = settings.replace(max_chats=3)
     store = ChatStore(small, open_database(small.data_dir))
@@ -91,6 +133,38 @@ async def test_update_notes_merges(settings, llm):
     assert state.notes == "Reza is planning a trip"
     assert usage.total_tokens > 0
     assert state.summarizing is False
+
+
+async def test_one_call_learns_the_notes_and_the_style(settings, llm):
+    """Learning how a chat talks must not cost a second request per fold."""
+    active = settings.replace(summaries=True)
+    state = ChatState(chat_id=1, history=deque(maxlen=40))
+    for i in range(SUMMARY_EVERY):
+        state.add_user("reza", f"message {i}")
+
+    llm.json_result = {
+        "notes": "Reza is planning a trip",
+        "style": "Finglish, short messages",
+        "people": {"Reza": "only jokes"},
+    }
+    await update_notes(llm, active, state)
+
+    assert len(llm.json_calls) == 1
+    assert state.notes == "Reza is planning a trip"
+    assert state.style.chat == "Finglish, short messages"
+    assert state.style.note_for("Reza") == "only jokes"
+
+
+async def test_a_summary_without_a_style_leaves_the_old_one_alone(settings, llm):
+    active = settings.replace(summaries=True)
+    state = ChatState(chat_id=1, history=deque(maxlen=40))
+    state.style.learn(chat="Finglish")
+    for i in range(SUMMARY_EVERY):
+        state.add_user("reza", f"message {i}")
+
+    llm.json_result = {"notes": "something", "style": "", "people": "not a dict"}
+    await update_notes(llm, active, state)
+    assert state.style.chat == "Finglish"
 
 
 async def test_update_notes_skipped_when_history_is_short(settings, llm):

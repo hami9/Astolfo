@@ -165,8 +165,60 @@ against the real size of the prompt being built. Moving a job to a small model t
 shortens its memory rather than overflowing it — which is what "the bot lost the thread"
 usually turns out to be.
 
+A single pasted wall of text is clipped in the prompt rather than allowed to fill the
+whole budget, so one long message cannot push the rest of the conversation out of the
+window.
+
 Older turns are folded into long-term notes every twelve turns, each turn folded once.
 **panel → groups → a group** shows the notes a chat has accumulated.
+
+### How it learns to talk to you
+
+The same background call that writes the notes also writes down *how* this chat likes to
+be talked to: one line for the group — which language and register, how long a message
+they tolerate, what falls flat — and one line each for up to a dozen regulars. It is about
+manner, never about facts, and it costs no extra model call.
+
+Only what applies is sent: the group's line plus a line for whoever just spoke and whoever
+they were answering. A group of twenty people therefore pays for two lines, not twenty.
+
+**panel → groups → a group** shows it under *learned style*, and **🧠 forget the learned
+style** clears it so the bot starts over — useful after the group changes character, or if
+it has picked up a habit you do not like.
+
+### Keeping the thread when two people are talking
+
+Telegram knows which message a reply is aimed at, and the bot now passes that on: the turn
+reaches the model as `Sara → Reza`, with a short quote of what Reza had said. Two
+conversations running at once in one group used to arrive as a single flat transcript, so
+the reply drifted to whoever was loudest rather than to the person who was replied to.
+
+### Persian input
+
+Persian arrives in several spellings of the same word — an Arabic keyboard gives ي and ك
+where Persian wants ی and ک, diacritics and kashida survive a copy-paste, and Arabic-Indic
+digits are different characters from the ones a model mostly saw in training. Small models
+read each variant as something else, which is when the bot starts sounding stupid. Input is
+folded into one spelling on its way to the model; the chat still sees exactly what was
+typed.
+
+### What the group is told about the bot
+
+`/about` names the repository and the licence, says anyone can run their own copy, and
+lists plainly what the bot can and cannot do. `/source` is that half on its own.
+
+Neither says which model it is running on or whose API is paying for it. That changes
+week to week, it is nobody's business but yours, and telling a whole chat is an invitation
+to argue about it — the persona already dodges the question when someone asks directly.
+`/status` still reports the model and the service, but only to an admin of the chat; in a
+private chat with you it reports everything.
+
+### Photos of people
+
+It can see a picture but it cannot tell who is in one, and it does not try — a guess about
+a real person is wrong often enough that the answer is not worth having. Asked whose photo
+it is, it dodges in character rather than announcing a limitation: reacts to something else
+in the frame, teases, or asks who it is.
 
 ### When nothing can answer
 

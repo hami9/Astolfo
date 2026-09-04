@@ -26,6 +26,7 @@ EN: dict[str, str] = {
         "/usage — what I've spent today\n"
         "/donate — feed me with Telegram Stars 🥕\n"
         "/status — current settings\n"
+        "/source — my code, and what I can and can't do\n"
         "/reset — forget this chat's history and notes\n"
         "/mute and /unmute — quiet me down or bring me back"
     ),
@@ -64,11 +65,14 @@ EN: dict[str, str] = {
         "• messages in memory: {history}/{max_history}\n"
         "• long-term notes: {notes}\n"
         "• replies here: {replies}\n"
-        "• mode: {billing}\n"
-        "• fast model: {model_fast}\n"
-        "• think model: {model_think}\n"
         "• web search: {web}\n"
         "• voice/video analysis: {ffmpeg}"
+        "{engine}"
+    ),
+    "status_engine": (
+        "\n• running on: {billing}\n"
+        "• fast model: {model_fast}\n"
+        "• think model: {model_think}"
     ),
     "usage": (
         "Credit usage:\n"
@@ -107,6 +111,7 @@ FA: dict[str, str] = {
         "/usage — مصرف امروز\n"
         "/donate — بهم هویج بده با Telegram Stars 🥕\n"
         "/status — وضعیت فعلی\n"
+        "/source — کدهام، و چیکارا بلدم و بلد نیستم\n"
         "/reset — پاک کردن حافظهٔ این چت\n"
         "/mute و /unmute — ساکتم کن / برم گردون"
     ),
@@ -125,7 +130,7 @@ FA: dict[str, str] = {
     "unmuted": "برگشتممم! 🎉 دلتون تنگ شده بود نه؟",
     "error_reply": "اوه... مغزم یه لحظه رفت رو ماه و برنگشت 😵‍💫 یه بار دیگه بگو؟",
     "budget_stopped": "سهمیهٔ امروزم تموم شد~ فردا برمی‌گردم! 💸",
-    "no_credit": "کردیت جادوم ته کشید 😭 یکی حساب OpenRouter رو شارژ کنه!",
+    "no_credit": "کردیت جادوم ته کشید 😭 یکی حساب ای‌پی‌آی رو شارژ کنه!",
     "donate_title": "به آستولفو هویج بده",
     "donate_description": (
         "مغز ربات رو روشن نگه می‌داره~ هر ستاره مستقیم می‌ره پای قبض API. "
@@ -144,11 +149,14 @@ FA: dict[str, str] = {
         "• پیام‌های تو حافظه: {history}/{max_history}\n"
         "• یادداشت بلندمدت: {notes}\n"
         "• جواب‌هایی که اینجا دادم: {replies}\n"
-        "• حالت: {billing}\n"
-        "• مدل سریع: {model_fast}\n"
-        "• مدل فکری: {model_think}\n"
         "• سرچ وب: {web}\n"
         "• تحلیل ویس/ویدیو: {ffmpeg}"
+        "{engine}"
+    ),
+    "status_engine": (
+        "\n• روی چی می‌چرخم: {billing}\n"
+        "• مدل سریع: {model_fast}\n"
+        "• مدل فکری: {model_think}"
     ),
     "usage": (
         "مصرف کردیت:\n"

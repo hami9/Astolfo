@@ -85,3 +85,31 @@ def test_group_rules_say_not_to_answer_the_backlog():
 
 def test_dynamic_prompt_points_at_the_final_message():
     assert "reply to the final message" in _flat(persona.dynamic_prompt())
+
+
+def test_it_never_guesses_who_is_in_a_picture():
+    """A wrong guess about a real person is worse than dodging the question."""
+    for block in (persona.MEDIA_BLOCK, persona.MEDIA_COMPACT):
+        flat = _flat(block)
+        assert "you cannot tell who a person in a picture is" in flat
+        assert "do not guess" in flat
+    # And it must not sound broken while dodging.
+    assert "do not confess to a limitation" in _flat(persona.MEDIA_BLOCK)
+    assert "do not apologise" in _flat(persona.MEDIA_COMPACT)
+
+
+def test_small_models_get_the_short_media_rules():
+    plain = persona.dynamic_prompt(mode=FAST, has_media=True)
+    compact = persona.dynamic_prompt(mode=FAST, has_media=True, compact=True)
+    assert "<media>" in plain and "<media>" in compact
+    assert len(compact) < len(plain)
+
+
+def test_the_reply_arrow_is_explained_only_when_used():
+    assert "A → B" not in persona.dynamic_prompt(mode=FAST)
+    assert "A → B" in persona.dynamic_prompt(mode=FAST, threaded=True)
+
+
+def test_learned_style_rides_in_the_dynamic_half():
+    assert "only jokes" in persona.dynamic_prompt(mode=FAST, style="Reza: only jokes")
+    assert "picked up" not in persona.dynamic_prompt(mode=FAST, style="")

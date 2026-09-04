@@ -140,6 +140,8 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
             return sections.chat_mode(ctx, chat_id, rest[2])
         if action == "limit":
             return sections.chat_limit_prompt(ctx, chat_id)
+        if action == "unlearn":
+            return sections.chat_unlearn(ctx, chat_id)
         if action in ("leave", "leave!"):
             return await sections.chat_leave(ctx, chat_id, confirmed=action.endswith("!"))
         return sections.chat_detail(ctx, chat_id)

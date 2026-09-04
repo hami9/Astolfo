@@ -13,13 +13,21 @@ from dataclasses import dataclass, field
 
 from .config import Settings
 from .db import Database
+from .learning import LEARN_RULES, Style
 from .llm import LLMClient, Usage
+from .text import shorten
 
 log = logging.getLogger(__name__)
 
 MAX_NOTES_CHARS = 900
 SUMMARY_BATCH = 8
 MAX_PARTICIPANTS = 20
+
+# One pasted wall of text used to fill the whole history budget on its own and
+# push every other turn out of the window, which reads as the bot suddenly
+# forgetting the conversation. The first part of a long message carries what it
+# was about; the rest is what the person is asking about right now anyway.
+MAX_TURN_CHARS = 500
 
 # Fold turns into notes once this many have gone unfolded, rather than waiting
 # for the window to fill: a chat that has said 79 things had no long-term memory
@@ -56,6 +64,7 @@ class ChatState:
     chat_id: int
     history: deque[dict]
     notes: str = ""
+    style: Style = field(default_factory=Style)
     participants: OrderedDict[str, float] = field(default_factory=OrderedDict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # -inf, not 0.0: time.monotonic() starts near zero on a freshly booted host,
@@ -90,8 +99,11 @@ class ChatState:
         while len(self.participants) > MAX_PARTICIPANTS:
             self.participants.popitem(last=False)
 
-    def add_user(self, name: str, text: str) -> None:
-        self.history.append({"role": "user", "content": f"{name}: {text}"})
+    def add_user(self, name: str, text: str, *, answering: str = "") -> None:
+        # "Sara → Reza: ..." costs three tokens and is the whole difference
+        # between one conversation and two happening in the same window.
+        who = f"{name} → {answering}" if answering and answering != name else name
+        self.history.append({"role": "user", "content": f"{who}: {text}"})
         self.turn_count += 1
         self.seen_at.append(time.monotonic())
         self.touch_participant(name)
@@ -131,6 +143,9 @@ class ChatState:
             content = turn.get("content")
             if not isinstance(content, str):
                 continue
+            if len(content) > MAX_TURN_CHARS:
+                content = shorten(content, MAX_TURN_CHARS)
+                turn = {**turn, "content": content}
             cost = len(content) + 8
             if used + cost > char_budget and selected:
                 break
@@ -241,6 +256,7 @@ class ChatStore:
                 mode=str(row["mode"] or ""),
                 daily_limit=int(row["daily_limit"] or 0),
                 off=bool(row["dormant"]),
+                style=Style.loads(row["style"]),
             )
         if self._chats:
             log.info("restored settings for %d chats", len(self._chats))
@@ -292,11 +308,15 @@ class ChatStore:
                 mode=state.mode,
                 daily_limit=state.daily_limit,
                 dormant=1 if state.off else 0,
+                style=state.style.dumps(),
             )
         self._dirty = False
 
 
-SUMMARY_PROMPT = """\
+# One call does both jobs. Learning how a chat likes to be talked to is worth
+# very little if it costs a second request per fold, and on the free tier the
+# ration is counted in requests rather than tokens.
+SUMMARY_PROMPT = f"""\
 You maintain the long-term memory notes of a persona bot inside a Telegram chat.
 Merge OLD NOTES with NEW MESSAGES into updated notes.
 
@@ -308,7 +328,10 @@ Rules: write in the chat's own language, plain short lines, at most 8 lines and 
 characters, no markdown, and never invent anything that was not actually said. If
 nothing is worth remembering, return the old notes unchanged.
 
-Reply with JSON only: {"notes": "..."}"""
+{LEARN_RULES}
+
+Reply with JSON only, and nothing else:
+{{"notes": "...", "style": "...", "people": {{"name": "..."}}}}"""
 
 
 async def update_notes(llm: LLMClient, settings: Settings, state: ChatState) -> Usage:
@@ -348,10 +371,16 @@ async def update_notes(llm: LLMClient, settings: Settings, state: ChatState) -> 
             model=settings.model_summary,
             max_tokens=400,
         )
-        if data and isinstance(data.get("notes"), str):
+        if not data:
+            return usage
+        if isinstance(data.get("notes"), str):
             notes = data["notes"].strip()[:MAX_NOTES_CHARS]
             if notes:
                 state.notes = notes
+        state.style.learn(
+            chat=data.get("style") if isinstance(data.get("style"), str) else "",
+            people=data.get("people") if isinstance(data.get("people"), dict) else {},
+        )
         return usage
     except Exception as exc:
         log.warning("summary failed for chat %s: %s", state.chat_id, exc)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import NamedTuple
 
 from telegram import LinkPreviewOptions, Update
 from telegram.constants import ChatAction, ChatType
@@ -23,7 +24,9 @@ from .text import (
     format_sources,
     is_addressed,
     looks_broken,
+    normalize_input,
     polish,
+    shorten,
     split_message,
     typing_indicator,
 )
@@ -35,6 +38,10 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 # When the provider is down every addressed message would otherwise get its own
 # apology, which reads as the bot spamming the chat.
 ERROR_NOTICE_INTERVAL = 120.0
+
+# Enough of the quoted message to know what is being answered, not enough to pay
+# for someone's essay twice.
+QUOTE_CHARS = 140
 
 
 def model_params(settings, decision: Decision, has_media: bool) -> dict:
@@ -73,6 +80,40 @@ def model_params(settings, decision: Decision, has_media: bool) -> dict:
     return params
 
 
+class ReplyTarget(NamedTuple):
+    """Who the newest message is answering, and what they had said."""
+
+    who: str
+    quote: str
+
+
+def reply_target(message, bot_user) -> ReplyTarget | None:
+    """Read Telegram's own reply link, which the prompt never used to carry.
+
+    Two people holding separate conversations in one group produced one flat
+    transcript, so the bot answered whoever spoke last about whatever was
+    loudest, and the person it was replying to watched it wander off. Telegram
+    already knows which message this one is aimed at.
+    """
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return None
+
+    author = getattr(replied, "from_user", None)
+    if author is None:
+        who = "an earlier message"
+    elif bot_user is not None and author.id == bot_user.id:
+        who = "you"
+    else:
+        who = clean_name(author.first_name or author.username)
+
+    said = (getattr(replied, "text", "") or getattr(replied, "caption", "") or "").strip()
+    if not said:
+        kind, _ = media_mod.detect(replied)
+        said = media_mod.PLACEHOLDERS.get(kind, "") if kind else ""
+    return ReplyTarget(who, shorten(normalize_input(said), QUOTE_CHARS))
+
+
 def resolve_locale(rt: Runtime, state: ChatState) -> str:
     if rt.settings.persona_locale in {"en", "fa"}:
         return rt.settings.persona_locale
@@ -96,21 +137,30 @@ def build_messages(
     bot_name: str,
     model: str,
     reply_tokens: int = 0,
+    answering: ReplyTarget | None = None,
 ) -> list[dict]:
     settings = rt.settings
     has_media = bundle.has_content or bool(bundle.notes)
 
     locale = resolve_locale(rt, state)
     # Free models are small and drown in the full layered prompt.
-    build = persona.compact_prompt if settings.free_mode else persona.static_prompt
+    compact = settings.free_mode
+    build = persona.compact_prompt if compact else persona.static_prompt
     static_block = build(is_group=is_group, locale=locale)
     dynamic_block = persona.dynamic_prompt(
         mode=decision.mode,
         has_media=has_media,
         notes=state.notes,
-        participants=list(state.participants),
+        # Every line of the transcript below already starts with a name, so the
+        # list is only worth its tokens before there is a transcript. It also
+        # stopped helping: naming people who are not in the window is half of
+        # why replies used to wander off to whoever was not talking.
+        participants=list(state.participants) if len(state.history) <= 1 else None,
         bot_name=bot_name,
         search_query=decision.query if decision.mode == SEARCH else None,
+        style=state.style.for_turn(sender, answering.who if answering else ""),
+        threaded=answering is not None,
+        compact=compact,
     )
     messages: list[dict] = [
         cacheable_system(static_block, model, settings.prompt_cache_control),
@@ -131,7 +181,12 @@ def build_messages(
     if every > 0 and state.turn_count and state.turn_count % every == 0:
         messages.append({"role": "system", "content": persona.REMINDER})
 
-    head = f"{sender}: {text}".strip() if text else f"{sender}: {bundle.placeholder}"
+    who = f"{sender} → {answering.who}" if answering else sender
+    head = f"{who}: {text}".strip() if text else f"{who}: {bundle.placeholder}"
+    if answering and answering.quote:
+        # After the message rather than before it: the last thing a small model
+        # reads is the thing it answers, and this is the subject, not the ask.
+        head += f'\n({answering.who} had said: "{answering.quote}")'
     if bundle.notes:
         head += "\n(" + " ".join(bundle.notes) + ")"
 
@@ -178,14 +233,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     sender = clean_name(message.from_user.first_name or message.from_user.username)
-    text = raw_text[: settings.max_input_chars]
-    placeholder = media_mod.PLACEHOLDERS.get(kind, "[sent a file]") if kind else ""
-    state.add_user(sender, f"{text} {placeholder}".strip() if kind else text)
-    _track(rt, message, sender)
+    # Normalised on the way in, once: everything downstream - the prompt, the
+    # history, the response cache key - then sees one spelling of a word instead
+    # of the four a phone keyboard can produce.
+    text = normalize_input(raw_text)[: settings.max_input_chars]
 
     is_group = chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
     bot_user = context.bot.bot
     addressed = (not is_group) or is_addressed(message, bot_user)
+    answering = reply_target(message, bot_user) if is_group else None
+
+    placeholder = media_mod.PLACEHOLDERS.get(kind, "[sent a file]") if kind else ""
+    state.add_user(
+        sender,
+        f"{text} {placeholder}".strip() if kind else text,
+        answering=answering.who if answering else "",
+    )
+    _track(rt, message, sender)
 
     allowance = rt.budget.check(
         chat_id=chat.id,
@@ -283,6 +347,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 bot_name=(bot_user.first_name if bot_user else "Astolfo"),
                 model=params["model"],
                 reply_tokens=params["max_tokens"],
+                answering=answering,
             )
             call = {
                 "model": params["model"],
@@ -404,6 +469,8 @@ def _can_read_media(rt: Runtime, bundle: media_mod.MediaBundle) -> bool:
 
 async def _summarize(rt: Runtime, state: ChatState) -> None:
     usage: Usage = await update_notes(rt.llm, rt.settings, state)
+    # Notes and the learned style are only in memory until this says so.
+    rt.store.mark_dirty()
     rt.record(mode="summary", model=rt.settings.model_summary, usage=usage, chat_id=state.chat_id)
 
 
@@ -411,4 +478,12 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("unhandled error", exc_info=context.error)
 
 
-__all__ = ["handle_message", "on_error", "model_params", "build_messages", "Allowance"]
+__all__ = [
+    "Allowance",
+    "ReplyTarget",
+    "build_messages",
+    "handle_message",
+    "model_params",
+    "on_error",
+    "reply_target",
+]

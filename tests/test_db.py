@@ -221,6 +221,23 @@ def test_keys_saved_under_the_old_scheme_are_carried_over(settings, monkeypatch)
     assert upgraded.credentials("something_else") == []
 
 
+def test_an_older_database_gains_the_style_column(settings):
+    """A running install upgrades in place; it does not start over."""
+    db = open_database(settings.data_dir)
+    db.execute("ALTER TABLE chats DROP COLUMN style")
+    db.execute("PRAGMA user_version=4")
+    db.seen_chat(-100, kind="supergroup", title="Test Group")
+    db.close()
+
+    upgraded = open_database(settings.data_dir)
+    assert upgraded.query("PRAGMA user_version")[0][0] == SCHEMA_VERSION
+    assert upgraded.chat(-100)["title"] == "Test Group"
+
+    upgraded.save_chat_state(-100, style='{"chat": "Finglish"}')
+    assert upgraded.chat(-100)["style"] == '{"chat": "Finglish"}'
+    assert [row["chat_id"] for row in upgraded.chat_settings()] == [-100]
+
+
 # -- keeping the file from growing forever --------------------------------
 LONG_AGO = time.time() - 200 * 86400
 
