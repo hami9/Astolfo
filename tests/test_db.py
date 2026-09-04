@@ -302,3 +302,31 @@ def test_pruning_reports_what_it_removed(db):
 
 def test_the_size_on_disk_is_reported(db):
     assert db.size_bytes() > 0
+
+
+def test_saving_state_never_erases_a_title_it_does_not_know(db):
+    """The in-memory state starts with no title; writing it back wiped the real one.
+
+    That is how a named group came to show as a bare numeric id in the panel.
+    """
+    db.joined_chat(-77, kind="supergroup", title="Weekend Plans", username="weekend")
+
+    db.save_chat_state(-77, muted=1, title="")
+
+    assert db.chat(-77)["title"] == "Weekend Plans"
+    assert db.chat(-77)["muted"] == 1
+
+
+def test_a_title_that_is_actually_known_still_updates(db):
+    db.joined_chat(-78, kind="supergroup", title="Old Name", username="")
+    db.save_chat_state(-78, title="New Name")
+    assert db.chat(-78)["title"] == "New Name"
+
+
+def test_a_private_chat_can_be_named_from_the_person(db):
+    """A private chat's id is the person's id, so an old row is still nameable."""
+    db.seen_member(user_id=42, chat_id=42, name="Reza")
+    db.seen_chat(42, kind="private")
+
+    assert db.chat(42)["person"] == "Reza"
+    assert [row["person"] for row in db.list_chats() if row["chat_id"] == 42] == ["Reza"]

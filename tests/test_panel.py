@@ -362,3 +362,73 @@ async def test_cleaning_up_removes_what_is_past_the_window(owned):
 async def test_cleaning_up_says_so_when_there_is_nothing_to_remove(owned):
     query, _ = await _press(owned, "ap:data:prune")
     assert "nothing old enough" in query.answers[0]
+
+
+# -- recognising a chat before acting on it -------------------------------
+async def test_a_private_chat_is_named_by_the_person_not_its_id(owned):
+    """A private chat has no title; showing a bare id tells you nothing."""
+    owned.db.seen_member(user_id=777, chat_id=777, name="Reza", username="reza")
+    owned.db.seen_chat(777, kind="private", title="", username="")
+
+    query, _ = await _press(owned, "ap:chats")
+
+    assert "Reza" in query.edits[0]
+    assert "chat 777" not in query.edits[0]
+
+
+async def test_a_group_shows_enough_to_recognise_it(owned):
+    owned.db.joined_chat(-900, kind="supergroup", title="Weekend Plans", username="weekend")
+    for user_id in (1, 2, 3):
+        owned.db.seen_member(user_id=user_id, chat_id=-900, name=f"p{user_id}")
+    owned.db.seen_chat(-900, kind="supergroup", title="Weekend Plans", username="weekend")
+
+    query, _ = await _press(owned, "ap:chats")
+    text = query.edits[0]
+
+    assert "Weekend Plans" in text
+    assert "@weekend" in text
+    assert "3 people" in text
+    assert "group" in text
+
+
+async def test_a_muted_or_switched_off_chat_is_marked_in_the_list(owned):
+    owned.db.joined_chat(-901, kind="supergroup", title="Quiet One", username="")
+    owned.store.get(-901).muted = True
+    owned.set_chat_off(-901, True)
+
+    query, _ = await _press(owned, "ap:chats")
+
+    text = query.edits[0]
+    assert "🔇" in text
+    assert "⏻" in text
+    assert "Quiet One" in text, "saving state must not erase the title"
+
+
+async def test_a_chat_with_nothing_known_falls_back_to_its_id(owned):
+    """Honest rather than blank: there is still something to press."""
+    owned.db.joined_chat(-902, kind="group", title="", username="")
+
+    query, _ = await _press(owned, "ap:chats")
+
+    assert "chat -902" in query.edits[0]
+
+
+async def test_the_detail_screen_names_the_chat_and_counts_its_people(owned):
+    owned.db.joined_chat(-903, kind="supergroup", title="Book Club", username="books")
+    owned.db.seen_member(user_id=5, chat_id=-903, name="Sara")
+
+    query, _ = await _press(owned, "ap:chat:-903")
+    text = query.edits[0]
+
+    assert "Book Club" in text
+    assert "@books" in text
+    assert "people: 1" in text
+
+
+async def test_the_people_screen_names_the_chat_it_is_showing(owned):
+    owned.db.seen_member(user_id=778, chat_id=778, name="Nima", username="")
+    owned.db.seen_chat(778, kind="private", title="", username="")
+
+    query, _ = await _press(owned, "ap:chat:778:people")
+
+    assert "Nima" in query.edits[0]

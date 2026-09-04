@@ -23,7 +23,7 @@ confirm the command exists. Repeated attempts are logged and recorded.
 | **services** | Every service: keys, health, today's calls, order, on/off, and adding your own |
 | **models** | Which model does which job, chosen from the live catalog, and the tokens each spent |
 | **settings** | Any setting by name, plus switches for the common ones |
-| **groups** | Every group: activity, mute, switch off, leave, how talkative it is, daily limit |
+| **groups** | Every group: who is in it, activity, mute, switch off, leave, how talkative it is, daily limit |
 | **people** | Who has spoken to it, where, blocking, and per-person limits |
 | **server** | Health, log, update, restart |
 | **data** | Row counts, the audit trail, a backup of the database |
@@ -114,6 +114,16 @@ once, which is what you want after adding the bot to several at a time.
 
 Being spoken to always gets an answer. Manual is "only when asked", never silence
 — that is what **mute** is for.
+
+### Knowing which chat you are looking at
+
+Each row names the chat the best way it can: its title, else the person's name for a
+private chat, else its `@username`, else the id. Under the name are the kind, how many
+people, how many messages and when it was last active, and 🔇 or ⏻ if it is muted or
+switched off — enough to recognise a chat before muting or leaving it.
+
+A private chat has no title, which is why it used to show as a bare id. Its id is the
+person's id, so even a row saved before the name was recorded can still be named.
 
 ### Switching a group off
 

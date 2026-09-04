@@ -133,6 +133,31 @@ def config_flip(ctx, name: str) -> View:
 
 
 # -- groups ---------------------------------------------------------------
+KINDS = {"private": "private chat", "group": "group", "supergroup": "group", "channel": "channel"}
+
+
+def chat_name(row) -> str:
+    """Something recognisable, in the order it is worth showing.
+
+    A private chat has no title, so before this it showed as a bare numeric id
+    on every screen - which is the one thing that tells you nothing about which
+    conversation you are about to mute or leave.
+    """
+    available = set(row.keys())
+    for key in ("title", "person", "username"):
+        value = str(row[key] or "").strip() if key in available else ""
+        if value:
+            return f"@{value}" if key == "username" else value
+    return f"chat {row['chat_id']}"
+
+
+def chat_marks(row, state=None) -> str:
+    marks = "🔇" if row["muted"] else ""
+    if state is not None and state.off:
+        marks += "⏻"
+    return f" {marks}" if marks else ""
+
+
 def chats(ctx) -> View:
     rows_data = ctx.rt.db.list_chats(limit=10)
     if not rows_data:
@@ -141,12 +166,16 @@ def chats(ctx) -> View:
     lines = ["💬 Groups the bot is in\n"]
     rows: list[list[InlineKeyboardButton]] = []
     for row in rows_data:
-        title = trim(row["title"] or str(row["chat_id"]))
+        name = chat_name(row)
+        state = ctx.rt.store.get(int(row["chat_id"]))
+        kind = KINDS.get(str(row["type"] or ""), "chat")
+        handle = f" @{row['username']}" if row["username"] else ""
         lines.append(
-            f"• {title} — {row['people']} people, {row['messages']} messages, "
-            f"{ago(row['last_seen'])}"
+            f"• {trim(name, 32)}{handle}{chat_marks(row, state)}\n"
+            f"   {kind} · {row['people']} people · {row['messages']} messages"
+            f" · {ago(row['last_seen'])}"
         )
-        rows.append([button(title, "chat", row["chat_id"])])
+        rows.append([button(f"{trim(name, 26)}{chat_marks(row, state)}", "chat", row["chat_id"])])
 
     lines.append(f"\nglobal mode: {ctx.rt.settings.reply_mode}")
     return View(
@@ -223,9 +252,11 @@ def chat_detail(ctx, chat_id: int) -> View:
     if participation.mode_for(rt, state) == participation.SMART:
         mode = f"smart → {mode}"
     limit = state.daily_limit or rt.settings.chat_daily_call_limit or "none"
+    handle = f"\nusername: @{row['username']}" if row["username"] else ""
     text = (
-        f"💬 {row['title'] or chat_id}\n\n"
-        f"id: {row['chat_id']}\ntype: {row['type'] or '?'}\n"
+        f"💬 {chat_name(row)}\n\n"
+        f"id: {row['chat_id']}\ntype: {KINDS.get(str(row['type'] or ''), '?')}{handle}\n"
+        f"people: {row['people']}\n"
         f"messages seen: {row['messages']}\nreplies sent: {row['replies']}\n"
         f"last activity: {ago(row['last_seen'])}\n"
         f"muted: {yes_no(row['muted'])}\n"
@@ -372,7 +403,7 @@ def people(ctx, chat_id: int | None = None) -> View:
     else:
         recent = rt.db.members(chat_id, limit=10)
         row = rt.db.chat(chat_id)
-        header = f"👥 In {trim(row['title'] if row else str(chat_id))}"
+        header = f"👥 In {trim(chat_name(row) if row else f'chat {chat_id}')}"
 
     lines = [header + "\n"]
     rows: list[list[InlineKeyboardButton]] = []
