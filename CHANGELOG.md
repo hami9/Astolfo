@@ -11,6 +11,26 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.3.3] - 2026-09-04
+
+### Fixed
+
+- **Saving a chat's state erased its title.** The in-memory state starts without one, so
+  the first autosave or panel action wrote an empty title over the name Telegram gave us
+  when the bot joined — which is how a named group came to show as a bare numeric id.
+  An empty title now means "not known", never "clear it".
+- **A private chat was recorded with no name at all.** It has no title, and only the
+  membership handler fell back to the person's name; the message path did not. It does
+  now, and because a private chat's id *is* the person's id, rows saved before this can
+  still be named by joining the people table.
+
+### Added
+
+- **The groups list says what each chat is**: the kind, `@username`, how many people, how
+  many messages, when it was last active, and 🔇 or ⏻ when it is muted or switched off —
+  enough to recognise a chat before muting or leaving it. The detail screen and the people
+  screen use the same name.
+
 ## [2.3.2] - 2026-09-03
 
 ### Fixed
@@ -235,7 +255,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.2...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.3...HEAD
+[2.3.3]: https://github.com/hami9/Astolfo/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/hami9/Astolfo/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/hami9/Astolfo/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/hami9/Astolfo/compare/v2.2.0...v2.3.0

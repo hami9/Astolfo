@@ -352,7 +352,9 @@ def _track(rt: Runtime, message, sender: str) -> None:
         rt.db.seen_chat(
             chat.id,
             kind=str(chat.type),
-            title=chat.title or "",
+            # A private chat has no title, so without the name it is a bare id
+            # on every screen of the panel.
+            title=chat.title or getattr(chat, "full_name", "") or "",
             username=chat.username or "",
         )
         rt.db.seen_member(

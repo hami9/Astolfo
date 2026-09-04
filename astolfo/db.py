@@ -378,6 +378,11 @@ class Database:
             "daily_limit", "mode", "dormant",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
+        # An empty title means "this state never learned one", not "clear it".
+        # Writing it back erased the title Telegram gave us when the bot joined,
+        # which is how a named group ended up showing as a bare numeric id.
+        if not str(fields.get("title") or "").strip():
+            fields.pop("title", None)
         if not fields:
             return
         assignments = ", ".join(f"{name} = ?" for name in fields)
@@ -406,7 +411,11 @@ class Database:
         # this query is a constant no matter who calls it.
         return self.query(
             """
-            SELECT c.*, (SELECT COUNT(*) FROM members m WHERE m.chat_id = c.chat_id) AS people
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM members m WHERE m.chat_id = c.chat_id) AS people,
+                   -- A private chat's id is the person's id, so a row saved
+                   -- before the name was recorded can still be named.
+                   (SELECT u.name FROM users u WHERE u.user_id = c.chat_id) AS person
             FROM chats c
             WHERE ? = 0 OR c.left_at IS NULL
             ORDER BY c.last_seen IS NULL, c.last_seen DESC
@@ -416,7 +425,15 @@ class Database:
         )
 
     def chat(self, chat_id: int) -> sqlite3.Row | None:
-        return self.one("SELECT * FROM chats WHERE chat_id = ?", (chat_id,))
+        return self.one(
+            """
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM members m WHERE m.chat_id = c.chat_id) AS people,
+                   (SELECT u.name FROM users u WHERE u.user_id = c.chat_id) AS person
+            FROM chats c WHERE c.chat_id = ?
+            """,
+            (chat_id,),
+        )
 
     # -- people -----------------------------------------------------------
     def seen_member(self, *, user_id: int, chat_id: int, name: str, username: str = "") -> None:
@@ -497,6 +514,11 @@ class Database:
         """Apply the same knob to every group at once."""
         allowed = {"daily_limit", "mode", "reply_chance", "muted", "dormant"}
         fields = {k: v for k, v in columns.items() if k in allowed}
+        # An empty title means "this state never learned one", not "clear it".
+        # Writing it back erased the title Telegram gave us when the bot joined,
+        # which is how a named group ended up showing as a bare numeric id.
+        if not str(fields.get("title") or "").strip():
+            fields.pop("title", None)
         if not fields:
             return 0
         assignments = ", ".join(f"{name} = ?" for name in fields)
@@ -675,6 +697,11 @@ class Database:
             "rested_until",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
+        # An empty title means "this state never learned one", not "clear it".
+        # Writing it back erased the title Telegram gave us when the bot joined,
+        # which is how a named group ended up showing as a bare numeric id.
+        if not str(fields.get("title") or "").strip():
+            fields.pop("title", None)
         if not fields:
             return
         assignments = ", ".join(f"{column} = ?" for column in fields)
