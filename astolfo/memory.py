@@ -16,6 +16,7 @@ from .db import Database
 from .learning import LEARN_RULES, Style
 from .llm import LLMClient, Usage
 from .text import shorten
+from .tuning import Reception
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,17 @@ CHARS_PER_TOKEN = 2.5
 MIN_HISTORY_CHARS = 1200
 
 
+def _json(raw: object) -> object:
+    """A stored counter blob, or nothing. A bad row costs the counters, not the chat."""
+    if not raw:
+        return None
+    try:
+        return json.loads(str(raw))
+    except (ValueError, TypeError):
+        log.warning("could not read stored reception counters, starting them over")
+        return None
+
+
 def history_budget(
     wanted: int, *, context_tokens: int, overhead_chars: int, reply_tokens: int
 ) -> int:
@@ -65,6 +77,10 @@ class ChatState:
     history: deque[dict]
     notes: str = ""
     style: Style = field(default_factory=Style)
+    # Which reply lengths people here actually answer.
+    reception: Reception = field(default_factory=Reception)
+    # True while the bot spoke last and nobody has answered it yet.
+    awaiting_reply: bool = False
     participants: OrderedDict[str, float] = field(default_factory=OrderedDict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # -inf, not 0.0: time.monotonic() starts near zero on a freshly booted host,
@@ -119,6 +135,18 @@ class ChatState:
         self.history.append({"role": "assistant", "content": text})
         self.turn_count += 1
         self.replies_sent += 1
+        self.reception.note_sent(len(text or ""))
+        self.awaiting_reply = True
+
+    def note_reception(self, *, answered: bool) -> None:
+        """Whether the last thing it said got an answer. Counted once."""
+        if not self.awaiting_reply:
+            return
+        self.awaiting_reply = False
+        if answered:
+            self.reception.note_answered()
+        else:
+            self.reception.note_ignored()
 
     def recent_texts(self, count: int = 6) -> list[str]:
         return [
@@ -257,6 +285,7 @@ class ChatStore:
                 daily_limit=int(row["daily_limit"] or 0),
                 off=bool(row["dormant"]),
                 style=Style.loads(row["style"]),
+                reception=Reception.load(_json(row["reception"])),
             )
         if self._chats:
             log.info("restored settings for %d chats", len(self._chats))
@@ -309,6 +338,7 @@ class ChatStore:
                 daily_limit=state.daily_limit,
                 dormant=1 if state.off else 0,
                 style=state.style.dumps(),
+                reception=json.dumps(state.reception.as_dict()) if state.reception.sent else "",
             )
         self._dirty = False
 

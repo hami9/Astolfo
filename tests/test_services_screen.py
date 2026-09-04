@@ -230,3 +230,66 @@ async def test_a_service_can_be_pinned_and_released(owned):
 
     await _press(owned, "ap:svc:pin:-")
     assert owned.settings.pinned_service == ""
+
+
+# -- which one is doing best ----------------------------------------------
+def _busy(rt, name: str, *, ok: int, failed: int = 0, cost: float = 0.0) -> None:
+    """Pretend a service worked today, the way the client records it."""
+    for _ in range(ok):
+        rt.registry.record_call(name, tokens=100, cost=cost)
+    for _ in range(failed):
+        rt.registry.record_call(name, failed=True)
+
+
+async def test_the_ranking_puts_the_reliable_service_first(owned):
+    _busy(owned, "openrouter", ok=2, failed=10)
+    _busy(owned, "google", ok=12)
+
+    query, _ = await _press(owned, "ap:svc:ranking")
+    text = query.edits[0]
+    assert text.index("google") < text.index("openrouter")
+    assert "100% answered" in text
+
+
+async def test_a_service_with_barely_any_calls_is_not_judged(owned):
+    _busy(owned, "google", ok=1)
+    scores = {score.name: score for score in owned.registry.scores()}
+    assert "too early to say" in scores["google"].verdict()
+    assert scores["google"].value(dearest=0.0) == 0.5
+
+
+async def test_a_resting_service_is_worth_nothing_right_now(owned):
+    _busy(owned, "google", ok=20)
+    owned.registry.rest_service("google", 3600, "out of quota")
+    scores = {score.name: score for score in owned.registry.scores()}
+    assert scores["google"].value(dearest=0.0) == 0.0
+    assert scores["google"].verdict() == "resting"
+
+
+async def test_the_ranking_can_be_applied_to_the_order(owned):
+    _busy(owned, "openrouter", ok=2, failed=10)
+    _busy(owned, "google", ok=12)
+    owned.registry.add_key("google", "AIza-key")
+
+    query, _ = await _press(owned, "ap:svc:reorder")
+    assert [row["name"] for row in owned.registry.rows()][0] == "google"
+    assert "order is now" in (query.answers[-1] or "")
+
+
+async def test_reordering_does_nothing_while_a_service_is_pinned(owned):
+    owned.settings = owned.settings.replace(pinned_service="openrouter")
+    _busy(owned, "openrouter", ok=2, failed=10)
+    _busy(owned, "google", ok=12)
+
+    before = [row["name"] for row in owned.registry.rows()]
+    query, _ = await _press(owned, "ap:svc:reorder")
+    assert [row["name"] for row in owned.registry.rows()] == before
+    assert "unpin first" in (query.answers[-1] or "")
+
+
+async def test_the_ranking_costs_no_api_calls(owned):
+    probes: list[str] = []
+    owned.llm.probe = lambda name: probes.append(name)
+    _busy(owned, "google", ok=12)
+    await _press(owned, "ap:svc:ranking")
+    assert probes == []

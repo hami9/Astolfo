@@ -20,7 +20,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Provider keys used to live in `secrets`, one per service. They are credentials
 # now, so a service can hold more than one and each carries its own state.
@@ -35,6 +35,8 @@ KEY_ENV_TO_SERVICE = {
 _SCHEMA = """
 -- chats.style is how this chat likes to be talked to, learned as it goes. JSON,
 -- and small: one line for the chat and one for each of a dozen people at most.
+-- chats.reception is six counters: how many short, medium and long replies were
+-- sent here, and how many of each somebody actually answered.
 -- Comments live above a table rather than inside it, because SQLite re-parses
 -- the body on ALTER TABLE and a trailing comment there is a syntax error.
 CREATE TABLE IF NOT EXISTS chats (
@@ -55,7 +57,8 @@ CREATE TABLE IF NOT EXISTS chats (
     daily_limit INTEGER NOT NULL DEFAULT 0,
     mode        TEXT    NOT NULL DEFAULT '',
     dormant     INTEGER NOT NULL DEFAULT 0,
-    style       TEXT    NOT NULL DEFAULT ''
+    style       TEXT    NOT NULL DEFAULT '',
+    reception   TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -214,6 +217,9 @@ class Database:
         if current and current < 5:
             # The learned speaking style, per chat and per person in it.
             self._add_column("chats", "style", "TEXT NOT NULL DEFAULT ''")
+        if current and current < 6:
+            # Which reply lengths this chat answers.
+            self._add_column("chats", "reception", "TEXT NOT NULL DEFAULT ''")
 
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
@@ -383,7 +389,7 @@ class Database:
         """Persist the per-chat knobs the bot itself changes."""
         allowed = {
             "muted", "reply_chance", "forced_mode", "locale", "notes", "title",
-            "daily_limit", "mode", "dormant", "style",
+            "daily_limit", "mode", "dormant", "style", "reception",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
         # An empty title means "this state never learned one", not "clear it".
@@ -407,11 +413,11 @@ class Database:
         return self.query(
             """
             SELECT chat_id, notes, reply_chance, forced_mode, muted, title, locale,
-                   mode, daily_limit, dormant, style
+                   mode, daily_limit, dormant, style, reception
             FROM chats
             WHERE notes <> '' OR reply_chance IS NOT NULL OR forced_mode IS NOT NULL
                OR muted = 1 OR mode <> '' OR daily_limit > 0 OR dormant = 1
-               OR style <> ''
+               OR style <> '' OR reception <> ''
             """
         )
 

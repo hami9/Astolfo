@@ -145,3 +145,35 @@ def test_serious_mode_can_drop_the_concern_if_it_is_banter():
     block = " ".join(persona.MODE_BLOCKS[SERIOUS].lower().split())
     assert "do not perform concern" in block
     assert "unbothered voice" in block
+
+
+# -- work it was not built for --------------------------------------------
+def test_homework_is_not_escalated_to_a_think_model():
+    """It declines these in character, so paying for reasoning buys the refusal."""
+    for text in (
+        "میشه تکلیف ریاضیمو حل کنی",
+        "این انتگرال رو حساب کن",
+        "can you write me a python bot",
+        "prove that the sum is even",
+    ):
+        decision, confidence = heuristic(text, heavy_lifting=False)
+        assert decision.mode == FAST, text
+        assert confidence >= 0.85, "confident enough not to ask the dispatcher"
+
+
+def test_small_things_are_still_normal_conversation():
+    """Only work somebody wants done is turned away, not every question."""
+    for text in ("معنی serendipity چیه؟", "فرق list و tuple چیه", "how do I center a div"):
+        decision, _ = heuristic(text, heavy_lifting=False)
+        assert decision.reason != "not what it is for", text
+
+
+def test_an_owner_who_wants_a_solver_gets_one():
+    text = "میشه تکلیف ریاضیمو حل کنی"
+    assert heuristic(text, heavy_lifting=False)[0].mode == FAST
+    assert heuristic(text, heavy_lifting=True)[0].mode == THINK
+
+
+def test_distress_still_wins_over_everything():
+    decision, _ = heuristic("تکلیفم مونده و افسرده‌ام", heavy_lifting=False)
+    assert decision.mode == SERIOUS

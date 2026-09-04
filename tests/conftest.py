@@ -74,12 +74,19 @@ class FakeBot:
         self._file_bytes = file_bytes
         self.left: list[int] = []
         self.documents: list[str] = []
+        # What getChatAdministrators answers: a list, or an exception to raise.
+        self.administrators: object = []
 
     async def send_chat_action(self, **kwargs):
         self.actions += 1
 
     async def leave_chat(self, chat_id):
         self.left.append(chat_id)
+
+    async def get_chat_administrators(self, chat_id):
+        if isinstance(self.administrators, Exception):
+            raise self.administrators
+        return self.administrators
 
     async def send_document(self, chat_id, document, filename=None, **kwargs):
         self.documents.append(filename or "")

@@ -221,9 +221,23 @@ def test_keys_saved_under_the_old_scheme_are_carried_over(settings, monkeypatch)
     assert upgraded.credentials("something_else") == []
 
 
+def test_an_older_database_gains_the_reception_column(settings):
+    db = open_database(settings.data_dir)
+    db.execute("ALTER TABLE chats DROP COLUMN reception")
+    db.execute("PRAGMA user_version=5")
+    db.seen_chat(-100, kind="supergroup", title="Test Group")
+    db.close()
+
+    upgraded = open_database(settings.data_dir)
+    assert upgraded.query("PRAGMA user_version")[0][0] == SCHEMA_VERSION
+    upgraded.save_chat_state(-100, reception='{"sent": {"short": 3}}')
+    assert upgraded.chat(-100)["reception"] == '{"sent": {"short": 3}}'
+
+
 def test_an_older_database_gains_the_style_column(settings):
     """A running install upgrades in place; it does not start over."""
     db = open_database(settings.data_dir)
+    db.execute("ALTER TABLE chats DROP COLUMN reception")
     db.execute("ALTER TABLE chats DROP COLUMN style")
     db.execute("PRAGMA user_version=4")
     db.seen_chat(-100, kind="supergroup", title="Test Group")

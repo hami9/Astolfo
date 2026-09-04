@@ -11,7 +11,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.ext import ContextTypes
 
 from . import media as media_mod
-from . import offline, participation, persona, runtime
+from . import offline, participation, persona, roles, runtime, tuning
 from .budget import STOPPED, Allowance
 from .cache import normalize
 from .llm import ChatResult, Usage, cacheable_system
@@ -138,6 +138,7 @@ def build_messages(
     model: str,
     reply_tokens: int = 0,
     answering: ReplyTarget | None = None,
+    standing: str = "",
 ) -> list[dict]:
     settings = rt.settings
     has_media = bundle.has_content or bool(bundle.notes)
@@ -145,8 +146,13 @@ def build_messages(
     locale = resolve_locale(rt, state)
     # Free models are small and drown in the full layered prompt.
     compact = settings.free_mode
-    build = persona.compact_prompt if compact else persona.static_prompt
-    static_block = build(is_group=is_group, locale=locale)
+    static_block = (
+        persona.compact_prompt(is_group=is_group, locale=locale)
+        if compact
+        else persona.static_prompt(
+            is_group=is_group, locale=locale, heavy_lifting=settings.heavy_lifting
+        )
+    )
     dynamic_block = persona.dynamic_prompt(
         mode=decision.mode,
         has_media=has_media,
@@ -161,6 +167,9 @@ def build_messages(
         style=state.style.for_turn(sender, answering.who if answering else ""),
         threaded=answering is not None,
         compact=compact,
+        standing=standing or None,
+        busy_elsewhere=rt.attention.elsewhere(state.chat_id),
+        brevity=tuning.brevity_hint(state) if settings.adaptive_length else None,
     )
     messages: list[dict] = [
         cacheable_system(static_block, model, settings.prompt_cache_control),
@@ -243,6 +252,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     addressed = (not is_group) or is_addressed(message, bot_user)
     answering = reply_target(message, bot_user) if is_group else None
 
+    # Read before it is consumed below: two of its own messages in a row is a
+    # monologue, and the accounting clears the same flag.
+    spoke_last = state.awaiting_reply
+    # Whether the last thing it said landed. One shot per reply, and the only
+    # signal it has that people here read what it writes.
+    if state.awaiting_reply:
+        state.note_reception(answered=addressed)
+    if addressed:
+        # Being spoken to ends the daydream rather than moving it elsewhere.
+        rt.attention.release(state.chat_id)
+
     placeholder = media_mod.PLACEHOLDERS.get(kind, "[sent a file]") if kind else ""
     state.add_user(
         sender,
@@ -267,7 +287,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await send_reply(message, rt.strings("budget_stopped"))
         return
 
-    if not addressed and not participation.should_join(rt, state, kind):
+    if not addressed and not participation.should_join(
+        rt,
+        state,
+        kind,
+        text=text,
+        # A reply between two other people is their conversation, not an opening.
+        in_thread=answering is not None and answering.who != "you",
+        spoke_last=spoke_last,
+    ):
         return
     if state.lock.locked() and (not addressed or state.waiting >= MAX_WAITING):
         # Unprompted chatter arriving mid-reply is noise and is dropped; being
@@ -328,6 +356,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 log.info("chat %s: media dropped, no vision model available", chat.id)
 
             params = model_params(settings, decision, bundle.has_content)
+            if settings.adaptive_length:
+                # What this chat answers, and what today's budget can still afford.
+                params["max_tokens"] = tuning.reply_ceiling(
+                    rt, state, base=params["max_tokens"], mode_is_fast=decision.mode == FAST
+                )
             # Free mode swaps the model inside the client, so log what will run.
             effective = rt.llm.resolve(
                 params["model"],
@@ -348,6 +381,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 model=params["model"],
                 reply_tokens=params["max_tokens"],
                 answering=answering,
+                standing=await _standing(rt, context, message, sender) if is_group else "",
             )
             call = {
                 "model": params["model"],
@@ -392,6 +426,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
 
         state.add_assistant(reply)
+        if not addressed:
+            # It walked into this conversation on its own, so it is now the one it
+            # is thinking about, and the other groups get less of it for a while.
+            rt.attention.claim(chat.id)
         rt.store.mark_dirty()
         rt.db.count_reply(chat.id)
         if settings.response_cache and not kind and not decision.web and decision.mode == FAST:
@@ -408,6 +446,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def _offline_excuse(rt: Runtime, state: ChatState) -> str:
     return offline.excuse(resolve_locale(rt, state))
+
+
+async def _standing(rt: Runtime, context, message, sender: str) -> str:
+    """Who runs this group and what the bot is in it, for the prompt.
+
+    Best effort by design: it is one line of context, so a group that will not
+    tell us simply gets no line rather than a failed turn.
+    """
+    if not rt.settings.read_admins:
+        return ""
+    bot_user = context.bot.bot
+    roster = await rt.roles.of(
+        context.bot, message.chat.id, bot_id=bot_user.id if bot_user else None
+    )
+    return roles.standing(roster, sender_id=message.from_user.id, sender=sender)
 
 
 def _track(rt: Runtime, message, sender: str) -> None:

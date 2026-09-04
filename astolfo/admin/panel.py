@@ -204,6 +204,10 @@ async def _services(ctx: Ctx, rest: list[str]) -> View:
 
     if head == "testall":
         return await services_section.test_all(ctx)
+    if head == "ranking":
+        return services_section.ranking(ctx)
+    if head == "reorder":
+        return services_section.reorder(ctx)
     if head == "new":
         return services_section.ask_new_service(ctx)
     if head == "pin" and len(rest) > 1:

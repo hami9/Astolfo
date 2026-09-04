@@ -11,6 +11,64 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.5.0] - 2026-09-04
+
+Written from a pile of the bot's real group output. Every rule added here is a failure
+somebody actually saw, not a hypothetical.
+
+### Fixed
+
+- **It rambled.** Comma chains, the same thought padded four times, a message that
+  circles back and restates itself. The voice rules now name each of those, cap a reply
+  at one line with two as the ceiling, and say to cut every clause that repeats another.
+  `MAX_TOKENS_FAST` drops from 260 to 160, because a model fills the room it is given.
+- **It repeated itself.** The same joke and nearly the same sentence, sent to two
+  different people minutes apart. It is now told never to reuse a joke, a compliment or a
+  message shape it has already used in the chat, and to say something else or nothing.
+- **It made things up about people.** Whose exam is tomorrow, why somebody sent a video,
+  what a sticker meant. Inventing anything about a person's life, plans or day is now a
+  named ban, as is explaining what someone else meant or felt.
+- **It gave advice nobody asked for.** Bedtimes, study plans, which Python library to
+  start with. A friend does not manage anyone, and it is told so directly.
+- **Emoji banners.** At most one emoji, and most messages have none.
+
+### Added
+
+- **It knows what it is not for.** Heavy maths, whole programs, homework, essays and long
+  translations get a cheerful "that is way past what my head can hold" instead of a bad
+  attempt; quick things stay normal conversation. Those requests also stop being escalated
+  to the expensive think model, since the answer was always going to be a refusal.
+  `HEAVY_LIFTING=1` turns it back into a solver.
+- **One train of thought.** Joining a conversation on its own claims its attention for
+  `ATTENTION_HOLD` seconds, and while one group has it the others get a fraction of its
+  usual eagerness. Being spoken to is never gated by it. Asked where it went, it says it
+  got caught up talking somewhere else and never says where, which is both more human and
+  cheaper than the alternative.
+- **It joins a topic on merit rather than a coin flip.** An open question, media,
+  something it has opinions about or a running joke in this chat's notes raise the score;
+  a reply between two other people, a sign-off, or having just spoken lower it. The chance
+  you set moves the bar instead of being the whole decision. All local: no model call.
+  `INTEREST_SCORING=0` restores the coin flip.
+- **Replies get shorter when that is what works.** Two signals, both free: past 60% of the
+  daily budget the ceiling comes down on a straight line, and after it speaks somebody
+  either answers or does not — bucketed short, medium and long, and once a bucket clearly
+  wins that is what it aims for. `ADAPTIVE_LENGTH=0` turns both off. Schema v6.
+- **It knows who runs the group.** Owner, admin or member, and whether it is itself a
+  plain member or an admin, cached for fifteen minutes. It never uses any of it: no
+  settings, no permissions, no pinning, no removing anybody, no claiming it did, and no
+  policing the chat. `READ_ADMINS=0` skips the lookup.
+- **📈 which is doing best**, on the services screen: every service ranked on what it
+  actually did today — calls answered, calls failed, cost and tokens per call. Reliability
+  decides it; cost only separates services that are otherwise alike, and on free models it
+  drops out. A service with fewer than eight calls is left alone rather than judged on
+  noise. **⬆️ put the best one first** applies the ranking to the order things are tried
+  in. Both cost no API calls, and pinning disables them.
+
+### Fixed (found while building the above)
+
+- The "it just spoke" penalty could never apply: the flag it reads was cleared by the
+  reception accounting earlier in the same turn.
+
 ## [2.4.0] - 2026-09-04
 
 ### Fixed

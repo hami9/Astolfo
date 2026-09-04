@@ -110,7 +110,9 @@ class Settings:
     temperature_fast: float = _env("TEMPERATURE_FAST", default=0.95)
     temperature_think: float = _env("TEMPERATURE_THINK", default=0.55)
     temperature_grounded: float = _env("TEMPERATURE_GROUNDED", default=0.25)
-    max_tokens_fast: int = _env("MAX_TOKENS_FAST", default=260)
+    # A chat message, not a paragraph. The old 260 bought room the persona was told
+    # not to use, and models fill the room they are given.
+    max_tokens_fast: int = _env("MAX_TOKENS_FAST", default=160)
     max_tokens_think: int = _env("MAX_TOKENS_THINK", default=900)
     think_effort: str = _env("THINK_EFFORT", default="medium")  # low | medium | high
     fast_reasoning_budget: int = _env("FAST_REASONING_BUDGET", default=0)
@@ -132,6 +134,18 @@ class Settings:
     group_reply_chance: float = _env("GROUP_REPLY_CHANCE", default=0.30)
     media_reply_chance: float = _env("MEDIA_REPLY_CHANCE", default=0.75)
     reply_cooldown: float = _env("REPLY_COOLDOWN", default=20.0)
+    # One bot, one train of thought: after joining a conversation on its own, other
+    # chats get a fraction of its eagerness for this long. 0 turns it off.
+    attention_hold: float = _env("ATTENTION_HOLD", default=90.0)
+    # Whether unprompted replies are decided by what was said or by a coin flip.
+    interest_scoring: bool = _env("INTEREST_SCORING", default=True)
+    # Reply length follows the budget and whether people answer. 0 turns it off.
+    adaptive_length: bool = _env("ADAPTIVE_LENGTH", default=True)
+    # Off by default: it is a group-chat regular, not a solver. On, it will attempt
+    # heavy maths, whole programs and homework instead of declining them.
+    heavy_lifting: bool = _env("HEAVY_LIFTING", default=False)
+    # Read who runs each group, so it can be useful to them without acting like staff.
+    read_admins: bool = _env("READ_ADMINS", default=True)
     max_history: int = _env("MAX_HISTORY", default=80)
     history_char_budget: int = _env("HISTORY_CHAR_BUDGET", default=9000)
     max_input_chars: int = _env("MAX_INPUT_CHARS", default=1200)
