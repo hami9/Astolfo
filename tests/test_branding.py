@@ -16,12 +16,13 @@ from tests.conftest import FakeContext, FakeMessage, make_update
 # -- fixed values ---------------------------------------------------------
 def test_the_channel_and_creator_are_exactly_these(settings):
     """Pinned on purpose: a silent change to either is a bug, not a preference."""
-    assert branding.CHANNEL == "hami249"
-    assert branding.CHANNEL_URL == "https://t.me/hami249"
+    assert branding.CHANNEL == "hami294"
+    assert branding.CHANNEL_URL == "https://t.me/hami294"
     assert branding.CREATOR == "ham1235i"
     assert branding.CREATOR_URL == "https://t.me/ham1235i"
     assert branding.SITE == "hami9.ir"
     assert branding.SITE_URL == "https://hami9.ir"
+    assert branding.DISCORD_URL == "https://discord.gg/K33PnNafcD"
 
 
 def test_every_about_text_names_both(settings):
@@ -30,6 +31,7 @@ def test_every_about_text_names_both(settings):
         assert branding.CHANNEL_URL in text
         assert branding.CREATOR_URL in text
         assert branding.SITE_URL in text
+        assert branding.DISCORD_URL in text
         assert branding.CREATOR in branding.credit(locale)
         assert branding.SITE in branding.credit(locale)
 

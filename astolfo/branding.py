@@ -9,12 +9,14 @@ cannot drift away by accident or by a stray row in the database.
 
 from __future__ import annotations
 
-CHANNEL = "hami249"
+CHANNEL = "hami294"
 CHANNEL_URL = f"https://t.me/{CHANNEL}"
 CREATOR = "ham1235i"
 CREATOR_URL = f"https://t.me/{CREATOR}"
 SITE = "hami9.ir"
 SITE_URL = f"https://{SITE}"
+# An invite code, not a handle: there is nothing to compose it from.
+DISCORD_URL = "https://discord.gg/K33PnNafcD"
 
 CREDIT_EN = f"made by @{CREATOR} · channel @{CHANNEL} · {SITE}"
 CREDIT_FA = f"ساخته‌ی @{CREATOR} · کانال @{CHANNEL} · {SITE}"
@@ -24,6 +26,7 @@ ABOUT_EN = (
     f"📣 channel: {CHANNEL_URL}\n"
     f"👤 made by: {CREATOR_URL}\n"
     f"🌐 site: {SITE_URL}\n"
+    f"🎮 discord: {DISCORD_URL}\n"
     "🧠 I read photos, GIFs, videos and voice messages, and I only ever answer in text\n"
     "💛 /donate keeps my API bill paid\n\n"
     f"{CREDIT_EN}"
@@ -33,6 +36,7 @@ ABOUT_FA = (
     f"📣 کانال: {CHANNEL_URL}\n"
     f"👤 سازنده: {CREATOR_URL}\n"
     f"🌐 سایت: {SITE_URL}\n"
+    f"🎮 دیسکورد: {DISCORD_URL}\n"
     "🧠 عکس و گیف و ویدیو می‌بینم، ویس گوش می‌دم، و فقط متن جواب می‌دم\n"
     "💛 با /donate خرج ای‌پی‌آیم رو می‌دی\n\n"
     f"{CREDIT_FA}"

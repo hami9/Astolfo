@@ -11,11 +11,25 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.3.2] - 2026-09-03
+
+### Fixed
+
+- The channel handle shipped in 2.3.1 was a typo: it is **@hami294**, not `@hami249`.
+
+### Added
+
+- The [Discord](https://discord.gg/K33PnNafcD) is named in `/about` and in the issue
+  template's contact links. It is stored as a whole invite URL rather than a handle,
+  because an invite code is not composable from one.
+- The mermaid diagram in the README said eleven services; there are thirteen.
+
 ## [2.3.1] - 2026-09-03
 
 ### Changed
 
-- The channel is now [@hami249](https://t.me/hami249), and [hami9.ir](https://hami9.ir)
+- The channel is now `@hami249` — a typo, corrected to
+  [@hami294](https://t.me/hami294) in 2.3.2 — and [hami9.ir](https://hami9.ir)
   is named alongside it. Both appear in `/about`, in the credit line under every
   `/start` and `/help`, and on the panel's home screen. The pinned branding test
   carries the new values, so a silent change to either is still a failure.
@@ -221,7 +235,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.3.2...HEAD
+[2.3.2]: https://github.com/hami9/Astolfo/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/hami9/Astolfo/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/hami9/Astolfo/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/hami9/Astolfo/compare/v2.1.1...v2.2.0
