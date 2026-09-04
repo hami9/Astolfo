@@ -135,8 +135,11 @@ class ChatState:
         self.history.append({"role": "assistant", "content": text})
         self.turn_count += 1
         self.replies_sent += 1
-        self.reception.note_sent(len(text or ""))
-        self.awaiting_reply = True
+        # An empty turn is the offline path recording that it had nothing to say.
+        # Counting it as a short reply nobody answered would poison the signal.
+        if text:
+            self.reception.note_sent(len(text))
+            self.awaiting_reply = True
 
     def note_reception(self, *, answered: bool) -> None:
         """Whether the last thing it said got an answer. Counted once."""
@@ -338,7 +341,14 @@ class ChatStore:
                 daily_limit=state.daily_limit,
                 dormant=1 if state.off else 0,
                 style=state.style.dumps(),
-                reception=json.dumps(state.reception.as_dict()) if state.reception.sent else "",
+                # sent is always a dict of three keys, so it is always truthy: the
+                # values decide whether there is anything to store. Writing "{}"
+                # here would make every chat look worth restoring at startup.
+                reception=(
+                    json.dumps(state.reception.as_dict())
+                    if any(state.reception.sent.values())
+                    else ""
+                ),
             )
         self._dirty = False
 
