@@ -14,6 +14,8 @@ import logging
 import random
 import time
 
+from . import interest as interest_mod
+
 log = logging.getLogger(__name__)
 
 MANUAL = "manual"
@@ -56,7 +58,15 @@ def effective(rt, state) -> tuple[str, str]:
     return AUTO, "quiet enough to join in"
 
 
-def should_join(rt, state, kind: str) -> bool:
+def should_join(
+    rt,
+    state,
+    kind: str,
+    *,
+    text: str = "",
+    in_thread: bool = False,
+    spoke_last: bool | None = None,
+) -> bool:
     """Whether to answer a message that was not addressed to the bot."""
     settings = rt.settings
     if time.monotonic() - state.last_reply_at < settings.reply_cooldown:
@@ -70,4 +80,24 @@ def should_join(rt, state, kind: str) -> bool:
     if base <= 0:
         return False
     chance = max(base, settings.media_reply_chance) if kind else base
-    return random.random() < chance  # noqa: S311 - a coin flip, not a secret
+    # One train of thought: while another chat has its attention, this one gets a
+    # fraction of the usual eagerness. Being spoken to is unaffected - that path
+    # never reaches here.
+    chance *= rt.attention.share_for(state.chat_id)
+
+    if not settings.interest_scoring:
+        return random.random() < chance  # noqa: S311 - a coin flip, not a secret
+
+    interest = interest_mod.rate(
+        text,
+        has_media=bool(kind),
+        in_thread=in_thread,
+        spoke_last=state.awaiting_reply if spoke_last is None else spoke_last,
+        notes=state.notes,
+    )
+    joining = interest_mod.worth_joining(interest, chance)
+    log.debug(
+        "chat %s: interest %.2f (%s) -> %s", state.chat_id, interest.score,
+        interest.reason, "joining" if joining else "staying out",
+    )
+    return joining

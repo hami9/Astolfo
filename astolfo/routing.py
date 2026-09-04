@@ -72,6 +72,21 @@ _COMPLEX = re.compile(
 )
 _MATH = re.compile(r"\d+\s*[+\-*/×÷^]\s*\d+|\d+\s*%")
 
+# Work somebody wants done rather than a conversation. Unless the owner has asked
+# for a solver, escalating these is paying think-model prices for an answer the
+# persona is going to decline anyway.
+_HEAVY = re.compile(
+    r"(تکلیف|تمرین|پروژه|پایان\s*نامه|مقاله|انشا|رساله|حلش\s*کن|حل\s*کن.*(معادله|انتگرال|مشتق)"
+    r"|انتگرال|مشتق|ماتریس|معادله\s*دیفرانسیل|اثبات\s*کن"
+    r"|برنامه\s*(بنویس|رو\s*بنویس)|کد\s*(کامل|رو\s*بنویس)|اپ\s*بساز|سایت\s*بساز|ربات\s*بساز"
+    r"|\bhomework\b|\bassignment\b|\bessay\b|\bthesis\b|\bdissertation\b"
+    r"|\bintegral\b|\bderivative\b|\bmatri(x|ces)\b|\bprove\s+that\b|\btheorem\b"
+    # "write me a bot", and "write me a python bot" with a word in between.
+    r"|\b(write|build|make|code)\s+(me\s+)?(a|an|the)\s+(\w+\s+){0,2}"
+    r"(program|app|bot|chatbot|script|website|site|game|api|server)\b)",
+    re.I,
+)
+
 # Emotional distress.
 _SERIOUS = re.compile(
     r"(افسرده|افسردگی|خودکشی|خودم\s*رو\s*بکشم|نمی‌?خوام\s*زنده|حالم\s*(خیلی\s*)?بده|داغونم"
@@ -91,13 +106,19 @@ _CHATTER = re.compile(
 _QUESTION = re.compile(r"[?؟]")
 
 
-def heuristic(text: str, *, has_media: bool = False) -> tuple[Decision, float]:
+def heuristic(
+    text: str, *, has_media: bool = False, heavy_lifting: bool = True
+) -> tuple[Decision, float]:
     """Return a decision and a confidence score in [0, 1]."""
     body = (text or "").strip()
     words = body.split()
 
     if _SERIOUS.search(body):
         return Decision(SERIOUS, reason="distress signals"), 0.95
+    if not heavy_lifting and _HEAVY.search(body):
+        # It is going to decline this in character, so do not pay a think model to
+        # produce the refusal.
+        return Decision(FAST, reason="not what it is for"), 0.9
     if _FORCE_SEARCH.search(body):
         return Decision(SEARCH, True, "forced", "explicit search request", body[:200]), 1.0
     if _FORCE_THINK.search(body):
@@ -187,7 +208,9 @@ class Router:
         if forced_mode in MODES:
             # A cost-driven downgrade must never turn a distress signal into banter.
             if forced_source != "user":
-                fallback, _ = heuristic(text, has_media=has_media)
+                fallback, _ = heuristic(
+                    text, has_media=has_media, heavy_lifting=self._s.heavy_lifting
+                )
                 if fallback.mode == SERIOUS:
                     return fallback, Usage()
             manual = Decision(
@@ -195,7 +218,9 @@ class Router:
             )
             return manual, Usage()
 
-        decision, confidence = heuristic(text, has_media=has_media)
+        decision, confidence = heuristic(
+            text, has_media=has_media, heavy_lifting=self._s.heavy_lifting
+        )
         if confidence >= CONFIDENT or not self._s.router_llm or not allow_llm:
             return decision, Usage()
         if len(text.split()) < self._s.router_min_words:

@@ -86,12 +86,65 @@ def overview(ctx) -> View:
         keyboard(
             *rows,
             [button("🧪 test all", "svc", "testall"), button("➕ add a service", "svc", "new")],
+            [button("📈 which is doing best", "svc", "ranking")],
             [button("🔀 auto" if pinned else "🔀 automatic order", "svc", "pin", "-")]
             if pinned
             else [],
             back_row(),
         ),
     )
+
+
+def ranking(ctx) -> View:
+    """How each service has actually behaved, and the order that follows from it.
+
+    Nothing here costs an API call: it is the counters written while the bot was
+    working, read back and sorted.
+    """
+    scores = ctx.rt.registry.scores()
+    lines = ["📈 How each service is doing today\n"]
+    if not scores:
+        lines.append("nothing has been called yet today, so there is nothing to compare")
+    for position, score in enumerate(scores, start=1):
+        lines.append(f"{position}. {score.name} — {score.verdict()}")
+
+    pinned = ctx.rt.settings.pinned_service
+    if pinned:
+        lines.append(
+            f"\n📌 Everything is pinned to {pinned}, so this ranking changes nothing "
+            "until you unpin it."
+        )
+    else:
+        lines.append(
+            "\nReliability decides it; cost only separates services that are otherwise "
+            "alike, and on free models it drops out entirely. A service with fewer than "
+            "eight calls is left where it is rather than judged on noise."
+        )
+    return View(
+        "\n".join(lines),
+        keyboard(
+            [button("⬆️ put the best one first", "svc", "reorder")] if not pinned else [],
+            back_row("svc"),
+        ),
+    )
+
+
+def reorder(ctx) -> View:
+    """Apply the ranking to the order services are tried in."""
+    if ctx.rt.settings.pinned_service:
+        view = ranking(ctx)
+        view.alert = "unpin first: nothing else is being tried"
+        return view
+
+    # The live client knows the order things are really tried in, including the
+    # presets that have no stored row.
+    order = ctx.rt.registry.auto_order([p.name for p in ctx.rt.llm.providers])
+    audit(ctx.rt, ctx.user, "service_reorder", ", ".join(order) if order else "no change")
+    view = ranking(ctx)
+    view.alert = (
+        f"order is now {', '.join(order)}" if order else "nothing worth moving yet"
+    )
+    return view
 
 
 async def test_all(ctx) -> View:

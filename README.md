@@ -73,7 +73,7 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 Or take it as a package or an image instead of a clone:
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.4.0"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.5.0"
 astolfo                                  # same bot, on your PATH
 
 docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
@@ -247,6 +247,10 @@ main.py                    entry point
 astolfo/config.py          environment-driven settings
 astolfo/persona.py         layered prompt, few-shot examples, locale detection
 astolfo/routing.py         fast / think / search / serious dispatcher
+astolfo/interest.py        whether an unprompted message is worth answering
+astolfo/attention.py       which chat has its attention right now
+astolfo/tuning.py          how long the next reply may be, from cost and reception
+astolfo/roles.py           who runs each group, and what the bot is in it
 astolfo/providers.py       the known services and their keys
 astolfo/catalog.py         the models a service offers, as records
 astolfo/llm.py             the client: failover, key rotation, retries

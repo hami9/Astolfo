@@ -288,3 +288,23 @@ async def test_the_same_turns_are_not_folded_twice(settings, llm):
     assert len(llm.json_calls) == 2
     sent = llm.json_calls[-1]["messages"][-1]["content"]
     assert "message 0" not in sent, "already folded once"
+
+
+def test_an_empty_turn_is_not_counted_as_a_reply():
+    """The offline path records having nothing to say; that is not a short reply."""
+    state = _state()
+    state.add_assistant("")
+    assert not any(state.reception.sent.values())
+    assert not state.awaiting_reply
+
+
+def test_a_chat_with_no_counters_is_not_restored_for_them(settings):
+    """An empty JSON object would make every chat look worth restoring."""
+    store = ChatStore(settings, open_database(settings.data_dir))
+    store.get(303)  # touched, but nothing was ever said
+    store.mark_dirty()
+    store.save()
+
+    db = open_database(settings.data_dir)
+    assert db.chat(303) is None or db.chat(303)["reception"] == ""
+    assert 303 not in [int(row["chat_id"]) for row in db.chat_settings()]

@@ -98,6 +98,22 @@ cost. On free models every cost is zero, so the number that tells them apart is
 the work — which model is actually carrying the group, and which one you chose
 and never used. `/usage` shows the busiest three in the same terms.
 
+### How it decides to join in
+
+An unprompted reply used to be a coin flip: the same chance for "guys I got tickets!!"
+and for two people three replies deep into a conversation with each other. It now scores
+the message first — an open question, media, something it has opinions about, a running
+joke from this chat's notes — and subtracts for the things that mean *stay out*: a reply
+between two other people, a sign-off, or having just spoken. The chance you set is still
+what decides how talkative it is; it moves the bar rather than being the whole decision,
+and `INTEREST_SCORING=0` puts the coin flip back.
+
+It also has one train of thought. Joining a conversation on its own claims its attention
+for `ATTENTION_HOLD` seconds, and while one group has it the others get a fraction of its
+usual eagerness — one bot behaving like twenty was both the least human thing it did and a
+straight multiplier on the bill. Being spoken to is never gated by this. If somebody asks
+where it went, it says it got caught up talking somewhere else and never says where.
+
 ### How talkative it is
 
 Three modes, set globally or on one group, from **groups → a group**:
@@ -142,6 +158,20 @@ group at once. The specific one wins over the global `CHAT_DAILY_CALL_LIMIT` and
 `USER_DAILY_CALL_LIMIT`; 0 means "follow the global one". Both screens show how
 much of the cap has been used today.
 
+### Which service is actually doing best
+
+**📈 which is doing best** ranks every service on what it has really done today: how many
+calls it answered, how many it failed, what each answered call cost and how many tokens it
+took. Reliability decides it — a service that answers is worth more than one that saves a
+tenth of a cent and returns 402 — and cost only separates services that are otherwise
+alike, which on free models means it drops out entirely. A service with fewer than eight
+calls is left alone rather than judged on noise.
+
+**⬆️ put the best one first** applies that ranking to the order things are tried in. It
+only moves the services it can judge, so a key added this morning is neither promoted nor
+buried. Producing the ranking costs no API calls: it is the counters the bot wrote while
+it was working. Pinning a service disables both, since nothing else is being tried anyway.
+
 ### Choosing a service by hand
 
 Services are normally tried top to bottom, failing over as each runs out. **📌 use
@@ -156,6 +186,39 @@ answers. Being spoken to while that is happening waits its turn rather than bein
 and the waiting is capped at two — a burst of mentions produces a few answers, not fifty.
 Unprompted chatter that arrives mid-reply is dropped, because it is background rather than
 a question.
+
+### How long its replies are
+
+`MAX_TOKENS_FAST` is the ceiling, and two things bring it down on their own:
+
+- **The budget.** Past 60% of the daily budget, replies get shorter on a straight line to
+  half length at the cap. A shorter answer is the cheapest saving there is.
+- **Whether anybody answers.** After it speaks, somebody either replies to it or does not.
+  Replies are bucketed short, medium and long, and once a bucket has clearly won — eight
+  samples and a real margin, not one lucky message — that is what it aims for. A group
+  that scrolls past long messages gets short ones; a group that talks back to them keeps
+  them. `ADAPTIVE_LENGTH=0` turns both off.
+
+Nothing here costs a model call. It is arithmetic over counters, and no message text is
+part of it.
+
+### What it will not do
+
+Out of the box it is a group-chat regular, not a solver: heavy maths, whole programs,
+homework, essays and long translations get a cheerful "that is way past what my head can
+hold" instead of a bad attempt. Quick things — a small sum, a word translated, what
+something means — are just conversation and it answers them normally. Those requests are
+also kept away from the expensive think model, since the answer was going to be a refusal.
+`HEAVY_LIFTING=1` turns it into a solver if that is what you want.
+
+### Who runs the group
+
+With `READ_ADMINS=1` it looks up who runs each group, at most once every fifteen minutes,
+and the prompt then knows whether it is talking to the owner, an admin, or a member — and
+whether it is itself a plain member or an admin. It never uses any of it: no settings, no
+permissions, no pinning, no removing or muting anybody, no invite links, and no claiming
+it did. It can be useful to whoever runs the place without behaving like staff, and it does
+not police the chat.
 
 ### How much it remembers
 

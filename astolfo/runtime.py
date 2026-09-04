@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from .attention import Attention
 from .budget import BudgetTracker
 from .cache import TTLCache
 from .config import Settings
@@ -12,6 +13,7 @@ from .crypto import SecretBox
 from .db import Database, open_database
 from .llm import LLMClient, Usage
 from .memory import ChatStore
+from .roles import Roles
 from .routing import Router
 from .services import ServiceRegistry
 from .strings import Strings
@@ -33,6 +35,9 @@ class Runtime:
     box: SecretBox
     registry: ServiceRegistry
     responses: TTLCache = field(init=False)
+    # One bot, one train of thought, and one cache of who runs which group.
+    attention: Attention = field(init=False)
+    roles: Roles = field(default_factory=Roles)
     # Read on every message, changed only from the panel, so they live in memory.
     blocked: set[int] = field(default_factory=set)
     user_limits: dict[int, int] = field(default_factory=dict)
@@ -40,6 +45,7 @@ class Runtime:
 
     def __post_init__(self) -> None:
         self.responses = TTLCache(maxsize=512, ttl=self.settings.response_cache_ttl)
+        self.attention = Attention(self.settings.attention_hold)
         self.blocked = self.db.blocked_ids()
         self.user_limits = self.db.user_limits()
         self.dormant = self.db.dormant_ids()
@@ -110,6 +116,7 @@ class Runtime:
         self.budget.configure(settings)
         self.strings = Strings(settings.locale)
         self.responses = TTLCache(maxsize=512, ttl=settings.response_cache_ttl)
+        self.attention.configure(settings.attention_hold)
         await self.llm.load_catalog()
         await previous.aclose()
         log.info("settings reloaded: %s", ", ".join(p.name for p in self.llm.providers))

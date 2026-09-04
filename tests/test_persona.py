@@ -110,6 +110,56 @@ def test_the_reply_arrow_is_explained_only_when_used():
     assert "A → B" in persona.dynamic_prompt(mode=FAST, threaded=True)
 
 
+def test_the_voice_rules_name_the_ways_it_actually_went_wrong():
+    """Every line here is a failure seen in real output, not a hypothetical."""
+    prompt = _flat(persona.static_prompt())
+    assert "comma chains" in prompt
+    assert "never restate the thing you just said" in prompt
+    assert "the same shape of message twice" in prompt
+    assert "at most one emoji" in prompt
+    assert "never give advice nobody asked for" in prompt
+    assert "never explain what someone else meant" in prompt
+
+
+def test_it_says_no_to_work_it_was_not_built_for():
+    prompt = _flat(persona.static_prompt())
+    assert "<not-your-job>" in persona.static_prompt()
+    assert "you do not do these" in prompt
+    assert "never attempt one badly" in prompt
+    # Quick things are still normal conversation.
+    assert "a small sum, one word translated" in prompt
+    # And the owner can turn it into a solver if they want one.
+    assert "<not-your-job>" not in persona.static_prompt(heavy_lifting=True)
+
+
+def test_it_knows_it_does_not_run_the_group():
+    prompt = _flat(persona.static_prompt(is_group=True))
+    assert "never change, or offer to change, anything about the group" in prompt
+    assert "you have no buttons" in prompt
+    assert "you do not police the chat" in prompt
+    assert "<who-runs-this-place>" not in persona.static_prompt(is_group=False)
+
+
+def test_where_it_stands_rides_in_the_dynamic_half():
+    prompt = persona.dynamic_prompt(mode=FAST, standing="Reza owns this group.")
+    assert "Reza owns this group." in prompt
+
+
+def test_it_is_told_to_be_vague_about_the_other_chat():
+    prompt = persona.dynamic_prompt(mode=FAST, busy_elsewhere=True)
+    assert "caught up talking somewhere else" in prompt
+    assert "never say which chat" in _flat(prompt)
+    assert "somewhere else" not in persona.dynamic_prompt(mode=FAST)
+
+
+def test_the_compact_prompt_carries_the_same_bans():
+    compact = _flat(persona.compact_prompt())
+    assert "padding with commas" in compact
+    assert "advice nobody asked for" in compact
+    assert "heavy maths, whole programs, homework, essays" in compact
+    assert "one short line" in compact
+
+
 def test_learned_style_rides_in_the_dynamic_half():
     assert "only jokes" in persona.dynamic_prompt(mode=FAST, style="Reza: only jokes")
     assert "picked up" not in persona.dynamic_prompt(mode=FAST, style="")

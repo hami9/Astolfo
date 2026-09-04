@@ -14,6 +14,7 @@ flowchart TB
         C["participation.py<br/>manual · auto · smart"]
         D["budget.py<br/>caps and limits"]
         E["routing.py<br/>fast · think · search · serious"]
+        N["interest.py + attention.py<br/>whether and where to join in"]
         F["persona.py<br/>layered prompt"]
         G["media.py<br/>images · video · voice"]
     end
@@ -24,11 +25,12 @@ flowchart TB
     end
     subgraph state["State"]
         K["memory.py + learning.py<br/>history, notes, learned style"]
-        L["db.py<br/>SQLite, schema v5"]
+        L["db.py<br/>SQLite, schema v6"]
         M["crypto.py<br/>encrypted keys"]
     end
     A --> B
     B --> C & D & E & G
+    C --> N
     E --> F --> H
     H --> I
     H -.->|nothing reachable| J
@@ -61,7 +63,12 @@ flowchart TB
    can block the turn or strip capabilities from it. A limit set on one group or one person
    beats the global one.
 6. **Participation** — when not addressed, `participation.should_join` applies the chat's
-   mode, the cooldown and the reply chance. Media raises the chance.
+   mode and the cooldown, then scores the message with `interest.rate`: an open question,
+   media, something it has opinions about or a running joke in the notes raise it; a reply
+   between two other people, a sign-off, or having just spoken lower it. The reply chance
+   moves the bar rather than being the whole decision. `attention` scales that chance down
+   while another chat holds its attention, so one bot does not hold four unprompted
+   conversations at once.
 7. **The offline shortcut** — if the bot is addressed with plain text and no service is
    usable, the turn is answered from `offline.py` and ends here rather than spending a
    round-trip to learn what it already knows.
@@ -70,9 +77,14 @@ flowchart TB
 9. **Media collection** (`media.collect`) — downloads and converts attachments. A bundle
    the current model cannot read is dropped with an instruction to say so honestly.
 10. **Routing** (`routing.Router.decide`) — heuristics first, the LLM dispatcher only when
-   they are unsure and the budget allows.
+   they are unsure and the budget allows. With `HEAVY_LIFTING` off, homework and heavy
+   maths are settled as `fast`: the persona declines them, so paying a think model to
+   produce the refusal is waste.
 11. **Prompt assembly** (`chat.build_messages`) — static persona, dynamic context, trimmed
     history, optional persona reminder, current turn.
+11b. **Length** (`tuning.reply_ceiling`) — the token ceiling comes down when the day's
+    budget is running out, and when this chat has shown it answers short replies and
+    scrolls past long ones. Counters only; no model call and no message text.
 12. **Model call** (`llm.LLMClient.chat`) — service failover, key rotation, model fallbacks,
     retries, optional web search.
 13. **Quality guard** (free mode only) — a reply that leaks the prompt, echoes the question
@@ -98,7 +110,8 @@ messages[0]  system   static persona   identity, voice, canon, group rules, lang
                                        banned behaviour, meta answers, truthfulness,
                                        few-shot examples, output rules   (~10 KB, stable)
 messages[1]  system   dynamic context  response mode, media rules, learned style,
-                                       notes, reply-arrow notation
+                                       notes, reply-arrow notation, who runs the
+                                       group, whether it is distracted elsewhere
 messages[2:] history  trimmed to what the chosen model can hold
 messages[-1] user     current turn (text, or text + image/audio parts)
 ```
@@ -206,6 +219,10 @@ answer in every mode; silence is what `/mute` is for.
   about manner rather than facts. It rides in the chat's row as JSON and only the lines
   about whoever is in the current turn are ever sent, so a group of twenty pays for two.
   **panel → groups → a group** shows it and can forget it.
+- **Reception** (`tuning.Reception`) — six counters per chat: how many short, medium and
+  long replies were sent, and how many of each somebody answered. It is the only feedback
+  signal the bot has, it costs nothing to collect, and it is what shortens replies in a
+  group that ignores long ones.
 - **Eviction** — chats idle beyond `CHAT_TTL` are dropped, and an LRU bound caps memory at
   `MAX_CHATS`; a chat that is mid-reply is never evicted.
 

@@ -1,10 +1,12 @@
 import asyncio
 import base64
 import io
+from types import SimpleNamespace
 
 from PIL import Image
 
-from astolfo import chat
+from astolfo import chat, tuning
+from astolfo import participation as participation_mod
 from astolfo.llm import Citation, Usage
 from astolfo.persona import FAST, SEARCH, THINK
 from astolfo.routing import Decision
@@ -282,6 +284,114 @@ async def test_a_style_learned_about_someone_else_is_not_sent(rt, llm):
     state.style.learn(people={"Sara": "asks real questions"})
     await run(rt, FakeMessage("astolfo hey", name="Reza"))
     assert "asks real questions" not in llm.calls[0]["messages"][1]["content"]
+
+
+async def test_joining_a_conversation_on_its_own_claims_its_attention(rt):
+    rt.settings = rt.settings.replace(group_reply_chance=1.0, reply_cooldown=0.0)
+    await run(rt, FakeMessage("بچه‌ها کسی گربه دوست داره؟؟", chat_id=-100))
+    assert rt.attention.holds(-100)
+
+
+async def test_while_one_chat_has_it_the_others_get_much_less(rt, llm):
+    """One bot, one train of thought. Twenty groups at once is not human.
+
+    Measured at the default talkativeness, because that is what people run. Turned
+    all the way up the brake is deliberately weaker: at that setting the owner has
+    said they want it in everything.
+    """
+    rt.settings = rt.settings.replace(reply_cooldown=0.0)
+
+    def _joins(*, distracted: bool) -> int:
+        return sum(
+            _try_join(rt, index, distracted=distracted) for index in range(30)
+        )
+
+    assert _joins(distracted=True) < _joins(distracted=False) / 2
+
+
+def _try_join(rt, index: int, *, distracted: bool) -> bool:
+    """One unprompted message in -200, with another chat holding it or not."""
+    state = rt.store.get(-200)
+    state.last_reply_at = float("-inf")
+    state.awaiting_reply = False
+    if distracted:
+        rt.attention.claim(-999)
+    else:
+        rt.attention.release(-999)
+        rt.attention.chat_id = None
+    return participation_mod.should_join(
+        rt, state, "", text="بچه‌ها کسی گربه دوست داره؟؟"
+    )
+
+
+async def test_being_spoken_to_wins_over_the_other_chat(rt):
+    rt.attention.claim(-999)
+    message = FakeMessage("astolfo hey", chat_id=-100)
+    await run(rt, message)
+    assert message.sent, "being addressed is never gated by what it was doing"
+
+
+async def test_it_is_told_to_be_vague_about_where_it_was(rt, llm):
+    rt.attention.claim(-999)
+    await run(rt, FakeMessage("astolfo where were you", chat_id=-100))
+    assert "caught up talking somewhere else" in llm.calls[0]["messages"][1]["content"]
+
+
+async def test_a_reply_between_two_others_is_left_alone(rt, llm):
+    """It used to barge into a conversation it was not part of."""
+    rt.settings = rt.settings.replace(group_reply_chance=0.5, reply_cooldown=0.0)
+    joined = 0
+    for index in range(20):
+        earlier = FakeMessage("چطور پیش رفت؟", name="Reza", user_id=1)
+        message = FakeMessage("خوب بود مرسی", name="Sara", user_id=2, reply_to=earlier)
+        message.message_id = index
+        await run(rt, message)
+        joined += bool(message.sent)
+        rt.store.get(-100).last_reply_at = float("-inf")
+    assert joined < 6
+
+
+async def test_whether_anyone_answered_is_counted(rt):
+    rt.settings = rt.settings.replace(group_reply_chance=0.0)
+    state = rt.store.get(-100)
+
+    await run(rt, FakeMessage("astolfo hi"))
+    assert state.awaiting_reply, "it is waiting to see whether that landed"
+
+    await run(rt, FakeMessage("astolfo and again"))
+    assert state.reception.answered[tuning.SHORT] == 1
+    assert state.reception.sent[tuning.SHORT] == 2, "and it is waiting on the new one"
+
+
+async def test_a_reply_nobody_picks_up_is_counted_too(rt):
+    rt.settings = rt.settings.replace(group_reply_chance=0.0)
+    state = rt.store.get(-100)
+
+    await run(rt, FakeMessage("astolfo hi"))
+    await run(rt, FakeMessage("anyway, unrelated"))
+    assert state.reception.sent[tuning.SHORT] == 1
+    assert state.reception.answered[tuning.SHORT] == 0
+
+
+async def test_who_runs_the_group_reaches_the_prompt(rt, llm):
+    bot = FakeBot()
+    bot.administrators = [
+        SimpleNamespace(user=SimpleNamespace(id=1), status="creator"),
+        SimpleNamespace(user=SimpleNamespace(id=999), status="administrator"),
+    ]
+    await run(rt, FakeMessage("astolfo hey", user_id=1, name="Reza"), bot)
+
+    dynamic = llm.calls[0]["messages"][1]["content"]
+    assert "Reza owns this group." in dynamic
+    assert "never use them" in dynamic, "it is an admin here and must sit on it"
+
+
+async def test_a_group_that_will_not_say_still_gets_an_answer(rt, llm):
+    bot = FakeBot()
+    bot.administrators = RuntimeError("forbidden")
+    message = FakeMessage("astolfo hey")
+    await run(rt, message, bot)
+    assert message.sent, "a failed lookup is one missing line, not a failed turn"
 
 
 async def test_history_is_trimmed_by_char_budget(rt, llm):

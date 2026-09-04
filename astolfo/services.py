@@ -10,12 +10,72 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date
 
 from .crypto import SecretBox, SecretsUnavailable
 from .db import Database
 
 log = logging.getLogger(__name__)
+
+# Below this many calls a service's numbers are noise, so it keeps its place.
+ENOUGH_CALLS = 8
+# What a reliable service is worth against a cheap one. Reliability wins: a service
+# that answers is worth more than one that saves a tenth of a cent and 402s.
+COST_WEIGHT = 0.35
+
+
+@dataclass(frozen=True)
+class Score:
+    """How a service has actually behaved today."""
+
+    name: str
+    requests: int = 0
+    failures: int = 0
+    tokens: int = 0
+    cost: float = 0.0
+    resting: bool = False
+
+    @property
+    def calls(self) -> int:
+        return self.requests + self.failures
+
+    @property
+    def reliability(self) -> float:
+        return self.requests / self.calls if self.calls else 0.0
+
+    @property
+    def cost_per_call(self) -> float:
+        return self.cost / self.requests if self.requests else 0.0
+
+    @property
+    def tokens_per_call(self) -> int:
+        return round(self.tokens / self.requests) if self.requests else 0
+
+    def value(self, dearest: float) -> float:
+        """A number in [0, 1]; higher is a better first choice.
+
+        Reliability carries it. Cost only separates services that are otherwise
+        alike, and on free models every cost is zero so it drops out entirely.
+        """
+        if self.resting:
+            return 0.0
+        if self.calls < ENOUGH_CALLS:
+            return 0.5  # not enough to judge: neither promoted nor demoted
+        cheapness = 1.0 - (self.cost_per_call / dearest if dearest > 0 else 0.0)
+        return (1 - COST_WEIGHT) * self.reliability + COST_WEIGHT * cheapness
+
+    def verdict(self) -> str:
+        if self.resting:
+            return "resting"
+        if self.calls < ENOUGH_CALLS:
+            return f"only {self.calls} calls, too early to say"
+        parts = [f"{self.reliability * 100:.0f}% answered"]
+        if self.cost_per_call:
+            parts.append(f"${self.cost_per_call:.5f}/call")
+        if self.tokens_per_call:
+            parts.append(f"{self.tokens_per_call}t/call")
+        return ", ".join(parts)
 
 
 class ServiceRegistry:
@@ -91,6 +151,60 @@ class ServiceRegistry:
 
     def usage_today(self) -> dict:
         return self._db.service_usage(date.today().isoformat())
+
+    # -- which one is actually doing best ---------------------------------
+    def scores(self) -> list[Score]:
+        """Every configured service ranked by how it has behaved today."""
+        usage = self.usage_today()
+        now = time.time()
+        resting = {
+            row["name"]: float(row["rested_until"] or 0) > now for row in self._db.services()
+        }
+        found: list[Score] = []
+        for name in sorted({*usage, *resting}):
+            row = usage.get(name)
+            found.append(
+                Score(
+                    name=name,
+                    requests=int(row["requests"]) if row else 0,
+                    failures=int(row["failures"]) if row else 0,
+                    tokens=int(row["tokens"]) if row else 0,
+                    cost=float(row["cost"]) if row else 0.0,
+                    resting=resting.get(name, False),
+                )
+            )
+        dearest = max((score.cost_per_call for score in found), default=0.0)
+        return sorted(found, key=lambda score: (-score.value(dearest), score.name))
+
+    def auto_order(self, current: list[str] | None = None) -> list[str]:
+        """Put the best-behaved service first. Returns the new order, or [].
+
+        `current` is the order things are actually tried in, which the caller knows
+        and this does not: a preset with no stored row still has a place in it.
+        Only services with enough calls to judge are moved; the rest keep their
+        relative places, so a brand new key is neither promoted nor buried.
+        """
+        scores = self.scores()
+        judged = {score.name for score in scores if score.calls >= ENOUGH_CALLS}
+        if len(judged) < 2:
+            return []
+
+        if current is None:
+            current = [row["name"] for row in self.rows()]
+        # A judged service with no row of its own still has to be placed, or the
+        # order would silently drop it.
+        current = current + [name for name in judged if name not in current]
+        ranked = [score.name for score in scores if score.name in judged]
+        # Walk the existing order and drop the judged ones back in, best first.
+        wanted, taking = [], iter(ranked)
+        for name in current:
+            wanted.append(next(taking) if name in judged else name)
+        if wanted == current:
+            return []
+        for position, name in enumerate(wanted):
+            self._db.save_service(name, position=position)
+        log.info("service order is now %s", ", ".join(wanted))
+        return wanted
 
     # -- what the panel changes -------------------------------------------
     def add_key(self, service: str, value: str, *, label: str = "") -> int:
