@@ -640,3 +640,21 @@ def test_being_switched_off_survives_a_restart(rt, settings):
     fresh = ChatStore(settings, rt.db)
     assert fresh.get(-100).off is True
     assert -100 in rt.db.dormant_ids()
+
+
+async def test_the_speaker_label_never_reaches_the_chat(rt, llm):
+    """Every reply in the real group came back as "Arash(IQ 26): ..."."""
+    llm.reply = "Reza: ترجیح میدم نگم~"
+    message = FakeMessage("astolfo بگو دیگه", name="Reza")
+    await run(rt, message)
+    assert message.sent == ["ترجیح میدم نگم~"]
+
+
+async def test_it_never_sends_words_it_put_in_someone_else_s_mouth(rt, llm):
+    """One reply carried two invented turns with real members' names on them."""
+    rt.store.get(-100).touch_participant("Mehrshad y")
+    llm.reply = "عا برا خودت\n\nMehrshad y: هههه، گفتم که دیگه، من گوزلم"
+    message = FakeMessage("astolfo چه", name="Reza")
+    await run(rt, message)
+    assert message.sent == ["عا برا خودت"]
+    assert "Mehrshad" not in message.sent[0]

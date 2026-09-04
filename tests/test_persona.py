@@ -163,3 +163,17 @@ def test_the_compact_prompt_carries_the_same_bans():
 def test_learned_style_rides_in_the_dynamic_half():
     assert "only jokes" in persona.dynamic_prompt(mode=FAST, style="Reza: only jokes")
     assert "picked up" not in persona.dynamic_prompt(mode=FAST, style="")
+
+
+def test_the_transcript_is_not_a_script_to_continue():
+    """It came back writing whole exchanges with real members' names on them."""
+    for prompt in (_flat(persona.static_prompt()), _flat(persona.compact_prompt())):
+        assert "never" in prompt and "name and a colon" in prompt
+        assert "never write a line for anyone but you" in prompt
+
+
+def test_one_language_per_message():
+    full = _flat(persona.static_prompt())
+    assert "one language per message" in full
+    assert "aún" in persona.static_prompt(), "the real slip is named as the example"
+    assert "only that one" in _flat(persona.compact_prompt())

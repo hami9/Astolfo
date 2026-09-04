@@ -445,3 +445,36 @@ async def test_the_people_screen_names_the_chat_it_is_showing(owned):
     query, _ = await _press(owned, "ap:chat:778:people")
 
     assert "Nima" in query.edits[0]
+
+
+async def test_a_private_chat_is_named_on_the_person_screen(owned):
+    """It used to show as a bare "?" because only the title was selected."""
+    owned.db.seen_member(user_id=77, chat_id=77, name="Sara", username="sara")
+    owned.db.seen_chat(77, kind="private", title="")
+    owned.db.seen_member(user_id=77, chat_id=-100, name="Sara")
+    owned.db.seen_chat(-100, kind="supergroup", title="Test Group")
+
+    query, _ = await _press(owned, "ap:ppl:77")
+    text = query.edits[0]
+    assert "?" not in text.split("seen in:")[1]
+    assert "Sara" in text and "Test Group" in text
+
+
+def test_the_settings_screen_is_a_grid_not_a_wall(owned):
+    """Thirteen full-width buttons is a wall you scroll past to reach "back"."""
+    from astolfo.admin.panel import Ctx
+    from astolfo.admin.sections import config
+
+    view = config(Ctx(rt=owned, user=SimpleNamespace(id=MASTER), bot=FakeBot()))
+    rows = view.markup.inline_keyboard
+
+    setting_rows = [row for row in rows if len(row) == 2]
+    assert len(setting_rows) >= 6, "the switches pair up two to a row"
+    assert all(len(row) <= 2 for row in rows), "nothing wider than two across"
+
+    # The v2.5 behaviour switches are reachable without typing their names.
+    for name in ("adaptive_length", "interest_scoring", "heavy_lifting", "read_admins"):
+        assert name in view.text, name
+    # Models and services have screens of their own; editing an id by hand does not.
+    for gone in ("model_fast", "model_think", "providers"):
+        assert gone not in view.text, gone

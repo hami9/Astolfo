@@ -11,6 +11,41 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.5.1] - 2026-09-04
+
+All five from one evening of real group output.
+
+### Fixed
+
+- **It answered wearing other people's names.** The prompt shows the conversation as
+  "Reza: ..." lines, and a small model does not answer into that - it continues the
+  script. Every reply came back as "Arash(IQ 26): ..." and some carried two or three
+  further invented turns, putting words in real members' mouths. The output rules now
+  say plainly that the transcript is what other people already said and not a script,
+  and two guards catch what does it anyway: the copied label is stripped, and
+  everything from the first fabricated turn onward is cut. Prose is left alone -
+  Persian puts a colon mid-sentence all the time, and eating half a real answer would
+  be the worse failure.
+- **It mixed languages.** "خوبم، خوبم، Disaster نشدم aún~" - a Persian answer with an
+  English adjective and a Spanish word in it. One language per message is now a stated
+  rule with that exact slip named as the example, and a reply that drifts into a script
+  nobody was writing in (Cyrillic, CJK, Hangul, Thai, Hebrew) is treated as broken and
+  asked again on another model. English terms Iranians really say in English are left
+  alone.
+- **A private chat showed as "?" on a person's screen.** That query selected only the
+  chat title, which a private chat does not have, instead of the fallbacks every other
+  screen uses.
+- **The settings screen was a wall.** Thirteen full-width buttons you scrolled past to
+  reach "back". They pair two to a row now, the model and provider entries are gone
+  because the models and services screens pick from the live catalog instead of asking
+  you to type an id, and the switches added in 2.5.0 - adaptive length, joining on
+  merit, focus hold, homework, reading admins - are on it rather than reachable only by
+  typing their names.
+- **A service that cannot read images was asked on every photo.** cohere answered
+  "image content is not supported for this model" and huggingface an input-validation
+  error, once per picture, forever. The first refusal is now remembered for the life of
+  the process and that service is skipped for media.
+
 ## [2.5.0] - 2026-09-04
 
 Written from a pile of the bot's real group output. Every rule added here is a failure
