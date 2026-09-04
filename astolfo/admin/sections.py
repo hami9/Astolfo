@@ -89,11 +89,8 @@ def home(ctx) -> View:
 def config(ctx) -> View:
     rt = ctx.rt
     stored = rt.db.overrides()
-    lines = [
-        "⚙️ Settings\n",
-        "★ marks a value changed from here. Models and services have screens of "
-        "their own.\n",
-    ]
+    header = "★ marks a value changed from here. Models and services have screens of their own."
+    lines = ["⚙️ Settings\n", f"{header}\n"]
     # Thirteen full-width buttons is a wall you have to scroll past to reach the
     # back button. Two to a row fits the screen and reads as a grid.
     pairs: list[InlineKeyboardButton] = []

@@ -121,7 +121,6 @@ _STRAY_SCRIPT = re.compile(
     "㐀-鿿"       # CJK
     "가-힯]"      # Hangul syllables
 )
-_PERSIAN_RUN = re.compile(r"[؀-ۿ]")
 
 
 def stray_language(reply: str) -> str | None:
