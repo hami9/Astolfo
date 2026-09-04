@@ -114,11 +114,12 @@ Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Command | Description |
 | --- | --- |
 | `/start`, `/help` | introduction and usage |
-| `/about` | channel, creator and what the bot is |
+| `/about` | channel, creator, the source, and what the bot can and cannot do |
+| `/source` | the repository and the capability list on their own |
 | `/chance 0-100` | how often the bot joins conversations unprompted (admin) |
 | `/mode auto\|fast\|think\|search` | pin a response mode (admin) |
 | `/usage` | today's cost, tokens, cache hits and budget state |
-| `/status` | current settings and capabilities |
+| `/status` | current settings; the model and service it runs on only for admins |
 | `/reset` | clear this chat's history and notes (admin) |
 | `/mute`, `/unmute` | silence the bot or bring it back (admin) |
 | `/donate` | send Telegram Stars towards the API bill |

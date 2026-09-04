@@ -48,6 +48,15 @@ Nothing yet.
   summary call that already runs every twelve turns, so it costs no extra request, and
   only the lines about whoever is in the current turn are sent: a group of twenty pays for
   two. **panel → groups → a group** shows it, and **🧠 forget the learned style** clears it.
+- **`/about` says where the code is, and what the bot can and cannot do.** The licence,
+  the repository, and that anyone can run their own copy with their own bot token and
+  their own key — plus a plain list of what it does and what it will not do (text only,
+  no identifying people in pictures, no seeing a chat it is not in, no pretending to know).
+  `/source` gives that half on its own.
+- **The info deliberately does not say which model it is running or whose API pays for
+  it.** That is the operator's business, it changes week to week, and a whole chat does
+  not need it. `/status` still reports both, to admins. A test asserts no provider or
+  model name appears in either text.
 - **It stops guessing who is in a photo.** A guess about a real person is wrong often
   enough not to be worth having. Asked whose photo it is, it now dodges in character —
   reacts to something else, teases, asks who it is — rather than guessing or announcing a
@@ -61,6 +70,8 @@ Nothing yet.
   above removes characters that were paid for and understood by nobody.
 - A reply that comes back wearing the transcript notation it was shown
   (`Astolfo → Sara: ...`) is stripped like any other name prefix.
+- The Persian "out of credit" line named the provider's account to the whole chat; it now
+  says only that the API account needs topping up, as the English one always did.
 
 ## [2.3.3] - 2026-09-04
 

@@ -18,6 +18,7 @@ COMMANDS = [
     BotCommand("start", "say hi to Astolfo"),
     BotCommand("help", "what the bot can do"),
     BotCommand("about", "channel, creator and what I am"),
+    BotCommand("source", "my code, and what I can and can't do"),
     BotCommand("chance", "auto-join chance, 0-100"),
     BotCommand("mode", "auto | fast | think | search"),
     BotCommand("usage", "credit usage and cost"),
@@ -65,6 +66,14 @@ async def help_(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     rt = runtime.get(context)
     await update.effective_message.reply_text(branding.about(rt.strings.locale))
+
+
+async def source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """The open-source half of /about on its own, for people who only want that."""
+    rt = runtime.get(context)
+    await update.effective_message.reply_text(
+        f"{branding.source(rt.strings.locale)}\n\n{branding.credit(rt.strings.locale)}"
+    )
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -167,6 +176,18 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if chance_value is None:
         chance_value = settings.group_reply_chance
 
+    # Which model is running and whose API pays for it is the operator's
+    # business, not the group's: it changes week to week and telling a whole
+    # chat is an invitation to argue about it. Admins still see all of it.
+    engine = ""
+    if await _is_admin(update, context):
+        engine = rt.strings(
+            "status_engine",
+            billing=_billing_label(rt),
+            model_fast=settings.model_fast,
+            model_think=settings.model_think,
+        )
+
     await update.effective_message.reply_text(
         rt.strings(
             "status",
@@ -177,11 +198,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             max_history=settings.max_history,
             notes="yes" if state.notes else "no",
             replies=state.replies_sent,
-            billing=_billing_label(rt),
-            model_fast=settings.model_fast,
-            model_think=settings.model_think,
             web="on" if settings.web_search else "off",
             ffmpeg="full" if media.ffmpeg_available() else "limited (no ffmpeg)",
+            engine=engine,
         )
     )
 

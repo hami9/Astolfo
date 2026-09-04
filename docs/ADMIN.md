@@ -202,6 +202,17 @@ read each variant as something else, which is when the bot starts sounding stupi
 folded into one spelling on its way to the model; the chat still sees exactly what was
 typed.
 
+### What the group is told about the bot
+
+`/about` names the repository and the licence, says anyone can run their own copy, and
+lists plainly what the bot can and cannot do. `/source` is that half on its own.
+
+Neither says which model it is running on or whose API is paying for it. That changes
+week to week, it is nobody's business but yours, and telling a whole chat is an invitation
+to argue about it — the persona already dodges the question when someone asks directly.
+`/status` still reports the model and the service, but only to an admin of the chat; in a
+private chat with you it reports everything.
+
 ### Photos of people
 
 It can see a picture but it cannot tell who is in one, and it does not try — a guess about

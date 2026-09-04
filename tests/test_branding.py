@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from astolfo import branding, master, settings_store
-from astolfo.commands import about
+from astolfo.commands import about, source, status
 from astolfo.config import ConfigError
 from astolfo.db import open_database
 from tests.conftest import FakeContext, FakeMessage, make_update
@@ -34,6 +34,49 @@ def test_every_about_text_names_both(settings):
         assert branding.DISCORD_URL in text
         assert branding.CREATOR in branding.credit(locale)
         assert branding.SITE in branding.credit(locale)
+
+
+def test_the_source_is_named_so_anyone_can_run_their_own(settings):
+    for locale in ("en", "fa"):
+        text = branding.source(locale)
+        assert branding.REPO_URL in text
+        assert branding.LICENSE in text
+    assert branding.REPO_URL in branding.about("en")
+    assert branding.REPO_URL in branding.about("fa")
+
+
+def test_the_info_says_what_it_can_and_cannot_do(settings):
+    for locale in ("en", "fa"):
+        text = branding.about(locale)
+        assert "✅" in text and "🚫" in text
+        assert "/donate" in text
+
+
+def test_the_info_never_names_the_model_or_the_provider(settings):
+    """Whose API is paying for it is the operator's business, not the group's."""
+    for locale in ("en", "fa"):
+        text = (branding.about(locale) + branding.source(locale)).lower()
+        for leak in ("openrouter", "gemini", "gpt", "google", "groq", "deepseek", "claude"):
+            assert leak not in text, f"the info gives away {leak}"
+
+
+async def test_source_answers_with_the_repo_and_the_credit(settings, rt, bot):
+    message = FakeMessage("/source")
+    await source(make_update(message), FakeContext(rt, bot))
+    assert branding.REPO_URL in message.sent[0]
+    assert branding.CREATOR in message.sent[0]
+
+
+async def test_status_keeps_the_model_off_the_group_screen(settings, rt, bot):
+    group = FakeMessage("/status")
+    await status(make_update(group), FakeContext(rt, bot))
+    assert rt.settings.model_fast not in group.sent[0]
+    assert "auto-join chance" in group.sent[0], "the rest of it is still there"
+
+    # In a private chat the person asking is the operator, so they see all of it.
+    private = FakeMessage("/status", chat_id=777, chat_type="private")
+    await status(make_update(private), FakeContext(rt, bot))
+    assert rt.settings.model_fast in private.sent[0]
 
 
 def test_the_credit_cannot_be_overridden_from_the_panel(settings):
