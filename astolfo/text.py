@@ -19,6 +19,78 @@ DEFAULT_ALIASES = ("astolfo", "آستولفو", "استولفو")
 _NAME_PREFIX = re.compile(
     r"^\s*(astolfo|آستولفو|استولفو)\s*(?:(?:→|->)\s*[^\n:]{1,32})?\s*[:：\-–]\s*", re.I
 )
+
+# The history reaches the model as "Reza: ..." lines, and a small model reading
+# that continues the transcript instead of answering into it: the reply comes
+# back wearing the name of whoever it is answering. The prompt says not to, and
+# this is what catches the ones that do it anyway.
+_SPEAKER = re.compile(
+    r"""^\s*
+    (?P<who>[^\s:：\n][^:：\n]{0,31}?)      # a short label
+    (?:\s*(?:→|->)\s*[^:：\n]{1,32}?)?      # optionally "→ somebody"
+    \s*[:：][ \t]+                          # the colon, then real whitespace
+    (?=\S)                                  # and something after it
+    """,
+    re.X,
+)
+# A label that is really a name: a few words, no sentence punctuation, not a
+# clock time. "20:35" and "https://x" must survive; "Arash(IQ 26):" must not.
+_NOT_A_NAME = re.compile(r"[.!?،؛…]|^\d+$")
+# "assistant:" is not a name, it is a model that has lost track of what it is.
+# Left in place on purpose, so the quality guard still sees it and asks another
+# model rather than quietly sending the remains.
+_ROLE_WORDS = {"system", "user", "assistant", "human", "ai", "bot"}
+
+
+def strip_speaker(reply: str, known: Iterable[str] = ()) -> str:
+    """Drop a leading "Name:" the model copied from the transcript it was shown.
+
+    Names the chat actually contains are removed on sight. Anything else has to
+    look like a name rather than like prose, because a false positive eats the
+    first words of a real answer.
+    """
+    body = (reply or "").lstrip()
+    match = _SPEAKER.match(body)
+    if not match:
+        return body
+    who = match.group("who").strip()
+    rest = body[match.end() :].lstrip()
+    if not rest:
+        return body
+
+    if who.casefold() in _ROLE_WORDS:
+        return body
+    folded = {" ".join(name.split()).casefold() for name in known if name}
+    if who.casefold() in folded:
+        return rest
+    # Nobody the chat knows, so it has to look like a name on its own: one word
+    # and short. Persian puts a colon after a clause all the time ("راستش
+    # نمیدونم: شاید فردا"), and eating the first half of a real answer is a
+    # worse failure than leaving one stray label in place.
+    if len(who) <= 24 and len(who.split()) == 1 and not _NOT_A_NAME.search(who):
+        return rest
+    return body
+
+
+def cut_impersonation(reply: str, known: Iterable[str] = ()) -> str:
+    """Stop at the point where it starts writing other people's messages.
+
+    Shown a transcript of "Reza: ..." lines, a small model does not answer into
+    it - it continues the script, and one reply comes back carrying two or three
+    invented turns with real people's names on them. Putting words in a member's
+    mouth is the worst thing this bot can do, so everything from the first such
+    line onward is cut and only what it said as itself is sent.
+    """
+    folded = {" ".join(name.split()).casefold() for name in known if name}
+    if not folded:
+        return reply
+    kept: list[str] = []
+    for line in (reply or "").splitlines():
+        match = _SPEAKER.match(line)
+        if match and match.group("who").strip().casefold() in folded:
+            break
+        kept.append(line)
+    return "\n".join(kept).strip() or reply.strip()
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _UNDERLINE = re.compile(r"__(.+?)__", re.S)
 _HEADER = re.compile(r"^\s{0,3}#{1,6}\s+", re.M)
@@ -37,6 +109,30 @@ _PROMPT_LEAK = re.compile(
     re.I,
 )
 _ROLE_PREFIX = re.compile(r"^\s*(system|user|assistant)\s*:", re.I)
+
+# Scripts nobody in a Persian or English chat was writing in. A free multilingual
+# model that loses the thread reaches for one of these mid-sentence.
+_STRAY_SCRIPT = re.compile(
+    "[Ѐ-ӿ"      # Cyrillic
+    "֐-׿"       # Hebrew
+    "฀-๿"       # Thai
+    "ᄀ-ᇿ"       # Hangul
+    "぀-ヿ"       # Kana
+    "㐀-鿿"       # CJK
+    "가-힯]"      # Hangul syllables
+)
+_PERSIAN_RUN = re.compile(r"[؀-ۿ]")
+
+
+def stray_language(reply: str) -> str | None:
+    """Which foreign script leaked into this reply, if any.
+
+    Free models drift: a Persian answer comes back with a Chinese or Cyrillic word
+    dropped into the middle of it. A Latin word is left alone here because Persian
+    chats really do use English terms; only scripts nobody was writing in count.
+    """
+    match = _STRAY_SCRIPT.search(reply or "")
+    return match.group(0) if match else None
 
 # Persian typed on a phone arrives in several spellings of the same word: an
 # Arabic keyboard gives ي and ك where Persian wants ی and ک, diacritics and
@@ -211,6 +307,10 @@ def looks_broken(reply: str, *, echoes: str = "", previous: str = "") -> str | N
         return "leaked the prompt"
     if _ROLE_PREFIX.match(body):
         return "answered in transcript format"
+
+    stray = stray_language(body)
+    if stray:
+        return f"drifted into another script ({stray!r})"
 
     folded = " ".join(body.lower().split())
     if echoes and folded == " ".join(echoes.lower().split()):

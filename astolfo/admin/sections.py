@@ -14,21 +14,36 @@ from .ui import ago, back_row, button, confirm_rows, keyboard, trim, yes_no
 
 log = logging.getLogger(__name__)
 
-# Settings worth a button. Everything else is reachable by name through "edit".
+# Settings worth a button, in the order somebody actually reaches for them.
+# Models and services are not here on purpose: they have screens of their own
+# that pick from the live catalog, which beats typing a model id by hand.
 COMMON = (
     "free_mode",
-    "providers",
-    "model_fast",
-    "model_think",
-    "model_media",
     "group_reply_chance",
     "reply_cooldown",
+    "max_tokens_fast",
+    "adaptive_length",
+    "interest_scoring",
+    "attention_hold",
+    "heavy_lifting",
+    "read_admins",
     "web_search",
     "summaries",
     "daily_budget_usd",
     "locale",
 )
-TOGGLES = ("free_mode", "web_search", "summaries", "router_llm", "response_cache", "donate_enabled")
+TOGGLES = (
+    "free_mode",
+    "web_search",
+    "summaries",
+    "router_llm",
+    "response_cache",
+    "donate_enabled",
+    "adaptive_length",
+    "interest_scoring",
+    "heavy_lifting",
+    "read_admins",
+)
 
 
 @dataclass
@@ -74,23 +89,49 @@ def home(ctx) -> View:
 def config(ctx) -> View:
     rt = ctx.rt
     stored = rt.db.overrides()
-    lines = ["⚙️ Settings\n", "★ marks a value changed from here.\n"]
-    rows: list[list[InlineKeyboardButton]] = []
+    lines = [
+        "⚙️ Settings\n",
+        "★ marks a value changed from here. Models and services have screens of "
+        "their own.\n",
+    ]
+    # Thirteen full-width buttons is a wall you have to scroll past to reach the
+    # back button. Two to a row fits the screen and reads as a grid.
+    pairs: list[InlineKeyboardButton] = []
 
     for name in COMMON:
-        value = getattr(rt.settings, name)
+        value = getattr(rt.settings, name, None)
         shown = ", ".join(str(v) for v in value) if isinstance(value, list) else value
         star = "★" if name in stored else " "
-        lines.append(f"{star} {name}: {shown}")
-        if name in TOGGLES:
-            rows.append([button(f"{name}: {yes_no(value)} → flip", "cfg", "flip", name)])
-        else:
-            rows.append([button(f"edit {name}", "cfg", "edit", name)])
+        lines.append(f"{star} {name}: {yes_no(value) if name in TOGGLES else shown}")
+        pairs.append(
+            button(f"{_short(name)}: {yes_no(value)}", "cfg", "flip", name)
+            if name in TOGGLES
+            else button(f"✏️ {_short(name)}", "cfg", "edit", name)
+        )
 
+    rows = [pairs[i : i + 2] for i in range(0, len(pairs), 2)]
+    rows.append([button("🧠 models", "mdl"), button("🔌 services", "svc")])
     rows.append([button("✏️ another setting by name", "cfg", "byname")])
     if stored:
         rows.append([button("↩️ reset one to the .env value", "cfg", "reset")])
     return View("\n".join(lines), keyboard(*rows, back_row()))
+
+
+def _short(name: str) -> str:
+    """Two of these share a row, so the label has to fit beside another one."""
+    return {
+        "group_reply_chance": "join chance",
+        "reply_cooldown": "cooldown",
+        "max_tokens_fast": "reply length",
+        "adaptive_length": "auto length",
+        "interest_scoring": "join on merit",
+        "attention_hold": "focus hold",
+        "heavy_lifting": "does homework",
+        "read_admins": "reads admins",
+        "daily_budget_usd": "daily budget",
+        "free_mode": "free mode",
+        "web_search": "web search",
+    }.get(name, name.replace("_", " "))
 
 
 def config_prompt(ctx, name: str) -> View:
@@ -448,16 +489,19 @@ def person_detail(ctx, user_id: int) -> View:
     if row is None:
         return View("nobody with that id has spoken to the bot", keyboard(back_row("ppl")))
 
+    # The same fallbacks the groups list uses. Selecting only the title is why a
+    # private chat, which has none, showed up here as a bare "?".
     seen_in = rt.db.query(
         """
-        SELECT c.title, m.messages FROM members m
-        LEFT JOIN chats c ON c.chat_id = m.chat_id
+        SELECT m.chat_id, m.messages, c.title, c.username,
+               (SELECT u.name FROM users u WHERE u.user_id = m.chat_id) AS person
+        FROM members m LEFT JOIN chats c ON c.chat_id = m.chat_id
         WHERE m.user_id = ? ORDER BY m.messages DESC LIMIT 5
         """,
         (user_id,),
     )
     where = (
-        "\n".join(f"• {trim(r['title'] or '?')}: {r['messages']}" for r in seen_in) or "• nowhere"
+        "\n".join(f"• {trim(chat_name(r), 30)}: {r['messages']}" for r in seen_in) or "• nowhere"
     )
     limit = rt.limit_for(user_id) or rt.settings.user_daily_call_limit or "none"
     text = (

@@ -21,6 +21,7 @@ from .routing import Decision
 from .runtime import Runtime
 from .text import (
     clean_name,
+    cut_impersonation,
     format_sources,
     is_addressed,
     looks_broken,
@@ -28,6 +29,7 @@ from .text import (
     polish,
     shorten,
     split_message,
+    strip_speaker,
     typing_indicator,
 )
 
@@ -394,7 +396,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             rt.record(mode=decision.mode, model=result.model or params["model"],
                       usage=result.usage, chat_id=chat.id, user_id=message.from_user.id)
 
-            reply = polish(result.text or "")
+            speakers = _speakers(state, sender, bot_user)
+            reply = _shape(result.text, speakers)
             # Small models leak the prompt or parrot the question. One more go on a
             # different model is cheaper than sending that to the chat.
             if settings.free_mode and result.ok:
@@ -407,7 +410,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     rt.record(mode=decision.mode, model=result.model or params["model"],
                               usage=result.usage, chat_id=chat.id,
                               user_id=message.from_user.id)
-                    reply = polish(result.text or "")
+                    reply = _shape(result.text, speakers)
                     if looks_broken(reply, echoes=text, previous=_last_reply(state)):
                         rt.llm.mark_unusable(result.model)
                         reply = ""
@@ -442,6 +445,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if settings.summaries:
         context.application.create_task(_summarize(rt, state))
+
+
+def _speakers(state: ChatState, sender: str, bot_user) -> list[str]:
+    """Every name this chat writes at the front of a line."""
+    names = [sender, *state.participants]
+    if bot_user is not None:
+        names += [bot_user.first_name or "", getattr(bot_user, "username", "") or ""]
+    return [name for name in names if name]
+
+
+def _shape(raw: str | None, speakers: list[str]) -> str:
+    """Turn what the model returned into one message from one person.
+
+    Shown a transcript, a small model continues it: the reply arrives wearing the
+    name of whoever it is answering, and sometimes carries two or three more
+    invented turns with real members' names on them. The prompt forbids both;
+    this is what catches the ones that do it anyway.
+    """
+    return polish(cut_impersonation(strip_speaker(raw or "", speakers), speakers))
 
 
 def _offline_excuse(rt: Runtime, state: ChatState) -> str:

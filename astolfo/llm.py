@@ -123,6 +123,10 @@ class LLMClient:
         self._free_vision: list[str] = []
         self._free_audio: list[str] = []
         self._cooldowns: dict[str, float] = {}
+        # Services that answered a photo with "image content is not supported".
+        # Remembered for the life of the process, not the database: it is a fact
+        # about the model in use, and that changes from the panel.
+        self._text_only: set[str] = set()
         self._scores: dict[str, int] = {}
         self._pace_lock = asyncio.Lock()
 
@@ -608,6 +612,11 @@ class LLMClient:
 
         last = ChatResult(error="no provider attempted", error_kind="throttled")
         for provider in live:
+            if vision and provider.name in self._text_only:
+                # It told us so the last time. Asking again is a round trip that
+                # can only end the same way.
+                log.debug("skipping %s: it does not take images", provider.name)
+                continue
             last = await self._chat_with(
                 provider,
                 messages,
@@ -722,6 +731,13 @@ class LLMClient:
                         log.warning("web plugin rejected, retrying without search")
                         web = False
                         continue
+                    if vision and _about_images(lowered):
+                        # Learned once and remembered for the life of the process,
+                        # so every later photo skips this service instead of
+                        # spending a call to be told the same thing.
+                        self._text_only.add(provider.name)
+                        log.info("%s does not take images; it will be skipped for "
+                                 "media from now on", provider.name)
                     log.error("%s rejected the request: %s", provider.name, body)
                     return ChatResult(error=f"HTTP 400: {body[:200]}", error_kind="rejected")
 
@@ -866,6 +882,18 @@ class LLMClient:
         if not result.ok:
             return None, result.usage
         return parse_json(result.text or ""), result.usage
+
+
+def _about_images(body: str) -> bool:
+    """Whether a 400 is the service saying it cannot read pictures at all.
+
+    Seen in the wild as "image content is not supported for this model" and as a
+    bare input-validation error naming the image part.
+    """
+    return any(
+        word in body
+        for word in ("image", "vision", "multimodal", "image_url", "not supported for this model")
+    )
 
 
 def _retry_after(resp: httpx.Response, default: float) -> float:

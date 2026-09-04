@@ -3,12 +3,16 @@ from types import SimpleNamespace
 from astolfo.text import (
     TELEGRAM_MAX_LEN,
     clean_name,
+    cut_impersonation,
     format_sources,
     is_addressed,
+    looks_broken,
     normalize_input,
     polish,
     shorten,
     split_message,
+    stray_language,
+    strip_speaker,
 )
 
 
@@ -119,3 +123,64 @@ def test_is_addressed_variants():
 
     mention = SimpleNamespace(type="text_mention", user=SimpleNamespace(id=999))
     assert is_addressed(_message("look", entities=[mention]), bot_user)
+
+
+# -- the transcript it was shown is not a script to continue -----------------
+KNOWN = ["Arash(IQ 26)", "Arash", "Mehrshad y", "Hami", "Astolfo"]
+
+
+def test_the_speaker_label_it_copied_is_removed():
+    """Every reply in the group came back wearing the name of whoever it answered."""
+    assert strip_speaker("Arash(IQ 26): ترجیح میدم نگم~", KNOWN) == "ترجیح میدم نگم~"
+    assert strip_speaker("Hami: نخییییم", KNOWN) == "نخییییم"
+    assert strip_speaker("Astolfo → Sara: hi", KNOWN) == "hi"
+
+
+def test_a_name_it_invented_is_removed_too():
+    """"Dollar" was a character in a GIF, not anyone in the chat."""
+    assert strip_speaker("Dollar: heyyy that's me??", KNOWN) == "heyyy that's me??"
+
+
+def test_it_does_not_eat_the_start_of_a_real_answer():
+    for text in (
+        "20:35 که رسیدم",
+        "https://example.com is the link",
+        "راستش نمیدونم: شاید فردا",
+        "یه چیزی بگم: خیلی بامزه بود",
+        "ehehe~ nope",
+    ):
+        assert strip_speaker(text, KNOWN) == text
+
+
+def test_a_role_label_is_left_for_the_quality_guard():
+    """"assistant:" is not a name, it is a model that lost track of itself."""
+    assert strip_speaker("assistant: hello", KNOWN) == "assistant: hello"
+    assert looks_broken("assistant: hello") == "answered in transcript format"
+
+
+def test_it_stops_writing_other_people_s_messages():
+    """One reply came back carrying two invented turns with real members' names."""
+    faked = "عا برا خودت\n\nArash: هههه، گفتم که دیگه، من گوزلم"
+    assert cut_impersonation(faked, KNOWN) == "عا برا خودت"
+
+
+def test_a_normal_reply_survives_both():
+    plain = "ehehe~ nope\nنمیگم بهت"
+    assert cut_impersonation(strip_speaker(plain, KNOWN), KNOWN) == plain
+
+
+def test_nothing_is_cut_when_the_chat_has_no_names_yet():
+    assert cut_impersonation("Reza: hi", []) == "Reza: hi"
+
+
+# -- one language per message ------------------------------------------------
+def test_a_script_nobody_was_writing_in_is_a_broken_reply():
+    assert stray_language("خوبم، 你好 نشدم") == "你"
+    assert looks_broken("خوبم، 你好 نشدم")
+    assert looks_broken("hello привет")
+
+
+def test_english_inside_persian_is_left_alone():
+    """Persian chats really do say کد and آپدیت in English."""
+    assert stray_language("آپدیت رو زدم، commit هم کردم") is None
+    assert not looks_broken("آپدیت رو زدم، commit هم کردم")
