@@ -7,8 +7,11 @@ contact_links:
     url: https://github.com/hami9/Astolfo/security/advisories/new
     about: Report privately. Please do not open a public issue.
   - name: Telegram
-    url: https://t.me/hami249
+    url: https://t.me/hami294
     about: The project's channel.
+  - name: Discord
+    url: https://discord.gg/K33PnNafcD
+    about: Chat with other people running it.
   - name: hami9.ir
     url: https://hami9.ir
     about: The author's site.

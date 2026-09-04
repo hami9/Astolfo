@@ -75,7 +75,7 @@ docker run -d --name astolfo --restart unless-stopped \
   ghcr.io/hami9/astolfo:latest
 ```
 
-Pin a version (`ghcr.io/hami9/astolfo:2.3.1`) if you would rather decide when to move.
+Pin a version (`ghcr.io/hami9/astolfo:2.3.2`) if you would rather decide when to move.
 `docker build -t astolfo .` builds the same image from a clone.
 
 With the bundled [docker-compose.yml](../docker-compose.yml), put the credentials in a
@@ -89,7 +89,7 @@ not apply here: pull the new image and recreate the container instead.
 ## As a package
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.1"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.2"
 astolfo --version
 astolfo
 ```

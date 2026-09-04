@@ -34,7 +34,7 @@ flowchart LR
     C -->|hit| R([reply])
     C -->|miss| RT{router}
     RT -->|fast · think<br/>search · serious| L[[LLM client]]
-    L -->|11 services,<br/>failover + rotation| R
+    L -->|13 services,<br/>failover + rotation| R
     L -.->|nothing reachable| O[offline answers]
     O --> R
 ```
@@ -73,7 +73,7 @@ Install `ffmpeg` for voice and video analysis (`apt install ffmpeg` / `brew inst
 Or take it as a package or an image instead of a clone:
 
 ```bash
-pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.1"
+pip install "astolfo-bot @ git+https://github.com/hami9/Astolfo@v2.3.2"
 astolfo                                  # same bot, on your PATH
 
 docker run -d --env-file .env -v astolfo-data:/data ghcr.io/hami9/astolfo:latest
@@ -294,7 +294,7 @@ repository.
 ## Author
 
 Built by [@ham1235i](https://t.me/ham1235i) — [hami9.ir](https://hami9.ir), channel
-[@hami249](https://t.me/hami249).
+[@hami294](https://t.me/hami294), and a [Discord](https://discord.gg/K33PnNafcD).
 
 ## License
 
