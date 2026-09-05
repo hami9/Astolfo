@@ -123,6 +123,33 @@ _STRAY_SCRIPT = re.compile(
 )
 
 
+# Explicit terms, checked only against what the bot itself wrote - never against
+# what anybody sends it. The prompt is what makes it deflect gracefully; this is
+# the backstop that makes sure the one output that must never ship never ships,
+# the same way the leak patterns above work.
+#
+# Deliberately narrow. Persian "کس" is left out because it is also the ordinary
+# word in "هیچ کس" and "کسی", and eating a real reply is its own failure; the
+# slang spelling "کص" and the unambiguous terms are what this catches.
+_EXPLICIT = re.compile(
+    r"(کیر|کص|کوس|ممه|پستون|کون\b|جنده|بگام|میگام|گایید|ساک\s*بزن|سکس"
+    r"|\bcock\b|\bdick\b|\bpussy\b|\bcunt\b|\btits\b|\bboobs\b|blowjob"
+    r"|\bhorny\b|\bcum\b|suck\s+(my|your)|fuck\s+(me|you)\b)",
+    re.I,
+)
+
+
+def went_explicit(reply: str) -> bool:
+    """Whether the bot wrote something sexual it should have deflected instead.
+
+    Astolfo is unbothered by crude jokes and the group makes plenty; what this
+    catches is the bot joining in - describing itself, agreeing to something, or
+    answering a question built out of a real member's name. It reads the reply
+    only. Nothing anybody sends is filtered, blocked or judged by it.
+    """
+    return bool(_EXPLICIT.search(reply or ""))
+
+
 def stray_language(reply: str) -> str | None:
     """Which foreign script leaked into this reply, if any.
 
