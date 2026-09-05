@@ -11,6 +11,25 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.2] - 2026-09-05
+
+### Fixed
+
+- **A service that answered was still being ignored.** From the panel, at the same
+  moment: the test said `openrouter: answered by minimax/minimax-m3:free`, and the
+  services screen said `resting for 374 more minutes`. One 403 hours earlier had
+  put it out for a day, and nothing ever cancelled that - not a passing test, not
+  a successful call. The bot could prove a service worked and go on refusing to
+  use it. Answering now clears the rest, in memory and in the database, and the
+  panel's own test is the obvious way to bring something back after topping up a
+  balance or replacing a key. A failing test still leaves it resting, because the
+  rest is cancelled by evidence rather than by pressing the button.
+- **A 403 cost a whole day, the same as a 401.** They are not the same claim: 401
+  says this key is not valid, 403 says not this request, right now - a balance
+  that dipped, a policy, a regional hiccup - and the same key often works minutes
+  later. OpenRouter's did. A 403 now rests for ten minutes; only a 401 is worth a
+  day. Cerebras, which really does answer 401, is unaffected.
+
 ## [2.6.1] - 2026-09-05
 
 Three things a real group conversation showed going wrong, and one of them was
@@ -589,7 +608,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.2...HEAD
+[2.6.2]: https://github.com/hami9/Astolfo/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/hami9/Astolfo/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.4...v2.6.0
 [2.5.4]: https://github.com/hami9/Astolfo/compare/v2.5.3...v2.5.4

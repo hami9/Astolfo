@@ -39,6 +39,11 @@ MAX_SINK = 3
 QUOTA_COOLDOWN = 6 * 3600.0
 # A refused key is a configuration problem; asking again this run cannot fix it.
 AUTH_COOLDOWN = 24 * 3600.0
+# A 403 is not the same claim as a 401. 401 says this key is not valid; 403 says
+# not right now - a balance that dipped, a policy, a regional hiccup - and the
+# same key often works minutes later. OpenRouter answered a panel test while the
+# bot was still sitting out a day-long rest earned by one 403.
+FORBIDDEN_COOLDOWN = 600.0
 
 # A free-tier 429 is account-wide, so every model is equally unavailable and the
 # only useful response is for the whole bot to stop knocking for a while.
@@ -207,9 +212,39 @@ class LLMClient:
         credential.last_error = ""
         self._registry.note_use(credential.id)
         self._registry.note_ok(credential.id)
+        self._revive(provider, credential)
         self._registry.record_call(
             provider.name, tokens=result.usage.total_tokens, cost=result.usage.cost
         )
+
+    def _revive(
+        self,
+        provider: providers_mod.Provider,
+        credential: providers_mod.Credential | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        """It answered, so stop treating it as broken.
+
+        A refused key used to rest the service for a day and nothing ever
+        cancelled that, however the reason went away - a balance topped up, a
+        block lifted, a key replaced. The panel's own test could get an answer
+        and the bot would still ignore the service for the rest of the day.
+        Written only when something was actually resting, so the ordinary
+        successful call costs no database write.
+        """
+        # `force` because the panel's test clears the pause before making the
+        # call, so by the time the answer arrives there is nothing left in memory
+        # to say it had been resting - and the stored rest would outlive it.
+        resting = force or provider.paused_until > time.monotonic()
+        provider.paused_until = 0.0
+        if resting and self._registry:
+            log.info("%s answered, so it is back in the rotation", provider.name)
+            self._registry.revive_service(provider.name)
+        if credential is not None and credential.rested_until:
+            credential.rested_until = 0.0
+            if self._registry:
+                self._registry.revive_credential(credential.id)
 
     def _restore_strikes(self) -> None:
         """Carry what each model has already been caught doing into this run."""
@@ -307,6 +342,7 @@ class LLMClient:
             return False, "no key configured for this service"
 
         was_paused, provider.paused_until = provider.paused_until, 0.0
+        result = ChatResult(error="the test did not run")
         try:
             result = await self._chat_with(
                 provider,
@@ -323,9 +359,15 @@ class LLMClient:
                 audio=False,
             )
         finally:
-            provider.paused_until = max(was_paused, provider.paused_until)
+            if not result.ok:
+                # Still unwell, so it goes back to resting where it was. A
+                # successful test is left alone: `_note_result` has already put
+                # the service back in the rotation, which is the whole point of
+                # pressing test on something the bot has given up on.
+                provider.paused_until = max(was_paused, provider.paused_until)
 
         if result.ok:
+            self._revive(provider, force=was_paused > time.monotonic())
             return True, f"answered by {result.model}"
         if result.error_kind == "auth":
             return False, "the key was refused"
@@ -976,14 +1018,23 @@ class LLMClient:
                     return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
 
                 if resp.status_code in (401, 403):
-                    detail = f"HTTP {resp.status_code}: the key was refused"
+                    # 401 is a claim about the key; 403 is a claim about this
+                    # request. Only the first is worth a day off.
+                    refused = resp.status_code == 401
+                    detail = (
+                        "HTTP 401: the key was refused"
+                        if refused
+                        else "HTTP 403: the service would not take this request"
+                    )
                     log.error(
-                        "%s refused a key (%s)%s",
+                        "%s turned a request away (%s)%s",
                         provider.name,
                         resp.status_code,
                         f" [{credential.label}]" if credential.label else "",
                     )
-                    self._rest_credential(credential, AUTH_COOLDOWN, detail)
+                    self._rest_credential(
+                        credential, AUTH_COOLDOWN if refused else FORBIDDEN_COOLDOWN, detail
+                    )
 
                     spare = provider.next_key(credential, time.time())
                     if spare is not None:
