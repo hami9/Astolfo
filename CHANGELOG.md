@@ -11,6 +11,32 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.6] - 2026-09-05
+
+### Fixed
+
+- **It had become a doormat.** One evening in the group, all of it real output:
+  told it talks too much, it apologised; called a clown, it said being a clown is
+  cool; called a name, it said the name back; handed a crude two-way insult about
+  its parents, it answered "maybe both". Every reply took the other person's side
+  against itself. Nothing in the prompt was wrong - "unbothered" is right, "never
+  apologise for being weak" is right - but a small model reads unbothered as
+  agreeable, and free mode runs the compact prompt, which said neither of those
+  things. A new `<spine>` layer says the part that was missing: being impossible to
+  offend and being nobody's punching bag are the same trait, not opposite ones.
+  Never agree with an insult, never apologise for being yourself, never hand the
+  name back as though it were a compliment - and never sulk or lecture about it
+  either. Answer back: smug about how weak the attempt was, delighted they
+  bothered, teasing, or carry on regardless. It stops well short of cruelty:
+  anything crude about somebody's family gets one bored line and is never answered
+  in kind, teasing never becomes humiliation, and a person who is genuinely upset
+  still gets the sincere voice. In the compact prompt too, which is the one that
+  was actually running.
+- **Echoing and shrugging, the mechanics of how it caved.** "Handing back the words
+  of the message you are answering" and "maybe, maybe not, I don't know" are now
+  named in both prompts. Half those replies were the incoming message with an
+  exclamation mark on it.
+
 ## [2.6.5] - 2026-09-05
 
 ### Fixed
@@ -659,7 +685,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.5...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.6...HEAD
+[2.6.6]: https://github.com/hami9/Astolfo/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/hami9/Astolfo/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/hami9/Astolfo/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/hami9/Astolfo/compare/v2.6.2...v2.6.3
