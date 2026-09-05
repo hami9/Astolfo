@@ -49,7 +49,10 @@ async def test_a_request_in_flight_survives_the_client_being_retired(settings, m
     assert not closing.done(), "the close waits rather than pulling the pool out"
     release.set()
     assert (await turn).text == "hi", "the reply still arrives"
-    await closing
+    # wait_for rather than a bare `await closing`: it asserts the close actually
+    # completes once the request lets go, and reads as doing something, which a
+    # bare await on a task name does not - to CodeQL or to the next reader.
+    await asyncio.wait_for(closing, timeout=5.0)
 
 
 async def test_the_drain_gives_up_rather_than_hanging_forever(settings, monkeypatch):
@@ -144,6 +147,39 @@ async def _done():
 def _record(into):
     into.append(True)
     return _done()
+
+
+async def test_a_redraw_that_fails_says_so(settings, monkeypatch, caplog):
+    """Suppressing this silently was my own regression: a panel that quietly
+    stops updating with nothing in the log is worse to chase than one that throws."""
+    from astolfo.admin import panel
+
+    class _Query:
+        data = "ap:home"
+        message = None
+        from_user = SimpleNamespace(id=1)
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    async def _boom(*args):
+        raise RuntimeError("Message is too long")
+
+    monkeypatch.setattr(panel, "allowed", lambda *a: True)
+    monkeypatch.setattr(panel, "_edit", _boom)
+    monkeypatch.setattr(panel.runtime, "get", lambda ctx: SimpleNamespace(db=None))
+
+    async def _route(ctx, parts):
+        return panel.View("ok")
+
+    monkeypatch.setattr(panel, "_route", _route)
+
+    update = SimpleNamespace(callback_query=_Query(), effective_user=SimpleNamespace(id=1))
+    with caplog.at_level("WARNING"):
+        await panel.on_button(update, SimpleNamespace(user_data={}, bot=None))
+
+    assert "could not redraw the panel" in caplog.text
+    assert "Message is too long" in caplog.text, "and says what actually went wrong"
 
 
 # -- 3. images to models that cannot see ----------------------------------

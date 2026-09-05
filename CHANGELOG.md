@@ -67,6 +67,24 @@ release only looks.
   treated as something you can talk to.
 - Speech, transcription and image models are recognised by name, which is all there is
   to go on in a listing that carries no modalities.
+## [2.5.4] - 2026-09-05
+
+### Fixed
+
+- **A panel screen that stopped redrawing said nothing about it.** Making the
+  redraw survive an expired callback query in 2.5.3 wrapped it in a bare
+  `suppress`, which also swallowed the failures worth knowing about - a message
+  too long, markup the API rejects, a message somebody deleted. Answering a dead
+  query stays silent, because a stale spinner really is nothing; a failed redraw
+  is logged with what went wrong.
+
+### Changed
+
+- A test awaited a task by name to join it, which is correct but reads as doing
+  nothing - to CodeQL and to the next person. It waits on it with a timeout
+  instead, which also asserts the close completes rather than only that it was
+  awaited.
+
 ## [2.5.3] - 2026-09-05
 
 Five bugs a diagnostic run against the live server turned up. Each one is
@@ -531,7 +549,8 @@ download; the link below goes to the last commit it covers.
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
 [Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.0...HEAD
-[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.3...v2.6.0
+[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.4...v2.6.0
+[2.5.4]: https://github.com/hami9/Astolfo/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/hami9/Astolfo/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/hami9/Astolfo/compare/v2.5.0...v2.5.1
