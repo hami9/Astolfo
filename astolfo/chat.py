@@ -256,23 +256,33 @@ def build_messages(
 # Telegram's wording when the bot is in a group it may not post in.
 NO_RIGHTS = ("not enough rights", "have no rights", "chat_write_forbidden")
 
+# Where that wording can be true. A private chat has no permissions to lack.
+GROUP_KINDS = (ChatType.GROUP, ChatType.SUPERGROUP)
+
 
 async def send_reply(message, text: str, rt: Runtime | None = None) -> None:
-    """Send a reply, and stop talking to a chat that will not let it.
+    """Send a reply, and stop talking to a group that will not let it.
 
     A group where the bot lacks permission used to cost a model call per message
     forever: the send failed, the failure was logged, and the next message did it
     all again. Twenty-one of those in one log. The first refusal now switches the
     chat off exactly as the panel would, so it costs nothing until somebody fixes
     the permission and turns it back on.
+
+    A group, and only a group. There is no permission to grant in a private chat,
+    so there is nothing for anybody to fix and turn back on - and switching one
+    off is close to invisible, because commands keep working while the chatting
+    stops. It happened to the owner's own private chat, which read as the bot
+    having gone mute rather than as a switch somebody could find.
     """
+    is_group = getattr(getattr(message, "chat", None), "type", "") in GROUP_KINDS
     for chunk in split_message(text):
         try:
             await message.reply_text(chunk, link_preview_options=NO_PREVIEW)
         except Exception as exc:
             log.warning("could not send reply to chat %s: %s", message.chat_id, exc)
             reason = str(exc).lower()
-            if rt is not None and any(mark in reason for mark in NO_RIGHTS):
+            if rt is not None and is_group and any(mark in reason for mark in NO_RIGHTS):
                 rt.set_chat_off(message.chat_id, True)
                 rt.db.record(
                     actor=None,

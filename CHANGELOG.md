@@ -11,6 +11,21 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.7.3] - 2026-09-05
+
+### Fixed
+
+- **It went quiet in private chats while its commands kept working.** The live
+  database had `dormant = 1` on the owner's own chat, and nobody had pressed
+  anything: `send_reply` switches a chat off when Telegram refuses a message with
+  "not enough rights", and that rule - written for a group the bot may not post
+  in - was being applied to private chats too. A private chat has no permission
+  to grant, so there was nothing for anybody to fix and turn back on, and the
+  symptom is close to invisible because commands have their own handler and keep
+  answering. It now only ever switches off a group.
+- If it has already happened, the way back is **panel → groups → that chat →
+  on**; private chats are listed there under the person's name.
+
 ## [2.7.2] - 2026-09-05
 
 ### Fixed
@@ -871,7 +886,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.2...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.3...HEAD
+[2.7.3]: https://github.com/hami9/Astolfo/compare/v2.7.2...v2.7.3
 [2.7.2]: https://github.com/hami9/Astolfo/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/hami9/Astolfo/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/hami9/Astolfo/compare/v2.6.9...v2.7.0
