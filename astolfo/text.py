@@ -319,7 +319,60 @@ async def typing_indicator(bot, chat_id: int, action: str = ChatAction.TYPING):
             await task
 
 
-def looks_broken(reply: str, *, echoes: str = "", previous: str = "") -> str | None:
+# Persian script, for telling what language a turn was actually in.
+_PERSIAN_CHARS = re.compile(r"[\u0600-\u06FF]")
+
+# A gloss the model tacked on: a Persian reply with its own English translation in
+# brackets at the end. "همیشه خوبم! (I'm always good!)" - the reply is fine, it
+# just came with subtitles nobody asked for.
+_TRAILING_GLOSS = re.compile(r"\s*[([][^)\]\u0600-\u06FF]{4,}[)\]]\s*$")
+
+# How many opening words have to match before two replies count as the same shape.
+# Three is enough to catch "I'm not sure ..." six times running and short enough
+# that two replies genuinely starting "آره بابا" cost only a retry.
+SAME_OPENING_WORDS = 3
+
+
+def is_persian(text: str) -> bool:
+    """Whether this was written in Persian rather than Latin script."""
+    return bool(_PERSIAN_CHARS.search(text or ""))
+
+
+def drop_translation(reply: str) -> str:
+    """Remove an English gloss the model appended to a Persian reply.
+
+    Only when the reply itself is Persian and the bracket holds no Persian at
+    all - an ordinary aside in brackets is left exactly where it is.
+    """
+    body = (reply or "").strip()
+    if not is_persian(body):
+        return body
+    trimmed = _TRAILING_GLOSS.sub("", body).strip()
+    return trimmed if trimmed and is_persian(trimmed) else body
+
+
+def _opening(text: str, words: int = SAME_OPENING_WORDS) -> list[str]:
+    folded = re.sub(r"[^\w\s\u0600-\u06FF]", " ", (text or "").lower())
+    return folded.split()[:words]
+
+
+def reuses_opening(reply: str, previous: str) -> bool:
+    """Whether this reply opens exactly as the last one did.
+
+    Six replies in a row began "I'm not sure" in a real chat, and none of them was
+    caught: the repeat check only ever compared whole replies for an exact match,
+    and no two of those were identical. Saying the same shape over and over is the
+    failure the voice rules name, so it is worth another model.
+    """
+    here, before = _opening(reply), _opening(previous)
+    if len(here) < SAME_OPENING_WORDS or len(before) < SAME_OPENING_WORDS:
+        return False
+    return here == before
+
+
+def looks_broken(
+    reply: str, *, echoes: str = "", previous: str = "", asked: str = ""
+) -> str | None:
     """Why this reply is unusable, or None when it is fine.
 
     Weak models fail in recognisable ways: they quote the prompt back, answer in
@@ -338,9 +391,17 @@ def looks_broken(reply: str, *, echoes: str = "", previous: str = "") -> str | N
     if stray:
         return f"drifted into another script ({stray!r})"
 
+    if asked and is_persian(asked) and not is_persian(body):
+        # The prompt says mirror their language and one language per message. A
+        # small model reads that and answers a Persian question in English
+        # anyway, then keeps doing it after being asked twice to stop.
+        return "answered a Persian message in English"
+
     folded = " ".join(body.lower().split())
     if echoes and folded == " ".join(echoes.lower().split()):
         return "echoed the message"
     if previous and folded == " ".join(previous.lower().split()):
         return "repeated its previous reply"
+    if previous and reuses_opening(body, previous):
+        return "opened exactly as its last reply did"
     return None

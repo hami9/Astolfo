@@ -22,6 +22,7 @@ from .runtime import Runtime
 from .text import (
     clean_name,
     cut_impersonation,
+    drop_translation,
     format_sources,
     is_addressed,
     looks_broken,
@@ -408,13 +409,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 params["max_tokens"] = tuning.reply_ceiling(
                     rt, state, base=params["max_tokens"], mode_is_fast=decision.mode == FAST
                 )
-            # Free mode swaps the model inside the client, so log what will run.
+            # What we intend to ask for. Which model actually answers is only known
+            # afterwards - failover can walk past three exhausted services first -
+            # so this is logged at debug and the truth is logged below.
             effective = rt.llm.resolve(
                 params["model"],
                 vision=any(p.get("type") == "image_url" for p in bundle.parts),
                 audio=any(p.get("type") == "input_audio" for p in bundle.parts),
             )
-            log.info("chat %s | %s | %s | %s", chat.id, sender, decision, effective)
+            log.debug("chat %s | %s | %s | asking %s", chat.id, sender, decision, effective)
 
             messages = build_messages(
                 rt,
@@ -441,6 +444,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             speakers = _speakers(state, sender, bot_user)
 
             result: ChatResult = await rt.llm.chat(messages, **call)
+            _log_answer(chat.id, sender, decision, result, wanted=effective)
             shaped = _shape(result.text, speakers)
             # Whether it arrived usable is judged for every turn now, not only in
             # free mode: the retry below is still free mode's, but the evidence
@@ -536,6 +540,21 @@ class Shaped(NamedTuple):
     repaired: bool
 
 
+def _log_answer(chat_id: int, sender: str, decision, result: ChatResult, *, wanted: str) -> None:
+    """One line per turn, naming the model that actually answered.
+
+    This used to be written before the call, so it named the model we meant to
+    ask for. With three services out of allowance the answer came from the fourth,
+    and every line in the log still said the first - which is a good way to spend
+    an afternoon blaming the wrong model for somebody else's replies.
+    """
+    if not result.ok:
+        return  # the failure path logs its own reason with the error
+    ran = f"{result.service}/{result.model}" if result.service else result.model
+    detour = f" (asked {wanted})" if result.model and result.model != wanted else ""
+    log.info("chat %s | %s | %s | %s%s", chat_id, sender, decision, ran, detour)
+
+
 def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) -> str:
     """Why this reply is unusable, or "" when it is fine or never arrived.
 
@@ -545,7 +564,9 @@ def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) ->
     """
     if not result.ok:
         return ""  # nothing came back; that is a failed call, not a bad reply
-    return looks_broken(shaped.text, echoes=echoes, previous=_last_reply(state)) or ""
+    return looks_broken(
+        shaped.text, echoes=echoes, previous=_last_reply(state), asked=echoes
+    ) or ""
 
 
 def _shape(raw: str | None, speakers: list[str]) -> Shaped:
@@ -563,7 +584,9 @@ def _shape(raw: str | None, speakers: list[str]) -> Shaped:
     body = raw or ""
     stripped = strip_speaker(body, speakers)
     cut = cut_impersonation(stripped, speakers)
-    return Shaped(polish(cut), stripped != body.lstrip() or cut != stripped)
+    plain = drop_translation(cut)
+    repaired = stripped != body.lstrip() or cut != stripped or plain != cut
+    return Shaped(polish(plain), repaired)
 
 
 def _offline_excuse(rt: Runtime, state: ChatState) -> str:
