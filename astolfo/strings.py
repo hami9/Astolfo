@@ -43,6 +43,10 @@ EN: dict[str, str] = {
     "mode_bad": "Pick one of these: auto / fast / think / search",
     "muted": "Okay okay, going quiet 🤐 (bring me back with /unmute)",
     "unmuted": "I'm baaack! 🎉 You missed me, right?",
+    "status_off": (
+        "⏻ This chat is switched off, so I only answer commands. "
+        "/unmute brings me back.\n\n"
+    ),
     "error_reply": "Ugh... my brain flew to the Moon and didn't come back 😵‍💫 say that again?",
     "budget_stopped": "I've burned through today's allowance~ back tomorrow! 💸",
     "no_credit": "my magic ran out of credit 😭 someone needs to top up the API account!",
@@ -128,6 +132,10 @@ FA: dict[str, str] = {
     "mode_bad": "یکی از اینا: auto / fast / think / search",
     "muted": "باشه باشه ساکت شدم 🤐 (با /unmute برم گردون)",
     "unmuted": "برگشتممم! 🎉 دلتون تنگ شده بود نه؟",
+    "status_off": (
+        "⏻ این چت خاموشه، برای همین فقط به دستورها جواب می‌دم. "
+        "با /unmute برم گردون.\n\n"
+    ),
     "error_reply": "اوه... مغزم یه لحظه رفت رو ماه و برنگشت 😵‍💫 یه بار دیگه بگو؟",
     "budget_stopped": "سهمیهٔ امروزم تموم شد~ فردا برمی‌گردم! 💸",
     "no_credit": "کردیت جادوم ته کشید 😭 یکی حساب ای‌پی‌آی رو شارژ کنه!",
