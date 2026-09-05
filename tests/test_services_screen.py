@@ -34,6 +34,7 @@ def _fake_client(settings, registry=None):
         load_catalog=_noop,
         aclose=_noop,
         probe=_probe,
+        recent_faults=lambda name="": [],
     )
 
 
