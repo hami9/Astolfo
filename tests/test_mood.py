@@ -97,14 +97,14 @@ def test_the_summary_call_is_told_to_choose_one() -> None:
 
 def test_a_mood_never_reaches_past_the_locked_layers() -> None:
     """The floor under every mood: rendered, the constitution is still all there."""
-    from astolfo.recipes import FACTORY_LAYERED
+    from astolfo.recipes import FACTORY_FULL
 
     for name in persona.MOODS:
-        rendered = FACTORY_LAYERED.render() if name == persona.BRIGHT else None
+        rendered = FACTORY_FULL.render() if name == persona.BRIGHT else None
         if rendered is None:
             from dataclasses import replace
 
-            rendered = replace(FACTORY_LAYERED, mood=name).render()
+            rendered = replace(FACTORY_FULL, mood=name).render()
         for locked in ("identity", "never", "boundaries", "spine", "truth"):
             assert persona.LOCKED[locked] in rendered, (name, locked)
 

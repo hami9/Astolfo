@@ -26,6 +26,7 @@ COMMON = (
     "interest_scoring",
     "attention_hold",
     "heavy_lifting",
+    "prompt_tier",
     "read_admins",
     "web_search",
     "summaries",
@@ -80,7 +81,7 @@ def home(ctx) -> View:
             [button("🔌 services", "svc"), button("🧠 models", "mdl")],
             [button("⚙️ settings", "cfg"), button("💬 groups", "chats")],
             [button("👤 people", "ppl"), button("🖥 server", "srv")],
-            [button("🗄 data", "data")],
+            [button("🗄 data", "data"), button("🧩 brain", "brain")],
         ),
     )
 
@@ -124,6 +125,7 @@ def _short(name: str) -> str:
         "interest_scoring": "join on merit",
         "attention_hold": "focus hold",
         "heavy_lifting": "does homework",
+        "prompt_tier": "prompt weight",
         "read_admins": "reads admins",
         "daily_budget_usd": "daily budget",
         "free_mode": "free mode",

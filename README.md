@@ -249,6 +249,7 @@ astolfo/persona.py         layered prompt, few-shot examples, locale detection
 astolfo/recipes.py         which layers a prompt is built from, and by whom
 astolfo/guardrail.py       the bounds, validator, probation and breakers
 astolfo/brain.py           which recipe this model answers to, learned
+astolfo/admin/brain.py     what it is doing, and the buttons that stop it
 astolfo/routing.py         fast / think / search / serious dispatcher
 astolfo/interest.py        whether an unprompted message is worth answering
 astolfo/attention.py       which chat has its attention right now
@@ -256,6 +257,7 @@ astolfo/tuning.py          how long the next reply may be, from cost and recepti
 astolfo/roles.py           who runs each group, and what the bot is in it
 astolfo/providers.py       the known services and their keys
 astolfo/catalog.py         the models a service offers, as records
+astolfo/faults.py          what a service's refusal actually said, per dialect
 astolfo/llm.py             the client: failover, key rotation, retries
 astolfo/services.py        stored services, keys and their health
 astolfo/participation.py   manual, auto and smart: how talkative the bot is

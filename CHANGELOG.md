@@ -11,6 +11,97 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.9] - 2026-09-05
+
+### Fixed
+
+- **"Monthly limit", back in a few minutes, monthly limit again.** Every refusal
+  from every service was flattened into one line - `HTTP 429: cohere limit` -
+  with the body thrown away. The body is where a service says *which* limit and
+  *how long*, so a trial key hitting its twenty-calls-a-minute ceiling and an
+  account that has spent its monthly credit produced the same sentence and got
+  the same sixty-second rest: right for one, useless for the other. And outside
+  free mode a 429 was retried in place with a twenty-second backoff whatever
+  window it named.
+- New `faults.py` reads a refusal in the dialect the service wrote it in and
+  answers three questions: what kind (too many requests / allowance spent / out
+  of credit / key refused / never reached the service / request refused /
+  their side broke), how wide (per minute, hour, day, month, account, request),
+  and how long. Google's `QuotaFailure` violation id and `RetryInfo` delay are
+  read structurally, because `GenerateRequestsPerMinutePerProjectPerModel` and
+  `...PerDay` are the difference between waiting a minute and waiting until
+  tomorrow. Groq's "try again in 6m30s", OpenRouter's `free-models-per-day`,
+  Cohere's "20 API calls / minute", HuggingFace's "monthly included credits" and
+  DeepInfra's payment shape each have a test with the body that service really
+  returns.
+- A window that rolls in a minute is a rate limit however the service words it -
+  Google calls its per-minute ceiling a quota and says "resource exhausted" - and
+  an empty wallet is never given a short rest, because no amount of waiting fills
+  it and every retry is a wasted call.
+
+### Added
+
+- **panel → services → a service** now prints its last four refusals in the
+  service's own words, with what it was read as and how long it is resting.
+  Anything in quotes is what the service said; nothing there is written by the
+  bot. The same line goes to the log, so what you read and what the code acted on
+  are the same fact rather than two readings of it.
+
+## [2.6.8] - 2026-09-05
+
+### Added
+
+- **Three prompt weights, because one size was measurably the wrong size.** The
+  full prompt is ~4,600 tokens across 52 separate rules; the compact one ~1,080
+  across about thirty. `cohere/command-r-08-2024` is a 35B model, and an evening
+  of its output is what thirty rules buys: it followed some and dropped the rest -
+  the language rule, the one-line rule and the sincere rule all went in the same
+  conversation. There is now a third, `tight`, at ~300 tokens: who it is, the six
+  rules whose absence does real damage, and one example carrying the voice.
+  `PROMPT_TIER` (`auto` | `tight` | `compact` | `full`) chooses, from the .env or
+  from **panel → settings → prompt weight**, and a typo falls back to `auto` with
+  a warning rather than quietly sending the wrong thing all day.
+- `auto` is the default and changes nothing: compact on free models, full
+  otherwise, exactly as before. It is also the hook the brain takes over -
+  choosing the weight per model family is its job, and until it can, a person
+  chooses it.
+
+### Note
+
+Everything the lightest prompt drops is still enforced in code, not in the
+prompt: the impersonation repair, the explicit-content deflection, the
+repetition guard and the language check all run whatever prompt produced the
+reply. There is a test asserting that, because the moment those become
+tier-dependent the lightest weight stops being safe.
+
+## [2.6.7] - 2026-09-05
+
+### Fixed
+
+- **It opened fifteen replies in a row with the same word.** Verbatim from one
+  evening in the group: "اوه،" started almost every line it sent. The guard for
+  exactly this compared the *first three words* against the *single previous
+  reply*, and no two of those replies shared three words, so nothing ever fired.
+  The tic is one word repeating across a handful of turns, so that is what is
+  measured now: the same opening word in three of the last six replies makes this
+  one more of the same, and it is retried on another model. Twice is still a word.
+- **A sentence it had already used came back, and back.** "من یه سروکار دارم با
+  تو" was sent on the third, twenty-first and twenty-third reply of the same
+  evening - never twice in a row, so a check holding one previous reply could not
+  see it. The last six are held now, whitespace-folded.
+- **Somebody asked for help and got banter.** A member asked how to move on from a
+  girl who ignores him, then said he had loved her and that the longer it went the
+  clearer it was that she did not care. He got "oh, I have a question too!" The
+  distress heuristic covers a crisis - self-harm, death, hospitals - and none of
+  those words are in heartbreak, so the whole thing rested on a free router model
+  reading it right, and it did not. There is a second tier now: somebody talking
+  about their own hurt, first person on purpose, so gossip about a friend's
+  breakup does not trip it. It is confident enough to skip the dispatcher, it is
+  logged as "somebody is hurting" rather than as a crisis, and Persian half-spaces
+  no longer hide it - the real message wrote محل‌سگ with a zero-width non-joiner.
+  In Persian "move on" is the borrowed phrase for getting over somebody, so it
+  counts on its own; in English it still has to say who.
+
 ## [2.6.6] - 2026-09-05
 
 ### Fixed
@@ -696,7 +787,10 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.6...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.9...HEAD
+[2.6.9]: https://github.com/hami9/Astolfo/compare/v2.6.8...v2.6.9
+[2.6.8]: https://github.com/hami9/Astolfo/compare/v2.6.7...v2.6.8
+[2.6.7]: https://github.com/hami9/Astolfo/compare/v2.6.6...v2.6.7
 [2.6.6]: https://github.com/hami9/Astolfo/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/hami9/Astolfo/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/hami9/Astolfo/compare/v2.6.3...v2.6.4

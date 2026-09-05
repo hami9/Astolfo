@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from typing import NamedTuple
 
 from telegram import LinkPreviewOptions, Update
@@ -11,7 +12,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.ext import ContextTypes
 
 from . import media as media_mod
-from . import offline, participation, persona, roles, runtime, tuning
+from . import offline, participation, persona, recipes, roles, runtime, tuning
 from .budget import STOPPED, Allowance
 from .cache import normalize
 from .llm import ChatResult, Usage, cacheable_system
@@ -20,6 +21,7 @@ from .persona import FAST, SEARCH, SERIOUS, THINK
 from .routing import Decision
 from .runtime import Runtime
 from .text import (
+    RECENT_REPLIES,
     clean_name,
     cut_impersonation,
     drop_translation,
@@ -50,17 +52,57 @@ QUOTE_CHARS = 140
 # The two shapes the system prompt comes in. Recorded against every reply, so
 # that how each one fares on each model is measured before anything chooses
 # between them.
-COMPACT = "compact"
-LAYERED = "layered"
+COMPACT = persona.COMPACT
+LAYERED = persona.FULL
+
+
+def recipe_for(rt: Runtime, state: ChatState, model: str) -> recipes.Recipe:
+    """The recipe this turn is built from.
+
+    Three things decide it, in this order. A weight chosen by hand in the panel
+    wins outright - it is a person overruling everything. Otherwise the brain
+    picks, which with BRAIN off is the recipe the bot has always used. Then the
+    chat's own mood is laid on top, because a mood is about this chat and the
+    recipe is about the model.
+    """
+    settings = rt.settings
+    wanted = (settings.prompt_tier or persona.AUTO).strip().lower()
+    if wanted in persona.TIERS:
+        chosen = recipes.FACTORY[wanted]
+    else:
+        chosen = rt.brain.choose(model=model, free_mode=settings.free_mode)
+    mood = state.mood.now()
+    return chosen if mood == persona.BRIGHT else replace(chosen, mood=mood)
 
 
 def prompt_variant(settings) -> str:
-    """Which of the prompt shapes a turn will use.
+    """Which of the three prompt weights a turn will use.
 
-    Free models are small and drown in the full layered prompt, so free mode
-    takes the short one. One switch, and the name of what it chose.
+    Measured, not guessed: the full prompt is ~4,600 tokens over 52 separate
+    rules and the compact one ~1,080 over about thirty, and a 35B model handed
+    thirty rules follows some and drops the rest. So there is a third, lighter
+    weight, and a setting that picks one by hand.
+
+    `auto` is what the bot has always done - the short prompt on free models,
+    the long one otherwise - and it is still the default. It is also the hook
+    the brain takes over: choosing the weight per model family is the job, and
+    until it can, this is a person choosing it.
     """
+    wanted = (getattr(settings, "prompt_tier", "") or persona.AUTO).strip().lower()
+    if wanted in persona.TIERS:
+        return wanted
     return COMPACT if settings.free_mode else LAYERED
+
+
+def static_block_for(variant: str, *, is_group: bool, locale: str, heavy_lifting: bool) -> str:
+    """The persona at the chosen weight."""
+    if variant == persona.TIGHT:
+        return persona.tight_prompt(is_group=is_group, locale=locale)
+    if variant == COMPACT:
+        return persona.compact_prompt(is_group=is_group, locale=locale)
+    return persona.static_prompt(
+        is_group=is_group, locale=locale, heavy_lifting=heavy_lifting
+    )
 
 
 def model_params(settings, decision: Decision, has_media: bool) -> dict:
@@ -163,13 +205,12 @@ def build_messages(
     has_media = bundle.has_content or bool(bundle.notes)
 
     locale = resolve_locale(rt, state)
-    compact = prompt_variant(settings) == COMPACT
-    static_block = (
-        persona.compact_prompt(is_group=is_group, locale=locale)
-        if compact
-        else persona.static_prompt(
-            is_group=is_group, locale=locale, heavy_lifting=settings.heavy_lifting
-        )
+    recipe = recipe_for(rt, state, model)
+    # The media block has its own two weights, and anything but the full prompt
+    # takes the short one: a model that drowns in the persona drowns in this too.
+    compact = recipe.short
+    static_block = recipe.render(
+        is_group=is_group, locale=locale, heavy_lifting=settings.heavy_lifting
     )
     dynamic_block = persona.dynamic_prompt(
         mode=decision.mode,
@@ -441,7 +482,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "reasoning": params["reasoning"],
                 "web": decision.web,
             }
-            variant = prompt_variant(settings)
+            # The same recipe `build_messages` used: what the turn was actually
+            # built from is what its outcome has to be credited to.
+            recipe = recipe_for(rt, state, params["model"])
+            variant = recipe.name
             speakers = _speakers(state, sender, bot_user)
 
             result: ChatResult = await rt.llm.chat(messages, **call)
@@ -455,6 +499,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                       usage=result.usage, chat_id=chat.id, user_id=message.from_user.id,
                       service=result.service, variant=variant,
                       latency_ms=result.latency_ms, repaired=shaped.repaired, broken=fault)
+            _teach(rt, result, params, recipe, shaped, fault)
             reply = shaped.text
 
             # Small models leak the prompt or parrot the question. One more go on a
@@ -471,6 +516,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                           user_id=message.from_user.id, service=result.service,
                           variant=variant, latency_ms=result.latency_ms,
                           repaired=shaped.repaired, broken=fault)
+                _teach(rt, result, params, recipe, shaped, fault)
                 reply = shaped.text
                 if fault:
                     rt.llm.mark_unusable(result.model)
@@ -556,6 +602,28 @@ def _log_answer(chat_id: int, sender: str, decision, result: ChatResult, *, want
     log.info("chat %s | %s | %s | %s%s", chat_id, sender, decision, ran, detour)
 
 
+def _teach(rt: Runtime, result: ChatResult, params: dict, recipe, shaped, fault: str) -> None:
+    """One turn's outcome into the brain, whether or not the brain is switched on.
+
+    With it off this builds the factory baseline the breaker measures against,
+    which is why turning the switch on is not starting from nothing. Whether a
+    human answered is not known yet - that arrives next turn, through
+    `tuning.Credit` - so this is the half that is knowable now.
+    """
+    if not result.ok:
+        return  # a failed call says nothing about the prompt
+    rt.brain.note(
+        model=result.model or params.get("model", ""),
+        recipe=recipe,
+        free_mode=rt.settings.free_mode,
+        chars=len(shaped.text or ""),
+        repaired=shaped.repaired,
+        broken=bool(fault),
+        tokens=result.usage.completion_tokens,
+        ceiling=int(params.get("max_tokens") or 0),
+    )
+
+
 def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) -> str:
     """Why this reply is unusable, or "" when it is fine or never arrived.
 
@@ -565,8 +633,13 @@ def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) ->
     """
     if not result.ok:
         return ""  # nothing came back; that is a failed call, not a bad reply
+    said = _recent_replies(state)
     return looks_broken(
-        shaped.text, echoes=echoes, previous=_last_reply(state), asked=echoes
+        shaped.text,
+        echoes=echoes,
+        previous=said[0] if said else "",
+        recent=said[1:],
+        asked=echoes,
     ) or ""
 
 
@@ -649,11 +722,21 @@ async def _announce_failure(rt: Runtime, state: ChatState, message, result: Chat
         await send_reply(message, rt.strings("error_reply"), rt)
 
 
-def _last_reply(state: ChatState) -> str:
+def _recent_replies(state: ChatState, count: int = RECENT_REPLIES) -> list[str]:
+    """The bot's own last few replies here, newest first.
+
+    One was not enough. A tic - the same opening word, or a sentence it already
+    used - shows up across a handful of turns and is invisible in a comparison
+    against the single reply before.
+    """
+    said: list[str] = []
     for turn in reversed(state.history):
-        if turn.get("role") == "assistant":
-            return str(turn.get("content") or "")
-    return ""
+        if turn.get("role") != "assistant":
+            continue
+        said.append(str(turn.get("content") or ""))
+        if len(said) >= count:
+            break
+    return said
 
 
 def _can_read_media(rt: Runtime, bundle: media_mod.MediaBundle) -> bool:

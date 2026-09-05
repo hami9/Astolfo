@@ -123,18 +123,24 @@ def _scaled(value: float) -> float:
 def pool(*, free_mode: bool) -> tuple[recipes.Recipe, ...]:
     """What there is to choose between before anything has been written.
 
-    Mutable fields only: identical locked layers, a different number of examples
-    anchoring the voice. The factory recipe is always first and can never leave
-    it, so the control arm is always available and there is always a way home.
+    The three weights first, because that is the heaviest lever there is: the
+    full prompt is fifteen times the tight one, and which of them a model can
+    actually hold is a fact about that model rather than about the bot. Then a
+    couple of example counts, which is a much finer adjustment.
+
+    The recipe the bot would have used anyway is always first and can never
+    leave, so the control arm is always available and there is always a way home.
+    Every one of these renders the same locked layers; only mutable fields move.
     """
-    base = recipes.factory_for(free_mode=free_mode)
-    out: list[recipes.Recipe] = [base]
-    seen = {base.examples}
-    for count in recipes.EXAMPLE_COUNTS:
-        if count in seen or len(out) >= MAX_VARIANTS:
+    here = recipes.factory_for(free_mode=free_mode)
+    out: list[recipes.Recipe] = [here]
+    for weight in recipes.FACTORY.values():
+        if weight.name != here.name and len(out) < MAX_VARIANTS:
+            out.append(weight)
+    for count in (1, 2):
+        if len(out) >= MAX_VARIANTS or count == here.examples:
             continue
-        seen.add(count)
-        out.append(replace(base, name=f"{base.name}+{count}ex", examples=count))
+        out.append(replace(here, name=f"{here.name}+{count}ex", examples=count))
     return tuple(out)
 
 

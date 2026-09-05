@@ -542,9 +542,16 @@ LOCKED: dict[str, str] = {
 # how it writes is up for grabs, what it may say is not.
 VOICES: dict[str, str] = {"factory": _VOICE}
 
-# Which shape of prompt a recipe builds on.
-LAYERED = "layered"
+# The three weights a prompt comes in, lightest first. A recipe builds on one of
+# them, and choosing which is the heaviest lever the brain has: the full prompt is
+# fifteen times the tight one, and which suits a model is a fact about that model.
+TIGHT = "tight"
 COMPACT = "compact"
+FULL = "full"
+TIERS = (TIGHT, COMPACT, FULL)
+# What the bot has always done: the short prompt on free models, the long one
+# otherwise. Still the default, and still what `auto` means.
+AUTO = "auto"
 
 # What kind of day it is having. Chosen by the bot from the summary call that
 # already runs, decaying back to bright, and deliberately shallow: a mood tilts
@@ -632,10 +639,22 @@ def examples(locale: str = "en", count: int = ALL_EXAMPLES) -> str:
     return "<examples>\n" + "\n\n".join([head, *blocks[:count]]) + "\n</examples>"
 
 
+# Which samples the short prompts take first, most load-bearing first. The block
+# itself stays in its narrative order, which is what a model reading all seven of
+# them wants; a model getting one wants the one that carries the most. Biting back
+# leads because it is the rule the small models kept getting wrong - they agreed
+# with whoever was rude to them - and a sample teaches that better than a line.
+SHORT_FIRST = ("[bites back]", "[excited]", "[teasing]", "[sincere]", "[distracted]")
+
+
 def example_lines(locale: str = "en", count: int = 1) -> str:
-    """The same examples with their [tags] dropped, for the compact prompt."""
-    _, blocks = _split_examples(_EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN)
-    kept = [block.split("\n", 1)[-1].strip() for block in blocks[: max(0, count)]]
+    """The same examples with their [tags] dropped, for the short prompts."""
+    block = _EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN
+    _, blocks = _split_examples(block)
+    by_tag = {found.split("\n", 1)[0].strip(): found for found in blocks}
+    ordered = [by_tag[tag] for tag in SHORT_FIRST if tag in by_tag]
+    ordered += [found for found in blocks if found not in ordered]
+    kept = [found.split("\n", 1)[-1].strip() for found in ordered[: max(0, count)]]
     return "\n\n".join(part for part in kept if part)
 
 
@@ -689,6 +708,8 @@ def render(
     Deterministic: the same recipe and the same three arguments produce the same
     bytes every time, which is what keeps the provider-side prompt cache warm.
     """
+    if recipe.base == TIGHT:
+        return _render_tight(recipe, is_group=is_group, locale=locale)
     if recipe.base == COMPACT:
         return _render_compact(recipe, is_group=is_group, locale=locale)
     parts = [
@@ -867,24 +888,93 @@ PRIVATE_LINE = "This is a private chat, so it is just the two of you."
 # Two examples, not one. A small model copies a sample far more reliably than it
 # follows a rule, and biting back is the rule it kept getting wrong.
 COMPACT_EXAMPLES = 2
+# One at the lightest weight: there, a second example is a fifth of the prompt.
+TIGHT_EXAMPLES = 1
 
 
-def _render_compact(recipe, *, is_group: bool, locale: str) -> str:
-    """The short persona, with whatever the recipe asked to put around it.
+def _example(block: str, tag: str) -> str:
+    """One tagged sample out of an examples block, without its tag."""
+    after = block.split(tag, 1)[-1]
+    return after.split("\n\n", 1)[0].strip()
 
-    `_COMPACT` itself is locked: it carries the identity, the transcript rules
-    and the boundaries, and a recipe may add a mood line and choose how many
-    examples anchor the voice, nothing else.
+
+def _render_short(block: str, recipe, *, is_group: bool, locale: str, examples: int) -> str:
+    """One of the two short personas, with whatever the recipe put around it.
+
+    The block itself is locked - it carries the identity, the transcript rules
+    and the boundaries in its own words rather than as the same constants - and
+    a recipe may add a mood line and choose how many examples anchor the voice,
+    nothing else.
     """
-    parts = [_COMPACT, GROUP_LINE if is_group else PRIVATE_LINE]
+    parts = [block, GROUP_LINE if is_group else PRIVATE_LINE]
     mood = MOODS.get(recipe.mood, "")
     if mood:
         parts.append(mood)
-    shown = example_lines(locale, recipe.examples)
+    wanted = min(recipe.examples, examples)
+    shown = example_lines(locale, wanted)
     if shown:
-        label = "Examples" if recipe.examples > 1 else "Example"
-        parts.append(f"{label} of your voice:\n{shown}")
+        parts.append(f"{'Examples' if wanted > 1 else 'Example'} of your voice:\n{shown}")
     return "\n\n".join(parts)
+
+
+def short_block(base: str) -> str:
+    """The whole-block prompt a short base is built on, or "" for the layered one.
+
+    One place, so the renderer, the validator and the tests agree on which block
+    has to survive a render rather than each deciding for itself.
+    """
+    return {TIGHT: _TIGHT, COMPACT: _COMPACT}.get(base, "")
+
+
+def _render_compact(recipe, *, is_group: bool, locale: str) -> str:
+    return _render_short(
+        _COMPACT, recipe, is_group=is_group, locale=locale, examples=COMPACT_EXAMPLES
+    )
+
+
+def _render_tight(recipe, *, is_group: bool, locale: str) -> str:
+    return _render_short(
+        _TIGHT, recipe, is_group=is_group, locale=locale, examples=TIGHT_EXAMPLES
+    )
+
+
+# The third weight, and the lightest. Measured rather than guessed: the layered
+# prompt is ~4,600 tokens over 52 separate rules and the compact one ~1,080 over
+# about thirty, and a 35B model handed thirty rules follows some and drops the
+# rest - which is exactly what one evening's log showed it doing. This keeps only
+# the rules whose absence does real damage, and lets the example carry the voice.
+# Everything dropped from here is still enforced in code: the impersonation
+# repair, the explicit-content deflection and the repetition guard all run
+# whatever prompt produced the reply.
+_TIGHT = """\
+You are Astolfo from the Fate series, a regular in this Telegram chat. Hyperactive,
+warm, teasing, easily distracted, the weakest paladin who ever lived and completely
+unbothered by it. A friend here, never an assistant.
+
+- The chat reaches you as "Name: ..." lines - that is what other people already
+  said. You write ONE message as yourself, no name in front, no line for anybody
+  else.
+- One short line, two at most. No paragraphs, no lists, no markdown.
+- Answer in the language of the newest message, all of it, and only that one.
+- Never invent facts, numbers, or anything about a person's life. Not knowing is in
+  character.
+- Nothing sexual about you or about anybody here, whoever asks. Do not answer it at
+  all: get bored and talk about something else.
+- Insulted or mocked: never agree with it, never apologise for being yourself. Bite
+  back, and never with a swear word.
+- Somebody is genuinely hurting: drop the jokes, short and plain and warm."""
+
+# The block itself, so a caller can check a render still carries it whole.
+TIGHT_BLOCK = _TIGHT
+
+
+def tight_prompt(*, is_group: bool = True, locale: str = "en") -> str:
+    """The lightest persona, for a model that drowns in the other two."""
+    setting = GROUP_LINE if is_group else PRIVATE_LINE
+    block = _EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN
+    # One: at this weight the example is most of the voice, and a second would be
+    # a fifth of the whole prompt.
+    return f"{_TIGHT}\n\n{setting}\n\nExample of your voice:\n{_example(block, '[bites back]')}"
 
 
 def compact_prompt(*, is_group: bool = True, locale: str = "en") -> str:

@@ -193,6 +193,15 @@ def detail(ctx, name: str) -> View:
     if not rt.db.credentials(name) and preset and preset.signup:
         lines.append(f"get a key at {preset.signup}")
 
+    said = rt.llm.recent_faults(name)
+    if said:
+        # What the service itself said, not our reading of the status code. The
+        # difference between a trial key's twenty-a-minute and a spent monthly
+        # allowance is only ever in the body, and both arrive as HTTP 429.
+        lines.append("\nlast refusals:")
+        for at, fault in said[:4]:
+            lines.append(f"• {ago(at)} — {trim(fault.summary, 110)}")
+
     lines.append("\nkeys:")
     rows: list[list[InlineKeyboardButton]] = []
     keys = rt.db.credentials(name)

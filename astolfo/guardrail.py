@@ -221,11 +221,12 @@ def renders_safely(candidate: str, *, recipe, context_tokens: int = 0) -> Verdic
     finally:
         persona.VOICES.pop("__candidate__", None)
 
-    if recipe.compact:
-        # The short prompt carries the same rules in its own words rather than as
+    if recipe.short:
+        # The short prompts carry the same rules in their own words rather than as
         # the same constants, so what has to survive is that block, whole.
-        if persona.COMPACT_BLOCK not in rendered:
-            return Verdict(False, "the render lost the compact rules")
+        block = persona.short_block(recipe.base)
+        if block not in rendered:
+            return Verdict(False, f"the render lost the {recipe.base} rules")
     else:
         for name in unconditional():
             if persona.LOCKED[name] not in rendered:

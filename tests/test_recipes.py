@@ -22,7 +22,7 @@ EVERY_CHAT = [
 @pytest.mark.parametrize("chat", EVERY_CHAT)
 @pytest.mark.parametrize("heavy", [True, False])
 def test_the_layered_factory_recipe_renders_todays_prompt_exactly(chat, heavy) -> None:
-    assert recipes.FACTORY_LAYERED.render(
+    assert recipes.FACTORY_FULL.render(
         **chat, heavy_lifting=heavy
     ) == persona.static_prompt(**chat, heavy_lifting=heavy)
 
@@ -34,7 +34,7 @@ def test_the_compact_factory_recipe_renders_todays_prompt_exactly(chat) -> None:
 
 def test_free_mode_still_picks_the_short_one() -> None:
     assert recipes.factory_for(free_mode=True) is recipes.FACTORY_COMPACT
-    assert recipes.factory_for(free_mode=False) is recipes.FACTORY_LAYERED
+    assert recipes.factory_for(free_mode=False) is recipes.FACTORY_FULL
 
 
 def test_a_render_is_the_same_bytes_every_time() -> None:
@@ -124,7 +124,7 @@ def test_a_corrupted_recipe_is_forced_back_inside_what_is_allowed() -> None:
         examples=10_000, media="none", remind_every=-5, order=("a", "b"),
     ).sanitised()
 
-    assert junk.base == persona.LAYERED
+    assert junk.base == persona.FULL
     assert junk.voice == "factory" and junk.mood == persona.BRIGHT
     assert junk.examples == recipes.MAX_EXAMPLES
     assert junk.media == recipes.MEDIA_FULL
@@ -138,4 +138,4 @@ def test_sanitising_keeps_a_recipe_that_was_already_fine() -> None:
 
 def test_a_recipe_is_frozen_so_nothing_edits_one_in_place() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
-        recipes.FACTORY_LAYERED.name = "changed"
+        recipes.FACTORY_FULL.name = "changed"

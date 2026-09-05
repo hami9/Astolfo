@@ -178,8 +178,8 @@ def test_every_recipe_in_the_pool_renders_the_same_locked_layers() -> None:
     for free_mode in (True, False):
         for recipe in pool(free_mode=free_mode):
             rendered = recipe.render()
-            if recipe.compact:
-                assert persona.COMPACT_BLOCK in rendered
+            if recipe.short:
+                assert persona.short_block(recipe.base) in rendered, recipe.name
             else:
                 for name in ("identity", "never", "boundaries", "spine", "truth"):
                     assert persona.LOCKED[name] in rendered, (recipe.name, name)

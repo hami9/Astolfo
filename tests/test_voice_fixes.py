@@ -100,8 +100,10 @@ def test_a_short_reply_is_not_judged_on_its_opening() -> None:
 
 
 def test_an_exact_repeat_is_still_caught_by_its_own_rule() -> None:
+    """The rule widened to look further back than one reply, so the wording did
+    too; what it catches has only grown."""
     assert looks_broken("same thing again", previous="same thing again") == (
-        "repeated its previous reply"
+        "repeated something it already said"
     )
 
 

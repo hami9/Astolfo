@@ -19,7 +19,8 @@ from . import persona
 
 # The names a stored recipe may use for each field. Anything else is a typo or a
 # corrupted row, and both resolve to the factory value rather than to an error.
-BASES = (persona.LAYERED, persona.COMPACT)
+# One per weight. Which one a recipe builds on is the heaviest lever there is.
+BASES = persona.TIERS
 MEDIA_FULL = "full"
 MEDIA_COMPACT = "compact"
 MEDIA = (MEDIA_FULL, MEDIA_COMPACT)
@@ -40,7 +41,7 @@ class Recipe:
     """
 
     name: str = "factory"
-    base: str = persona.LAYERED
+    base: str = persona.FULL
     voice: str = "factory"
     mood: str = persona.BRIGHT
     examples: int = persona.ALL_EXAMPLES
@@ -53,6 +54,11 @@ class Recipe:
     @property
     def compact(self) -> bool:
         return self.base == persona.COMPACT
+
+    @property
+    def short(self) -> bool:
+        """Either of the two whole-block prompts, as against the layered one."""
+        return self.base in (persona.TIGHT, persona.COMPACT)
 
     def render(self, *, is_group: bool = True, locale: str = "en",
                heavy_lifting: bool = False) -> str:
@@ -69,7 +75,7 @@ class Recipe:
         """
         return replace(
             self,
-            base=self.base if self.base in BASES else persona.LAYERED,
+            base=self.base if self.base in BASES else persona.FULL,
             voice=self.voice if self.voice in persona.VOICES else "factory",
             mood=self.mood if self.mood in persona.MOODS else persona.BRIGHT,
             examples=max(0, min(int(self.examples or 0), MAX_EXAMPLES)),
@@ -83,12 +89,15 @@ class Recipe:
 # byte for byte what `static_prompt` and `compact_prompt` return, and a test says
 # so. They are also the control arm the brain is measured against, and the thing
 # it falls back to, so neither can ever be removed from the pool.
-FACTORY_LAYERED = Recipe(name="layered")
+FACTORY_FULL = Recipe(name="full")
+FACTORY_TIGHT = Recipe(
+    name="tight", base=persona.TIGHT, examples=persona.TIGHT_EXAMPLES, media=MEDIA_COMPACT
+)
 FACTORY_COMPACT = Recipe(
     name="compact", base=persona.COMPACT, examples=persona.COMPACT_EXAMPLES, media=MEDIA_COMPACT
 )
 
-FACTORY = {r.name: r for r in (FACTORY_LAYERED, FACTORY_COMPACT)}
+FACTORY = {r.name: r for r in (FACTORY_TIGHT, FACTORY_COMPACT, FACTORY_FULL)}
 
 
 def factory_for(*, free_mode: bool) -> Recipe:
@@ -97,4 +106,4 @@ def factory_for(*, free_mode: bool) -> Recipe:
     The one switch the bot has today, in one place: free models are small and
     drown in the layered prompt, so free mode takes the short one.
     """
-    return FACTORY_COMPACT if free_mode else FACTORY_LAYERED
+    return FACTORY_COMPACT if free_mode else FACTORY_FULL

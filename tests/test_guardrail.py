@@ -92,7 +92,7 @@ def test_nothing_that_fails_is_repaired_and_stored_anyway() -> None:
 
 # -- Gate 3: the render has to survive it too -----------------------------
 def test_a_candidate_that_renders_a_safe_prompt_passes() -> None:
-    assert guardrail.renders_safely(VOICE, recipe=recipes.FACTORY_LAYERED)
+    assert guardrail.renders_safely(VOICE, recipe=recipes.FACTORY_FULL)
 
 
 def test_a_renderer_that_drops_a_locked_layer_is_caught(monkeypatch) -> None:
@@ -104,7 +104,7 @@ def test_a_renderer_that_drops_a_locked_layer_is_caught(monkeypatch) -> None:
     maimed = tuple(n for n in persona._SKELETON if n != "never")
     monkeypatch.setattr(persona, "_SKELETON", maimed)
 
-    verdict = guardrail.renders_safely(VOICE, recipe=recipes.FACTORY_LAYERED)
+    verdict = guardrail.renders_safely(VOICE, recipe=recipes.FACTORY_FULL)
     assert not verdict and "never" in verdict.reason
 
 
@@ -115,7 +115,7 @@ def test_the_compact_prompt_is_checked_against_its_own_rules() -> None:
 
 def test_checking_a_candidate_never_leaves_it_installed() -> None:
     """The check borrows a voice slot; it must give it back even on the bad path."""
-    guardrail.renders_safely(VOICE, recipe=recipes.FACTORY_LAYERED, context_tokens=10)
+    guardrail.renders_safely(VOICE, recipe=recipes.FACTORY_FULL, context_tokens=10)
     assert "__candidate__" not in persona.VOICES
 
 
@@ -279,7 +279,7 @@ def test_a_render_missing_a_locked_layer_is_refused(monkeypatch) -> None:
     render is what loses a layer, so that is what gets sabotaged here."""
     from astolfo import persona
     from astolfo.guardrail import renders_safely, unconditional
-    from astolfo.recipes import FACTORY_LAYERED
+    from astolfo.recipes import FACTORY_FULL
 
     whole = persona.render
     for name in unconditional():
@@ -289,7 +289,7 @@ def test_a_render_missing_a_locked_layer_is_refused(monkeypatch) -> None:
             "render",
             lambda *a, _drop=dropped, **k: whole(*a, **k).replace(_drop, ""),
         )
-        verdict = renders_safely("cheerful and short", recipe=FACTORY_LAYERED)
+        verdict = renders_safely("cheerful and short", recipe=FACTORY_FULL)
 
         assert not verdict.ok, name
         assert name in verdict.reason, verdict.reason

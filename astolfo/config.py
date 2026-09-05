@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field, fields
 from typing import Any
 
-from . import branding
+from . import branding, persona
+
+log = logging.getLogger(__name__)
 
 try:
     from dotenv import load_dotenv
@@ -144,6 +147,9 @@ class Settings:
     # Off by default: it is a group-chat regular, not a solver. On, it will attempt
     # heavy maths, whole programs and homework instead of declining them.
     heavy_lifting: bool = _env("HEAVY_LIFTING", default=False)
+    # How heavy a persona prompt to send: auto | tight | compact | full. `auto`
+    # is what it has always done - compact on free models, full otherwise.
+    prompt_tier: str = _env("PROMPT_TIER", default="auto")
     # Let the bot learn which prompt each model family answers to. Off: it uses the
     # one prompt per mode it has always used, byte for byte.
     brain: bool = _env("BRAIN", default=False)
@@ -234,6 +240,17 @@ class Settings:
         if validate:
             settings.validate()
         return settings
+
+    def __post_init__(self) -> None:
+        # Typed by hand in the panel, so a typo lands here rather than silently
+        # sending the wrong weight for the rest of the day.
+        wanted = (self.prompt_tier or "").strip().lower()
+        if wanted not in (*persona.TIERS, persona.AUTO):
+            if wanted:
+                log.warning("unknown PROMPT_TIER %r, using auto", self.prompt_tier)
+            object.__setattr__(self, "prompt_tier", persona.AUTO)
+        else:
+            object.__setattr__(self, "prompt_tier", wanted)
 
     def validate(self, *, has_stored_key: bool = False) -> None:
         """Check the bot can start. A key saved in the panel counts as a key."""
