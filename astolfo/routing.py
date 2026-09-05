@@ -97,6 +97,52 @@ _SERIOUS = re.compile(
     re.I,
 )
 
+# The other kind of serious, and the one the bot missed. Not a crisis - nobody is
+# in danger - but somebody talking about their own hurt and hoping to be heard.
+# A member asked how to move on from a girl who ignores him, said he had loved her
+# and that the longer it went the clearer it was she did not care, and got "oh, I
+# have a question too!" back. None of the words above are in that, and the crisis
+# list should not grow to cover it: this is its own tier, first person on purpose,
+# so ordinary gossip about somebody else's breakup does not trip it.
+_HURTING = re.compile(
+    r"(دلم\s*شکست|دل\s*شکسته|دل‌شکسته"
+    r"|(دوسش|دوستش|عاشقش)\s*(داشتم|بودم|هستم|ام)"
+    r"|(بهم|به\s*من)\s*(اهمیت|محل|توجه)\s*(ی\s*)?نمی[‌\s]?(ده|داد)"
+    r"|محل\s*سگ\s*(بهم|به\s*من)"
+    r"|ازم\s*متنفره|ولم\s*کرد|ترکم\s*کرد|بهم\s*زد(یم)?"
+    r"|فراموشش\s*کنم|فراموش\s*کردنش"
+    r"|دلتنگشم|دلم\s*براش\s*تنگ"
+    r"|حس\s*تنهایی|احساس\s*پوچی|بی[‌\s]?ارزشم"
+    r"|\bmove\s*on\b[^\n]{0,20}\b(from|ازش|از\s*اون)\b|\bازش\b[^\n]{0,20}\bmove\s*on\b"
+    r"|\bget\s+over\s+(her|him|them)\b"
+    r"|\b(she|he|they)\s+(doesn'?t|don'?t)\s+care\s+about\s+me\b"
+    r"|\b(broke\s+up\s+with\s+me|dumped\s+me|ghosted\s+me)\b"
+    r"|\bheartbroken\b|\bunrequited\b"
+    r"|\bi\s+(feel|am|'m)\s+(so\s+)?(lonely|alone|worthless|unwanted|unloved)\b"
+    r"|\bi\s+miss\s+(her|him|them)\s+so\s+much\b)",
+    re.I,
+)
+
+# Written with spaces, matched against text whose zero-width non-joiners have been
+# folded into them: "محل‌سگ" and "محل سگ" are the same words, and the real message
+# used the first. Every Persian pattern here would otherwise need two spellings.
+ZWNJ = "\u200c"
+
+# "move on" in a Persian sentence is about a person, near enough always - it is the
+# borrowed phrase for getting over someone. In English it is as likely to be about
+# the next map, so there it has to say who.
+_MOVE_ON = re.compile(r"\bmove\s*on\b", re.I)
+
+
+def _hurting(body: str) -> bool:
+    soft = body.replace(ZWNJ, " ")
+    if _HURTING.search(soft):
+        return True
+    return bool(_PERSIAN_TEXT.search(soft) and _MOVE_ON.search(soft))
+
+
+_PERSIAN_TEXT = re.compile(r"[؀-ۿ]")
+
 _CHATTER = re.compile(
     r"^(سلام|سلوم|درود|هی|های|چطوری|خوبی|خوبین|مرسی|ممنون|دمت\s*گرم|خدافظ|بای|ایول|لول"
     r"|خخخ|هه|اوکی|باشه|آره|نه|جانم|هوی"
@@ -115,6 +161,10 @@ def heuristic(
 
     if _SERIOUS.search(body):
         return Decision(SERIOUS, reason="distress signals"), 0.95
+    if _hurting(body):
+        # Confident enough to skip the dispatcher: this used to depend entirely on
+        # a free router model reading it right, and it did not.
+        return Decision(SERIOUS, reason="somebody is hurting"), 0.9
     if not heavy_lifting and _HEAVY.search(body):
         # It is going to decline this in character, so do not pay a think model to
         # produce the refusal.
