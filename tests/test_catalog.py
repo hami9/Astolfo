@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from astolfo import catalog
 
 
@@ -210,3 +212,63 @@ def test_silence_about_price_follows_the_service() -> None:
 def test_a_specific_name_beats_its_family() -> None:
     assert catalog.window_for("qwen3-coder-480b") > catalog.window_for("qwen3-32b")
     assert catalog.window_for("llama-3-8b") < catalog.window_for("llama-3.3-70b")
+
+
+# -- things you cannot hold a conversation with ---------------------------
+# Every id below is real: from OpenRouter's 400 in the live log, and from
+# DeepInfra's own listing as the bot printed it at startup.
+NOT_CHAT = [
+    "google/gemini-2.5-computer-use-preview-10-2025",
+    "BAAI/bge-base-en-v1.5",
+    "BAAI/bge-m3",
+    "BAAI/bge-en-icl",
+    "Bria/blur_background",
+    "Bria/erase_foreground",
+    "Bria/expand",
+    "Audio8/Audio8-TTS-Preview-0.6b",
+    "intfloat/e5-large-v2",
+    "google/imagen-3",
+    "openai/sora-2",
+    "kwaivgi/kling-v2",
+    "qwen/qwen-image-edit",
+]
+
+REAL_CHAT = [
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "google/gemini-2.5-flash",
+    "minimax/minimax-m3:free",
+    "thinkingmachines/inkling-small:free",
+    "thinkingmachines/inkling:free",
+    "deepseek-v4-flash",
+    "deepseek-v4-flash-vision-exp",
+    "llama-4-scout-17b-16e-instruct",
+    "qwen3-32b",
+    "openai/gpt-oss-120b",
+    "gemma-3-27b-it",
+    "Qwen/Qwen2.5-VL-7B-Instruct",
+    "pixtral-12b-latest",
+    "command-r7b-12-2024",
+    "gpt-4o-mini",
+]
+
+
+@pytest.mark.parametrize("model_id", NOT_CHAT)
+def test_a_bare_listing_drops_what_cannot_hold_a_conversation(model_id: str) -> None:
+    """A computer-use model took a real turn in the group and came back as
+    "not a valid model ID". DeepInfra's listing opens with four embedding models
+    and four image tools, and adoption would have taken them as chat models."""
+    assert catalog.parse({"id": model_id}) is None, model_id
+
+
+@pytest.mark.parametrize("model_id", REAL_CHAT)
+def test_the_filter_does_not_eat_real_models(model_id: str) -> None:
+    """The other half of the job. A name filter that is too eager is worse than
+    one that is too slack: it silently shrinks the pool and nothing says why."""
+    assert catalog.parse({"id": model_id}) is not None, model_id
+
+
+def test_a_substring_does_not_take_out_an_innocent_neighbour() -> None:
+    """"kling" is inside "inkling", and inkling-small is one of the free models
+    the bot actually runs on. Caught by testing both directions, not by review."""
+    assert catalog.parse({"id": "kwaivgi/kling-v2"}) is None
+    assert catalog.parse({"id": "thinkingmachines/inkling-small:free"}) is not None
