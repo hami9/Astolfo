@@ -26,7 +26,7 @@ def today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # The most outcome rows one day may hold. In free mode the model changes turn to
 # turn, so the key space is models x variants x modes and only a ceiling keeps a
@@ -202,9 +202,10 @@ CREATE INDEX IF NOT EXISTS seen_models_by_age ON seen_models (first_seen DESC);
 -- the counters it mirrors live in memory, so every restart used to put the
 -- worst-behaved model back at the front of the free pool with a clean sheet.
 CREATE TABLE IF NOT EXISTS model_health (
-    model    TEXT PRIMARY KEY,
-    strikes  INTEGER NOT NULL DEFAULT 0,
-    last_bad REAL
+    model        TEXT PRIMARY KEY,
+    strikes      INTEGER NOT NULL DEFAULT 0,
+    last_bad     REAL,
+    rested_until REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS service_usage (
@@ -291,6 +292,10 @@ class Database:
             # Which reply lengths this chat answers.
             self._add_column("chats", "reception", "TEXT NOT NULL DEFAULT ''")
         # v7 adds the outcomes table, which the schema above already creates.
+        if current and current < 8:
+            # A model retired for twelve hours used to come back with the next
+            # restart, because only the strike count was written down.
+            self._add_column("model_health", "rested_until", "REAL NOT NULL DEFAULT 0")
 
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
@@ -956,6 +961,32 @@ class Database:
         )
         row = self.one("SELECT strikes FROM model_health WHERE model = ?", (model,))
         return int(row["strikes"]) if row else 1
+
+    def rest_model(self, model: str, seconds: float) -> None:
+        """Write down when a model may be asked again.
+
+        Service rests already outlived a restart; model rests did not, so the
+        escalating cooldown a broken model earns was undone by the next update -
+        and this bot updates often. Only the row `note_strike` has already
+        inserted is touched, so a rest is never recorded for a model with no
+        record.
+        """
+        if not model or seconds <= 0:
+            return
+        self.execute(
+            "UPDATE model_health SET rested_until = ? WHERE model = ?",
+            (time.time() + seconds, model),
+        )
+
+    def model_rests(self) -> dict[str, float]:
+        """When each still-resting model may be asked again, as wall clock."""
+        return {
+            str(row["model"]): float(row["rested_until"])
+            for row in self.query(
+                "SELECT model, rested_until FROM model_health WHERE rested_until > ?",
+                (time.time(),),
+            )
+        }
 
     def model_strikes(self) -> dict[str, int]:
         """What each model has already been caught doing, across restarts."""

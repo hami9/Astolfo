@@ -321,7 +321,8 @@ def test_a_models_record_survives_a_restart(settings, monkeypatch):
 
 def test_the_worst_model_sinks_to_the_back_of_the_pool(settings, monkeypatch):
     """Sunk, not banned: the free pool is ordered widest-context first, and the
-    widest model is not always a working one."""
+    widest model is not always a working one. Three strikes buy it a long rest,
+    which now outlives the restart too, so the pool is checked either side of it."""
     from astolfo.crypto import SecretBox
     from astolfo.db import open_database
     from astolfo.services import ServiceRegistry
@@ -336,6 +337,10 @@ def test_the_worst_model_sinks_to_the_back_of_the_pool(settings, monkeypatch):
 
     after = _client(settings, registry)
     after._free_text = ["wide/but-broken", "narrow/but-fine"]
+
+    assert after.free_pool() == ["narrow/but-fine"], "the broken one is still resting"
+
+    after._cooldowns.clear()
     pool = after.free_pool()
 
     assert pool[0] == "narrow/but-fine", "the working one is asked first now"

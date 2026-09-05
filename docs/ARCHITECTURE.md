@@ -25,7 +25,7 @@ flowchart TB
     end
     subgraph state["State"]
         K["memory.py + learning.py<br/>history, notes, learned style"]
-        L["db.py<br/>SQLite, schema v7"]
+        L["db.py<br/>SQLite, schema v8"]
         M["crypto.py<br/>encrypted keys"]
     end
     A --> B

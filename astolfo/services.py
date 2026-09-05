@@ -173,6 +173,12 @@ class ServiceRegistry:
     def model_strikes(self) -> dict[str, int]:
         return self._db.model_strikes()
 
+    def rest_model(self, model: str, seconds: float) -> None:
+        self._db.rest_model(model, seconds)
+
+    def model_rests(self) -> dict[str, float]:
+        return self._db.model_rests()
+
     # -- which one is actually doing best ---------------------------------
     def scores(self) -> list[Score]:
         """Every configured service ranked by how it has behaved today."""
