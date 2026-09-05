@@ -138,3 +138,64 @@ async def test_a_403_costs_ten_minutes_not_a_day(settings, monkeypatch):
 def test_the_two_cooldowns_are_far_apart() -> None:
     """If they were close the distinction would not be worth the code."""
     assert FORBIDDEN_COOLDOWN * 10 < AUTH_COOLDOWN
+
+
+# -- out of credit is not the same wait as rate limited -------------------
+def _spent(request: httpx.Request) -> httpx.Response:
+    if request.url.path.endswith("/models"):
+        return httpx.Response(200, json={"data": []})
+    return httpx.Response(402, text="out of credit")
+
+
+def _busy(request: httpx.Request) -> httpx.Response:
+    if request.url.path.endswith("/models"):
+        return httpx.Response(200, json={"data": []})
+    return httpx.Response(429, text="slow down")
+
+
+async def test_an_empty_account_is_not_asked_again_in_a_minute(settings, monkeypatch):
+    """Four services reported "no credit or quota left" and all showed ready:
+    a 402 was given the same sixty seconds as a 429, so each one cost a wasted
+    round trip every minute, all day."""
+    from astolfo.llm import QUOTA_COOLDOWN
+
+    client = _client(settings, monkeypatch, _spent, _registry(settings))
+    await client.chat([{"role": "user", "content": "hi"}], model="m")
+
+    waiting = client.providers[0].paused_until - time.monotonic()
+    assert waiting > QUOTA_COOLDOWN / 2, "hours, not a minute"
+
+
+async def test_rate_limiting_still_clears_in_a_minute(settings, monkeypatch):
+    """A 429 really does pass quickly, and parking it for hours would be worse.
+
+    Free mode, because that is where a 429 pauses the service at all: the paid
+    path retries in place with backoff instead, on the grounds that the allowance
+    belongs to the model rather than the account.
+    """
+    from astolfo.llm import ACCOUNT_PAUSE, LLMClient
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    client = LLMClient(
+        settings.replace(providers=["openrouter"], free_mode=True),
+        transport=httpx.MockTransport(_busy),
+        registry=_registry(settings),
+    )
+    await client.chat([{"role": "user", "content": "hi"}], model="m")
+
+    waiting = client.providers[0].paused_until - time.monotonic()
+    assert 0 < waiting <= ACCOUNT_PAUSE + 5
+
+
+async def test_topping_up_brings_it_back_without_waiting(settings, monkeypatch):
+    """Which is what makes the longer rest safe to impose."""
+    registry = _registry(settings)
+    spent = _client(settings, monkeypatch, _spent, registry)
+    await spent.chat([{"role": "user", "content": "hi"}], model="m")
+    assert spent.providers[0].paused_until > time.monotonic()
+
+    topped_up = _client(settings, monkeypatch, _answers, registry)
+    topped_up.providers[0].paused_until = spent.providers[0].paused_until
+    ok, _ = await topped_up.probe("openrouter")
+
+    assert ok and topped_up.providers[0].paused_until == 0.0
