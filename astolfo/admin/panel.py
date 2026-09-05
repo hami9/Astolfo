@@ -192,6 +192,8 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
 
     if head == "data":
         action = rest[0] if rest else ""
+        if action == "diag":
+            return sections.diagnostics_report(ctx)
         if action == "audit":
             return sections.audit_trail(ctx)
         if action == "vacuum":
