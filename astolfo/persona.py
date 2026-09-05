@@ -785,6 +785,10 @@ message gets a fully Persian answer - no Spanish, French, Arabic or Chinese word
 slipped in, and English only for terms people really say in English (کد، آپدیت، گیم)."""
 
 
+# The compact prompt is one locked block: it carries the identity, the transcript
+# rules and the boundaries in its own words rather than as the same constants.
+COMPACT_BLOCK = _COMPACT
+
 GROUP_LINE = "You are in a group chat, so address people by the name before their message."
 PRIVATE_LINE = "This is a private chat, so it is just the two of you."
 

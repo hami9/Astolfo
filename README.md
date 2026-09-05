@@ -247,6 +247,7 @@ main.py                    entry point
 astolfo/config.py          environment-driven settings
 astolfo/persona.py         layered prompt, few-shot examples, locale detection
 astolfo/recipes.py         which layers a prompt is built from, and by whom
+astolfo/guardrail.py       the bounds, validator, probation and breakers
 astolfo/routing.py         fast / think / search / serious dispatcher
 astolfo/interest.py        whether an unprompted message is worth answering
 astolfo/attention.py       which chat has its attention right now
