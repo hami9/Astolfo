@@ -73,7 +73,20 @@ def _version() -> str:
 
 
 def _services(rt) -> list[str]:
+    """Which services are usable, and for the rest, why not.
+
+    `last_ok` belongs to a credential, not to a service - the two tables are not
+    the same shape, and reading it off the wrong one cost this whole section the
+    first time it ran against a real database.
+    """
     now = time.time()
+    working: dict[str, float] = {}
+    for row in rt.db.credentials():
+        try:
+            when = float(row["last_ok"] or 0.0)
+        except (IndexError, KeyError, TypeError, ValueError):
+            break  # an older database without the column; the rest still reads
+        working[row["service"]] = max(working.get(row["service"], 0.0), when)
     rows = []
     for row in rt.db.services():
         resting = float(row["rested_until"] or 0)
@@ -81,10 +94,10 @@ def _services(rt) -> list[str]:
             "service": row["name"],
             "on": "yes" if row["enabled"] else "no",
             "resting": f"{(resting - now) / 60:.0f}m" if resting > now else "-",
-            "last ok": _ago(row["last_ok"]),
-            "last error": str(row["last_error"] or "")[:70],
+            "last ok": _ago(working.get(row["name"])),
+            "why it is out": str(row["last_error"] or "")[:78],
         })
-    return _table(rows, ("service", "on", "resting", "last ok", "last error"))
+    return _table(rows, ("service", "on", "resting", "last ok", "why it is out"))
 
 
 def _faults(rt) -> list[str]:

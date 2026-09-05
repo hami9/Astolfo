@@ -256,3 +256,39 @@ async def test_what_a_service_said_is_kept_for_the_panel(settings, monkeypatch):
     assert kept, "the panel has something to print"
     assert kept[0][1].kind == CREDIT
     assert "Insufficient credits." in kept[0][1].summary
+
+
+# -- the eight messages the live services really returned ------------------
+def test_a_free_daily_quota_is_not_an_empty_wallet() -> None:
+    """Google answers an exhausted free-tier quota by mentioning billing, and
+    that word alone was enough to rest the service for six hours."""
+    fault = read(
+        429,
+        "429 You exceeded your current quota, please check your plan and billing details.",
+        service="google",
+    )
+
+    assert fault.kind == QUOTA, fault.summary
+    assert fault.wait < 3600, "it rolls, so it is not worth six hours"
+
+
+def test_every_wallet_that_really_was_empty_still_reads_as_one() -> None:
+    """Verbatim from the server, one per service. Each says something about the
+    balance itself rather than about a plan."""
+    for service, status, body in (
+        ("huggingface", 402, "You have depleted your monthly included credits. "
+                             "Purchase pre-paid credits to continue using Inference Providers."),
+        ("deepinfra", 402, "You need positive balance to do inference. "
+                           "Please add balance manually or setup top-up"),
+        ("sambanova", 402, "PAYMENT_METHOD_REQUIRED A payment method is required."),
+        ("deepseek", 402, "Insufficient Balance unknown_error invalid_request_error"),
+        ("openai", 429, "You have no credits remaining. Add credits to continue using the API."),
+    ):
+        fault = read(status, body, service=service)
+        assert fault.kind == CREDIT, f"{service}: {fault.summary}"
+        assert fault.terminal
+
+
+def test_the_one_that_was_only_rate_limited_still_is() -> None:
+    fault = read(429, "error Rate limit exceeded rate_limited 1300 429", service="mistral")
+    assert (fault.kind, fault.scope) == (RATE, MINUTE)

@@ -200,9 +200,16 @@ def _scope(text: str) -> str:
     return ""
 
 
+# An empty wallet, as each service words it. Deliberately specific: Google says
+# "you exceeded your current quota, please check your plan and billing details"
+# when a *free daily quota* runs out, and reading the word "billing" there turned
+# an allowance that rolls at midnight into an empty account. What every real one
+# of these has is a sentence about the balance itself, not about a plan.
 _CREDIT = re.compile(
-    r"insufficient\s+(credit|balance|funds|quota)|out\s+of\s+credit|negative\s+balance"
-    r"|add\s+(more\s+)?credit|top\s*[- ]?up|payment\s+required|billing|purchase",
+    r"insufficient\s+(credit|balance|funds)|out\s+of\s+credit|no\s+credits?\s+remaining"
+    r"|negative\s+balance|positive\s+balance|depleted\s+your"
+    r"|add\s+(more\s+)?(credit|balance|funds)|top\s*[- ]?up|payment\s+method"
+    r"|payment\s+required|purchase\s+(pre[- ]?paid\s+)?credit",
     re.I,
 )
 _QUOTA = re.compile(
@@ -314,8 +321,15 @@ def read(
     else:
         kind = UNKNOWN
 
-    if kind in (RATE, QUOTA, CREDIT) and not scope:
+    if kind in (RATE, CREDIT) and not scope:
         scope = ACCOUNT
+    if kind == QUOTA and not scope:
+        # An allowance that does not say when it rolls. Not the ten minutes an
+        # account-wide pause gets: Google's per-minute ceiling arrives with a
+        # structured violation naming it, so a quota that reached here without a
+        # window is a wider one than that. Fifteen minutes is long enough not to
+        # hammer it and short enough to have the service back within the hour.
+        scope = HOUR
     return Fault(
         status=status,
         service=service,
