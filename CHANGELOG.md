@@ -11,6 +11,26 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.5] - 2026-09-05
+
+### Fixed
+
+- **A model retired for the rest of the day was asked again anyway.** The server
+  showed 49 calls to `cohere/command-r-08-2024`, 21 of them unusable, 23 strikes
+  against it - and not one call to `command-r7b-12-2024`, the other model that
+  service names. Two faults behind one number. The cooldown a broken model earns
+  was only ever consulted for the discovered pool, so at the twelve services that
+  name their own models it did nothing: the free-mode retry after an unusable
+  reply asked the same model a second time. It now applies wherever a model is
+  chosen, and a service with nothing left awake still answers rather than going
+  silent.
+- **And the rest itself did not survive the update that earned it.** Strikes were
+  written down; the cooldown they buy was not. A model retired for twelve hours
+  came back with the next restart, and the log covering this held three of them.
+  `model_health` gained `rested_until` (schema v8), restored on start the same
+  way a service's rest already was. Clearing a model's record in the panel still
+  wakes it immediately.
+
 ## [2.6.4] - 2026-09-05
 
 ### Fixed
@@ -639,7 +659,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.4...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.5...HEAD
+[2.6.5]: https://github.com/hami9/Astolfo/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/hami9/Astolfo/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/hami9/Astolfo/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/hami9/Astolfo/compare/v2.6.1...v2.6.2

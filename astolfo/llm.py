@@ -251,17 +251,27 @@ class LLMClient:
         if not self._registry:
             return
         try:
-            self._strikes = dict(self._registry.model_strikes())
+            strikes = dict(self._registry.model_strikes())
+            resting = dict(self._registry.model_rests())
         except Exception as exc:
             log.warning("could not read model health: %s", exc)
             return
-        for model, strikes in self._strikes.items():
-            self._scores[model] = -min(strikes, MAX_SINK)
-        if self._strikes:
+        self._strikes = strikes
+        for model, count in strikes.items():
+            self._scores[model] = -min(count, MAX_SINK)
+        # Stored as wall clock, compared here against the monotonic clock the
+        # rest of the client uses, exactly as service rests are.
+        now, monotonic = time.time(), time.monotonic()
+        for model, until in resting.items():
+            remaining = until - now
+            if remaining > 0:
+                self._cooldowns[model] = monotonic + remaining
+                log.info("%s is still resting for %.0f minutes", model, remaining / 60)
+        if strikes:
             log.info(
                 "%d model(s) start behind on their record: %s",
-                len(self._strikes),
-                ", ".join(sorted(self._strikes)[:6]),
+                len(strikes),
+                ", ".join(sorted(strikes)[:6]),
             )
 
     def _restore_rests(self, stored: list[dict] | None) -> None:
@@ -606,17 +616,26 @@ class LLMClient:
         mine = {m.id for m in self._models if m.service == service}
         return [name for name in names if name in mine]
 
-    def free_pool(
-        self, *, vision: bool = False, audio: bool = False, service: str = ""
-    ) -> list[str]:
-        """Usable free models, worst-behaved last, skipping any that are resting."""
-        candidates = self._all_free(vision=vision, audio=audio, service=service)
+    def _usable(self, candidates: list[str]) -> list[str]:
+        """The ones worth asking first: resting models dropped, bad ones sunk.
+
+        The discovered pool has always been ordered this way. A service that
+        names its own models was not, so the escalating rest a broken model
+        earns applied to OpenRouter and nowhere else - and a retry after an
+        unusable reply asked the same model again.
+        """
         now = time.monotonic()
         available = [m for m in candidates if self._cooldowns.get(m, 0.0) <= now]
         # If every one is resting, try them anyway rather than going silent.
         pool = available or candidates
         # Stable sort: models that have misbehaved sink, the rest keep catalog order.
         return sorted(pool, key=lambda m: -self._scores.get(m, 0))
+
+    def free_pool(
+        self, *, vision: bool = False, audio: bool = False, service: str = ""
+    ) -> list[str]:
+        """Usable free models, worst-behaved last, skipping any that are resting."""
+        return self._usable(self._all_free(vision=vision, audio=audio, service=service))
 
     def supports_free_vision(self) -> bool:
         return bool(self._all_free(vision=True))
@@ -679,6 +698,12 @@ class LLMClient:
         earned = EMPTY_STRIKES[min(strikes, len(EMPTY_STRIKES)) - 1]
         rest = earned if seconds is None else seconds
         self._rest(model, rest)
+        if self._registry:
+            # In memory alone the rest of the day lasts until the next update.
+            try:
+                self._registry.rest_model(model, rest)
+            except Exception as exc:
+                log.debug("could not record the rest for %s: %s", model, exc)
         self._scores[model] = max(-MAX_SINK, self._scores.get(model, 0) - 1)
         log.info("resting %s for %.0fs: unusable reply (strike %d)", model, rest, strikes)
 
@@ -711,7 +736,9 @@ class LLMClient:
             return pool or [requested]
         options = provider.vision_models if vision else provider.models
         found = list(options or provider.models or [requested])
-        return self._sighted(provider.name, found) if vision else found
+        if vision:
+            found = self._sighted(provider.name, found)
+        return self._usable(found)
 
     def _pick_model(
         self,
