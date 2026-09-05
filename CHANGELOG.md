@@ -11,6 +11,19 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.3] - 2026-09-05
+
+### Fixed
+
+- **An empty account was asked again every minute.** Rate limited and out of
+  credit were given the same sixty-second wait. They are not the same wait: a 429
+  clears in a minute, an account with no money in it does not, and asking it again
+  a thousand times a day is a wasted round trip each time. Four services on the
+  live bot reported "no credit or quota left" when tested and still showed as
+  ready. Out of credit now rests for hours; rate limiting keeps its minute. The
+  longer rest is only safe because of 2.6.2 - a panel test brings a service
+  straight back the moment it is topped up.
+
 ## [2.6.2] - 2026-09-05
 
 ### Fixed
@@ -608,7 +621,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.2...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.3...HEAD
+[2.6.3]: https://github.com/hami9/Astolfo/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/hami9/Astolfo/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/hami9/Astolfo/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.4...v2.6.0

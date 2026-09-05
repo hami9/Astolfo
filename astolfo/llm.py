@@ -888,7 +888,15 @@ class LLMClient:
                 return last
             if last.error_kind in ("throttled", "payment"):
                 if provider.paused_until <= time.monotonic():
-                    self._pause_provider(provider, ACCOUNT_PAUSE)
+                    # Rate limited and out of credit are not the same wait. A 429
+                    # clears in a minute; an empty account does not, and asking it
+                    # again every minute for a day is a round trip each time that
+                    # can only end the same way. A panel test brings it straight
+                    # back the moment it is topped up.
+                    spent = last.error_kind == "payment"
+                    self._pause_provider(
+                        provider, QUOTA_COOLDOWN if spent else ACCOUNT_PAUSE
+                    )
                 continue  # a spent service says nothing about the next one
             if last.error_kind in ("rejected", "auth") and len(live) > 1:
                 # One service disliking the request, or the key for it, says
