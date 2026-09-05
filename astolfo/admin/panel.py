@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from dataclasses import dataclass
 
 from telegram import Update
@@ -184,13 +185,19 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
         if action == "check":
             return server.check(ctx)
         if action == "log":
-            return server.log(ctx)
+            errors_only = len(rest) > 1 and rest[1] == "1"
+            skip = int(rest[2]) if len(rest) > 2 and rest[2].isdigit() else 0
+            return server.log(ctx, errors_only=errors_only, skip=skip)
+        if action == "logfile":
+            return server.log_file(ctx, errors_only=len(rest) > 1 and rest[1] == "1")
         if action.rstrip("!") in server_ops.ACTIONS:
             return server.job(ctx, action.rstrip("!"), confirmed=action.endswith("!"))
         return server.overview(ctx)
 
     if head == "data":
         action = rest[0] if rest else ""
+        if action == "diag":
+            return sections.diagnostics_report(ctx)
         if action == "audit":
             return sections.audit_trail(ctx)
         if action == "vacuum":
@@ -363,8 +370,10 @@ async def _send_document(view: View, message, context) -> None:
     try:
         with open(view.document, "rb") as fh:
             await context.bot.send_document(
-                chat_id=message.chat_id, document=fh, filename="astolfo.db"
+                chat_id=message.chat_id,
+                document=fh,
+                filename=os.path.basename(view.document),
             )
     except Exception as exc:
-        log.warning("could not send the database: %s", exc)
+        log.warning("could not send %s: %s", view.document, exc)
         await message.reply_text(f"could not send the file: {exc}")

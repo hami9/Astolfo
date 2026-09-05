@@ -258,6 +258,7 @@ astolfo/roles.py           who runs each group, and what the bot is in it
 astolfo/providers.py       the known services and their keys
 astolfo/catalog.py         the models a service offers, as records
 astolfo/faults.py          what a service's refusal actually said, per dialect
+astolfo/diagnostics.py     the whole state of the box as one readable file
 astolfo/llm.py             the client: failover, key rotation, retries
 astolfo/services.py        stored services, keys and their health
 astolfo/participation.py   manual, auto and smart: how talkative the bot is

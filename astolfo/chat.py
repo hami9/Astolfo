@@ -21,11 +21,13 @@ from .persona import FAST, SEARCH, SERIOUS, THINK
 from .routing import Decision
 from .runtime import Runtime
 from .text import (
+    RECENT_HEARD,
     RECENT_REPLIES,
     clean_name,
     cut_impersonation,
     drop_translation,
     format_sources,
+    has_slur,
     is_addressed,
     looks_broken,
     normalize_input,
@@ -358,6 +360,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     _track(rt, message, sender)
 
+    if has_slur(text):
+        # Answered without a model at all. A member typed a racial slur and the
+        # bot transliterated it into Persian and gave it back to the group, and
+        # no guard on the reply can be trusted to catch that reliably: the same
+        # syllables are ordinary Persian for "look". So the message is where it
+        # stops - it gets Astolfo being bored, and no model ever sees it.
+        log.warning("chat %s: a message carried a slur; answering without a model", chat.id)
+        if addressed:
+            async with composing(state):
+                state.last_reply_at = time.monotonic()
+                said = persona.deflection(resolve_locale(rt, state), state.turn_count)
+                state.add_assistant(said)
+            await send_reply(message, said, rt)
+        return
+
     allowance = rt.budget.check(
         chat_id=chat.id,
         addressed=addressed,
@@ -504,7 +521,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             # Small models leak the prompt or parrot the question. One more go on a
             # different model is cheaper than sending that to the chat.
-            if settings.free_mode and fault:
+            if settings.free_mode and fault and rt.llm.stuck_on(result.model):
+                # One model left, so "try another" would try the same one. Rest
+                # it and send nothing rather than spend a second call on the
+                # identical answer.
+                log.info("chat %s: %s returned a reply that %s, and it is the only "
+                         "model left", chat.id, result.model, fault)
+                rt.llm.mark_unusable(result.model)
+                reply = ""
+            elif settings.free_mode and fault:
                 log.info("chat %s: %s returned a reply that %s, retrying",
                          chat.id, result.model, fault)
                 rt.llm.mark_unusable(result.model)
@@ -531,6 +556,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     variant=variant,
                     mode=decision.mode,
                 )
+
+            if reply and has_slur(reply):
+                # It transliterated a racial slur out of the message it was
+                # answering and sent it to the group. Never repeated, in any
+                # script, whether it thought of it or was handed it.
+                log.warning("chat %s: reply carried a slur, deflecting instead", chat.id)
+                rt.llm.mark_unusable(result.model)
+                reply = persona.deflection(resolve_locale(rt, state), state.turn_count)
 
             if reply and went_explicit(reply):
                 # Not a retry: another model would answer the same question the
@@ -639,6 +672,7 @@ def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) ->
         echoes=echoes,
         previous=said[0] if said else "",
         recent=said[1:],
+        heard=_recent_heard(state),
         asked=echoes,
     ) or ""
 
@@ -720,6 +754,25 @@ async def _announce_failure(rt: Runtime, state: ChatState, message, result: Chat
     if now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
         state.error_notice_at = now
         await send_reply(message, rt.strings("error_reply"), rt)
+
+
+def _recent_heard(state: ChatState, count: int = RECENT_HEARD) -> list[str]:
+    """The last few things people said here, newest first.
+
+    An echo reached further back than the newest message: each turn the bot
+    prepended whatever had just arrived to the reply it gave last time, until it
+    was handing back three members' sentences in a row.
+    """
+    said: list[str] = []
+    for turn in reversed(state.history):
+        if turn.get("role") == "assistant":
+            continue
+        content = turn.get("content")
+        if isinstance(content, str):
+            said.append(content)
+        if len(said) >= count:
+            break
+    return said
 
 
 def _recent_replies(state: ChatState, count: int = RECENT_REPLIES) -> list[str]:
