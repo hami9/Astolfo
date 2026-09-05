@@ -11,6 +11,34 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.7] - 2026-09-05
+
+### Fixed
+
+- **It opened fifteen replies in a row with the same word.** Verbatim from one
+  evening in the group: "اوه،" started almost every line it sent. The guard for
+  exactly this compared the *first three words* against the *single previous
+  reply*, and no two of those replies shared three words, so nothing ever fired.
+  The tic is one word repeating across a handful of turns, so that is what is
+  measured now: the same opening word in three of the last six replies makes this
+  one more of the same, and it is retried on another model. Twice is still a word.
+- **A sentence it had already used came back, and back.** "من یه سروکار دارم با
+  تو" was sent on the third, twenty-first and twenty-third reply of the same
+  evening - never twice in a row, so a check holding one previous reply could not
+  see it. The last six are held now, whitespace-folded.
+- **Somebody asked for help and got banter.** A member asked how to move on from a
+  girl who ignores him, then said he had loved her and that the longer it went the
+  clearer it was that she did not care. He got "oh, I have a question too!" The
+  distress heuristic covers a crisis - self-harm, death, hospitals - and none of
+  those words are in heartbreak, so the whole thing rested on a free router model
+  reading it right, and it did not. There is a second tier now: somebody talking
+  about their own hurt, first person on purpose, so gossip about a friend's
+  breakup does not trip it. It is confident enough to skip the dispatcher, it is
+  logged as "somebody is hurting" rather than as a crisis, and Persian half-spaces
+  no longer hide it - the real message wrote محل‌سگ with a zero-width non-joiner.
+  In Persian "move on" is the borrowed phrase for getting over somebody, so it
+  counts on its own; in English it still has to say who.
+
 ## [2.6.6] - 2026-09-05
 
 ### Fixed
@@ -696,7 +724,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.6...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.7...HEAD
+[2.6.7]: https://github.com/hami9/Astolfo/compare/v2.6.6...v2.6.7
 [2.6.6]: https://github.com/hami9/Astolfo/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/hami9/Astolfo/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/hami9/Astolfo/compare/v2.6.3...v2.6.4

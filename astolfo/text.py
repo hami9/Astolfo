@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 from telegram import Message, User
 from telegram.constants import ChatAction
@@ -356,6 +356,43 @@ def _opening(text: str, words: int = SAME_OPENING_WORDS) -> list[str]:
     return folded.split()[:words]
 
 
+# How many recent replies a tic is judged against, and how much of them has to
+# share an opening word before this one counts as more of the same.
+RECENT_REPLIES = 6
+SAME_FIRST_WORD = 3
+
+
+def opens_like_recent(reply: str, recent: Sequence[str]) -> bool:
+    """Whether this reply starts the way the last few already did.
+
+    `reuses_opening` compares three words against the one reply before, which is
+    too narrow twice over. In a real evening the bot opened fifteen replies in a
+    row with the same single word - "oh," - and every pair of them differed by
+    the second word, so nothing was ever caught. The tic is the first word
+    repeating, and it is worth looking further back than one turn.
+    """
+    here = _opening(reply, words=1)
+    if not here:
+        return False
+    same = sum(1 for said in recent[:RECENT_REPLIES] if _opening(said, words=1) == here)
+    return same >= SAME_FIRST_WORD
+
+
+def repeats_recent(reply: str, recent: Sequence[str]) -> bool:
+    """Whether this reply is one the bot already sent a few turns ago.
+
+    Not only the last one: the same broken sentence came back on the third,
+    twenty-first and twenty-third reply of one evening, and a check that holds
+    a single previous reply cannot see that.
+    """
+    folded = _folded(reply)
+    return bool(folded) and any(folded == _folded(said) for said in recent[:RECENT_REPLIES])
+
+
+def _folded(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
 def reuses_opening(reply: str, previous: str) -> bool:
     """Whether this reply opens exactly as the last one did.
 
@@ -371,7 +408,12 @@ def reuses_opening(reply: str, previous: str) -> bool:
 
 
 def looks_broken(
-    reply: str, *, echoes: str = "", previous: str = "", asked: str = ""
+    reply: str,
+    *,
+    echoes: str = "",
+    previous: str = "",
+    recent: Sequence[str] = (),
+    asked: str = "",
 ) -> str | None:
     """Why this reply is unusable, or None when it is fine.
 
@@ -397,11 +439,16 @@ def looks_broken(
         # anyway, then keeps doing it after being asked twice to stop.
         return "answered a Persian message in English"
 
-    folded = " ".join(body.lower().split())
-    if echoes and folded == " ".join(echoes.lower().split()):
+    folded = _folded(body)
+    if echoes and folded == _folded(echoes):
         return "echoed the message"
-    if previous and folded == " ".join(previous.lower().split()):
-        return "repeated its previous reply"
+    # `previous` is the reply before this one; `recent` is the handful before
+    # that, and a tic is only visible across the handful.
+    seen = [said for said in (previous, *recent) if said]
+    if repeats_recent(body, seen):
+        return "repeated something it already said"
     if previous and reuses_opening(body, previous):
         return "opened exactly as its last reply did"
+    if opens_like_recent(body, seen):
+        return "opened the way it keeps opening"
     return None
