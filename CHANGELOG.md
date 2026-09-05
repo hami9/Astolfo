@@ -11,6 +11,42 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.9] - 2026-09-05
+
+### Fixed
+
+- **"Monthly limit", back in a few minutes, monthly limit again.** Every refusal
+  from every service was flattened into one line - `HTTP 429: cohere limit` -
+  with the body thrown away. The body is where a service says *which* limit and
+  *how long*, so a trial key hitting its twenty-calls-a-minute ceiling and an
+  account that has spent its monthly credit produced the same sentence and got
+  the same sixty-second rest: right for one, useless for the other. And outside
+  free mode a 429 was retried in place with a twenty-second backoff whatever
+  window it named.
+- New `faults.py` reads a refusal in the dialect the service wrote it in and
+  answers three questions: what kind (too many requests / allowance spent / out
+  of credit / key refused / never reached the service / request refused /
+  their side broke), how wide (per minute, hour, day, month, account, request),
+  and how long. Google's `QuotaFailure` violation id and `RetryInfo` delay are
+  read structurally, because `GenerateRequestsPerMinutePerProjectPerModel` and
+  `...PerDay` are the difference between waiting a minute and waiting until
+  tomorrow. Groq's "try again in 6m30s", OpenRouter's `free-models-per-day`,
+  Cohere's "20 API calls / minute", HuggingFace's "monthly included credits" and
+  DeepInfra's payment shape each have a test with the body that service really
+  returns.
+- A window that rolls in a minute is a rate limit however the service words it -
+  Google calls its per-minute ceiling a quota and says "resource exhausted" - and
+  an empty wallet is never given a short rest, because no amount of waiting fills
+  it and every retry is a wasted call.
+
+### Added
+
+- **panel → services → a service** now prints its last four refusals in the
+  service's own words, with what it was read as and how long it is resting.
+  Anything in quotes is what the service said; nothing there is written by the
+  bot. The same line goes to the log, so what you read and what the code acted on
+  are the same fact rather than two readings of it.
+
 ## [2.6.8] - 2026-09-05
 
 ### Added
@@ -751,7 +787,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.8...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.9...HEAD
+[2.6.9]: https://github.com/hami9/Astolfo/compare/v2.6.8...v2.6.9
 [2.6.8]: https://github.com/hami9/Astolfo/compare/v2.6.7...v2.6.8
 [2.6.7]: https://github.com/hami9/Astolfo/compare/v2.6.6...v2.6.7
 [2.6.6]: https://github.com/hami9/Astolfo/compare/v2.6.5...v2.6.6

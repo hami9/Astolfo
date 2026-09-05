@@ -34,6 +34,9 @@ class _Client:
     def usable_now(self) -> bool:
         return True
 
+    def recent_faults(self, service: str = "") -> list:
+        return []
+
     async def load_catalog(self) -> None:
         return None
 

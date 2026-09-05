@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from . import catalog
+from . import catalog, faults
 from . import providers as providers_mod
 from .catalog import Model
 from .config import Settings
@@ -48,6 +48,15 @@ FORBIDDEN_COOLDOWN = 600.0
 # A free-tier 429 is account-wide, so every model is equally unavailable and the
 # only useful response is for the whole bot to stop knocking for a while.
 ACCOUNT_PAUSE = 60.0
+
+# Windows too wide to retry in place. A per-minute ceiling is worth sitting out
+# with a backoff; a daily or monthly one is not, whether or not free mode is on.
+SLOW = (faults.DAY, faults.MONTH)
+
+# The last few refusals from each service, so the panel can print what they
+# actually said rather than a status code. In memory: these are for reading now,
+# and a service that has been quiet for an hour has nothing to explain.
+FAULTS_KEPT = 8
 
 # How many of a service's own ids to take when every configured one is gone. The
 # list is walked on failover, so it stays short whatever the service lists;
@@ -159,6 +168,8 @@ class LLMClient:
         # of OpenRouter blind, which took its real vision models down with it and
         # did nothing about the model that had actually refused.
         self._text_only: set[tuple[str, str]] = set()
+        # service -> the last few refusals, oldest first.
+        self._faults: dict[str, list[tuple[float, faults.Fault]]] = {}
         self._scores: dict[str, int] = {}
         # How many times each model has come back unusable - carried across
         # restarts, because the free pool is ordered by widest context and the
@@ -675,6 +686,39 @@ class LLMClient:
             pool = list(provider.vision_models or provider.models)
         return bool(self._sighted(provider.name, pool))
 
+    def _note_fault(
+        self, resp, provider: providers_mod.Provider, model: str
+    ) -> faults.Fault:
+        """Read a refusal, log it in the service's own words, and keep it.
+
+        One place, so the line in the log, the rest that is taken and the line
+        on the panel are all the same fact rather than three readings of it.
+        """
+        raw = resp.headers.get("retry-after")
+        try:
+            asked = float(raw) if raw else 0.0
+        except (TypeError, ValueError):
+            asked = 0.0
+        fault = faults.read(
+            resp.status_code,
+            resp.text[:1500],
+            service=provider.name,
+            model=model,
+            retry_after=asked,
+        )
+        log.warning("%s", fault.summary)
+        kept = self._faults.setdefault(provider.name, [])
+        kept.append((time.time(), fault))
+        del kept[:-FAULTS_KEPT]
+        return fault
+
+    def recent_faults(self, service: str = "") -> list[tuple[float, faults.Fault]]:
+        """What each service last refused, newest first, for the panel."""
+        if service:
+            return list(reversed(self._faults.get(service, [])))
+        merged = [pair for kept in self._faults.values() for pair in kept]
+        return sorted(merged, key=lambda pair: -pair[0])
+
     def _rest(self, model: str, seconds: float) -> None:
         self._cooldowns[model] = time.monotonic() + seconds
 
@@ -993,14 +1037,23 @@ class LLMClient:
                     )
 
                 if resp.status_code == 429 or resp.status_code >= 500:
-                    last_error = f"HTTP {resp.status_code}"
-                    if self._s.free_mode and resp.status_code == 429:
+                    fault = self._note_fault(resp, provider, model)
+                    last_error = fault.summary
+                    if resp.status_code == 429 and (self._s.free_mode or fault.scope in SLOW):
                         # The allowance belongs to this account, so every model
                         # behind it is equally limited; the caller moves on to the
                         # next service rather than touring this one's models.
-                        self._pause_provider(provider, _retry_after(resp, ACCOUNT_PAUSE))
+                        #
+                        # And the rest is now the one the service asked for. A
+                        # trial key's twenty-a-minute and a spent monthly credit
+                        # both arrive as 429, and resting sixty seconds for both
+                        # is what "limit, back in a minute, limit again" was.
+                        self._pause_provider(
+                            provider, fault.wait or ACCOUNT_PAUSE, fault.summary
+                        )
                         return ChatResult(
-                            error=f"HTTP 429: {provider.name} limit", error_kind="throttled"
+                            error=fault.summary,
+                            error_kind="payment" if fault.kind == faults.CREDIT else "throttled",
                         )
                     wait = _retry_after(resp, delay)
                     log.warning(
@@ -1033,9 +1086,10 @@ class LLMClient:
                     return ChatResult(error=f"HTTP 400: {body[:200]}", error_kind="rejected")
 
                 if resp.status_code == 402:
+                    fault = self._note_fault(resp, provider, model)
                     if self._s.free_mode and provider.discovers_free_models:
                         # One model's free allowance is spent; the account is fine.
-                        self._rest(model, QUOTA_COOLDOWN)
+                        self._rest(model, fault.wait or QUOTA_COOLDOWN)
                         alternative = self._next_free(tried=tried, vision=vision, audio=audio)
                         if alternative:
                             log.info("%s is out of free quota, switching to %s",
@@ -1043,28 +1097,21 @@ class LLMClient:
                             model = alternative
                             continue
                         log.error("every free model is out of quota for now")
-                        return ChatResult(
-                            error="HTTP 402: free quota exhausted", error_kind="payment"
-                        )
+                        return ChatResult(error=fault.summary, error_kind="payment")
                     # On paid models this is terminal: retrying cannot conjure credit.
-                    log.error(
-                        "out of credit (HTTP 402) - top up at https://openrouter.ai/credits"
-                    )
-                    return ChatResult(error="HTTP 402: out of credit", error_kind="payment")
+                    self._pause_provider(provider, fault.wait or QUOTA_COOLDOWN, fault.summary)
+                    return ChatResult(error=fault.summary, error_kind="payment")
 
                 if resp.status_code in (401, 403):
                     # 401 is a claim about the key; 403 is a claim about this
-                    # request. Only the first is worth a day off.
-                    refused = resp.status_code == 401
-                    detail = (
-                        "HTTP 401: the key was refused"
-                        if refused
-                        else "HTTP 403: the service would not take this request"
-                    )
+                    # request, and a 403 that never reached the auth layer is an
+                    # edge block rather than a bad key - which the reader says.
+                    fault = self._note_fault(resp, provider, model)
+                    refused = fault.kind == faults.AUTH
+                    detail = fault.summary
                     log.error(
-                        "%s turned a request away (%s)%s",
+                        "%s turned a request away%s",
                         provider.name,
-                        resp.status_code,
                         f" [{credential.label}]" if credential.label else "",
                     )
                     self._rest_credential(
@@ -1101,13 +1148,10 @@ class LLMClient:
                     )
 
                 if resp.status_code >= 400:
-                    # Log the body: the status alone never says which field or
-                    # model the service objected to.
-                    body = resp.text[:300]
-                    log.error("%s returned HTTP %s: %s", provider.name, resp.status_code, body)
-                    return ChatResult(
-                        error=f"HTTP {resp.status_code}: {body[:200]}", error_kind="rejected"
-                    )
+                    # The status alone never says which field or model the service
+                    # objected to; the reader keeps what it did say.
+                    fault = self._note_fault(resp, provider, model)
+                    return ChatResult(error=fault.summary, error_kind="rejected")
 
                 data = resp.json()
 
