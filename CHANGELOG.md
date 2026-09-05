@@ -11,6 +11,24 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.4] - 2026-09-05
+
+### Fixed
+
+- **Models you cannot hold a conversation with were in the chat pool.** A real
+  turn in the group went to `google/gemini-2.5-computer-use-preview-10-2025` and
+  came back as `not a valid model ID` - it is a computer-use model, and the only
+  thing that could ever have caught it was its name, because it declares text in
+  and text out like any chat model. Worse, DeepInfra's own listing opens with four
+  BAAI embedding models and four Bria image tools, and since 2.6.0 a service that
+  offers none of its configured ids adopts its own - so those were candidates to
+  be adopted as chat models. The name filter now covers embeddings, image and
+  video generators, image editing, OCR, speech and computer-use.
+- **"kling" is inside "inkling".** Extending that filter quietly dropped
+  `thinkingmachines/inkling-small:free`, which is one of the free models the bot
+  actually runs on. The video generator is matched at a path boundary now. Caught
+  by testing that real models survive the filter, not by reading it.
+
 ## [2.6.3] - 2026-09-05
 
 ### Fixed
@@ -621,7 +639,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.3...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.4...HEAD
+[2.6.4]: https://github.com/hami9/Astolfo/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/hami9/Astolfo/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/hami9/Astolfo/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/hami9/Astolfo/compare/v2.6.0...v2.6.1

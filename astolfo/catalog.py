@@ -16,10 +16,30 @@ from dataclasses import dataclass
 
 # Not a conversation partner: safety filters, embedders, and the speech and
 # image models the bare listings sit right next to the chat ones.
+# Things a service lists that you cannot hold a conversation with. This is the
+# only filter a bare listing gets, so it has to cover the neighbours - and the
+# neighbours are worse than they look. DeepInfra's own listing opens with four
+# BAAI embedding models and four Bria image tools, and OpenRouter carries
+# Google's computer-use preview, which took a real turn in the group before it
+# came back as "not a valid model ID".
 NOT_CONVERSATIONAL = (
-    "content-safety", "guard", "moderation", "embed", "rerank", "classif",
-    "whisper", "tts", "-stt", "speech", "transcribe", "diffusion", "flux",
-    "dall-e", "sdxl", "stable-", "upscal",
+    # judges and scorers
+    "content-safety", "guard", "moderation", "classif", "detect",
+    # vectors, not conversation
+    "embed", "rerank", "bge-", "gte-", "e5-", "siglip", "clip-vit",
+    # speech
+    "whisper", "tts", "-stt", "speech", "transcribe", "voice-",
+    # pictures
+    "diffusion", "flux", "dall-e", "sdxl", "stable-", "upscal", "imagen",
+    "nano-banana", "seedream", "inpaint", "outpaint", "background",
+    "foreground", "segment", "bria", "-image", "to-image", "ocr",
+    # moving pictures and sound
+    # "/kling" rather than "kling": inkling-small is a real chat model, and a
+    # bare substring quietly took it out of the pool.
+    "veo-", "sora", "/kling", "runway", "seedance", "to-video", "lyria",
+    "suno", "musicgen", "audiogen",
+    # driving a machine rather than talking to one
+    "computer-use", "computer_use",
 )
 
 # How much a service tells us about its models. Only OpenRouter answers in full;
