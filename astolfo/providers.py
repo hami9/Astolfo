@@ -17,6 +17,8 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from . import catalog
+
 
 @dataclass
 class Preset:
@@ -28,6 +30,15 @@ class Preset:
     discovers_free_models: bool = False
     # OpenRouter adds fields plain OpenAI-compatible services reject outright.
     openrouter_extensions: bool = False
+    # How much its /models listing says. Only OpenRouter answers in full; Groq
+    # adds the window to the OpenAI shape; the rest give an id and nothing else.
+    listing: str = catalog.BARE
+    # Whether its listing is worth reading at all. Every service that has a key
+    # is asked, so a new model on any of them can be found.
+    discovers: bool = True
+    # True where the service's own offer is a standing free tier, which is what
+    # a listing quoting no price at all has to be read against.
+    free_tier: bool = False
     # Shown in the panel. "free tier" is the service's own offer, not a promise:
     # what it actually grants is what its test button reports.
     note: str = ""
@@ -41,11 +52,14 @@ PRESETS: dict[str, Preset] = {
         key_env="OPENROUTER_API_KEY",
         discovers_free_models=True,
         openrouter_extensions=True,
+        listing=catalog.RICH,
+        free_tier=True,
     ),
     "google": Preset(
         name="google",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         key_env="GOOGLE_API_KEY",
+        free_tier=True,
         # The moving aliases, not pinned versions. Google retires a numbered model
         # "for new users" while still listing it, so a pinned id keeps working for
         # an old key and answers 404 to anyone who signed up after the cutoff -
@@ -59,12 +73,15 @@ PRESETS: dict[str, Preset] = {
         name="groq",
         base_url="https://api.groq.com/openai/v1",
         key_env="GROQ_API_KEY",
+        listing=catalog.SIZED,
+        free_tier=True,
         models=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
     ),
     "github": Preset(
         name="github",
         base_url="https://models.github.ai/inference",
         key_env="GITHUB_MODELS_TOKEN",
+        free_tier=True,
         models=["openai/gpt-4o-mini"],
         vision_models=["openai/gpt-4o-mini"],
     ),
@@ -72,6 +89,7 @@ PRESETS: dict[str, Preset] = {
         name="cerebras",
         base_url="https://api.cerebras.ai/v1",
         key_env="CEREBRAS_API_KEY",
+        free_tier=True,
         models=["llama-3.3-70b"],
         note="free tier",
         signup="cloud.cerebras.ai",
@@ -80,6 +98,7 @@ PRESETS: dict[str, Preset] = {
         name="mistral",
         base_url="https://api.mistral.ai/v1",
         key_env="MISTRAL_API_KEY",
+        free_tier=True,
         models=["mistral-small-latest", "open-mistral-nemo"],
         vision_models=["pixtral-12b-latest"],
         note="free tier",
@@ -89,6 +108,7 @@ PRESETS: dict[str, Preset] = {
         name="cohere",
         base_url="https://api.cohere.ai/compatibility/v1",
         key_env="COHERE_API_KEY",
+        free_tier=True,
         models=["command-r-08-2024", "command-r7b-12-2024"],
         note="trial keys are free and rate limited",
         signup="dashboard.cohere.com",
@@ -97,6 +117,7 @@ PRESETS: dict[str, Preset] = {
         name="huggingface",
         base_url="https://router.huggingface.co/v1",
         key_env="HUGGINGFACE_API_KEY",
+        free_tier=True,
         models=["meta-llama/Llama-3.3-70B-Instruct", "Qwen/Qwen2.5-7B-Instruct"],
         vision_models=["Qwen/Qwen2.5-VL-7B-Instruct"],
         note="monthly credit, then paid",
@@ -106,6 +127,7 @@ PRESETS: dict[str, Preset] = {
         name="sambanova",
         base_url="https://api.sambanova.ai/v1",
         key_env="SAMBANOVA_API_KEY",
+        free_tier=True,
         models=["Meta-Llama-3.3-70B-Instruct", "Meta-Llama-3.1-8B-Instruct"],
         vision_models=["Llama-3.2-11B-Vision-Instruct"],
         note="free tier",
@@ -142,6 +164,7 @@ PRESETS: dict[str, Preset] = {
         name="aimlapi",
         base_url="https://api.aimlapi.com/v1",
         key_env="AIMLAPI_API_KEY",
+        free_tier=True,
         models=["gpt-4o-mini"],
         vision_models=["gpt-4o-mini"],
         note="small free allowance, then paid",
@@ -181,6 +204,9 @@ class Provider:
     vision_models: list[str] = field(default_factory=list)
     discovers_free_models: bool = False
     openrouter_extensions: bool = False
+    listing: str = catalog.BARE
+    discovers: bool = True
+    free_tier: bool = False
     custom: bool = False
     paused_until: float = 0.0
     last_request: float = 0.0  # each service has its own per-minute allowance
@@ -291,6 +317,11 @@ def discover(
                 openrouter_extensions=bool(
                     preset.openrouter_extensions if preset else row.get("openrouter_extensions")
                 ),
+                listing=str(preset.listing if preset else catalog.BARE),
+                # Reading a listing is the one thing the panel may switch off per
+                # service, for one that answers slowly or not at all.
+                discovers=_flag(row.get("discovers"), preset.discovers if preset else True),
+                free_tier=bool(preset.free_tier if preset else row.get("free_tier")),
                 custom=preset is None,
                 paused_until=0.0,
             )
@@ -300,6 +331,11 @@ def discover(
 
 def _split(raw: object) -> list[str]:
     return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+
+
+def _flag(stored: object, default: bool) -> bool:
+    """A stored switch, where "not set" and "set to off" are different things."""
+    return default if stored is None else bool(stored)
 
 
 def unknown_names(order: list[str], stored: list[dict] | None = None) -> list[str]:

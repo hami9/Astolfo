@@ -152,6 +152,19 @@ class ServiceRegistry:
     def usage_today(self) -> dict:
         return self._db.service_usage(date.today().isoformat())
 
+    def note_models(self, seen: list[tuple[str, str, int, bool, bool]]) -> list[str]:
+        """Remember what the services listed, and say which ids are new."""
+        return self._db.note_models(seen)
+
+    def newest_models(self, limit: int = 20) -> list:
+        return self._db.newest_models(limit)
+
+    def note_strike(self, model: str) -> int:
+        return self._db.note_strike(model)
+
+    def model_strikes(self) -> dict[str, int]:
+        return self._db.model_strikes()
+
     # -- which one is actually doing best ---------------------------------
     def scores(self) -> list[Score]:
         """Every configured service ranked by how it has behaved today."""

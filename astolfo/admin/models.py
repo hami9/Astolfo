@@ -9,6 +9,7 @@ takes effect on the next message, with no restart.
 from __future__ import annotations
 
 import logging
+import time
 
 from telegram import InlineKeyboardButton
 
@@ -16,7 +17,7 @@ from .. import settings_store
 from ..catalog import Model
 from .guard import audit
 from .sections import View
-from .ui import back_row, button, keyboard, trim
+from .ui import ago, back_row, button, keyboard, trim
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +68,9 @@ def overview(ctx) -> View:
 
     lines = ["🧠 Models\n"]
     if offered:
-        lines.append(f"{len(offered)} free chat models offered right now.\n")
+        services = sorted({m.service for m in offered if m.service})
+        where = f" across {', '.join(services)}" if services else ""
+        lines.append(f"{len(offered)} free chat models offered right now{where}.\n")
     else:
         lines.append("The catalog has not been read yet — press sync.\n")
 
@@ -85,7 +88,8 @@ def overview(ctx) -> View:
     if rt.settings.free_mode:
         lines.append("In free mode the pool is used automatically; these are the paid-mode jobs.")
 
-    rows.append([button("📊 token usage", "mdl", "u"), button("🔄 sync catalog", "mdl", "sync")])
+    rows.append([button("📊 token usage", "mdl", "u"), button("🆕 what is new", "mdl", "new")])
+    rows.append([button("🔄 sync catalog", "mdl", "sync")])
     rows.append(back_row())
     return View("\n".join(lines), keyboard(*rows))
 
@@ -220,6 +224,50 @@ def take_search(ctx, target: str, text: str) -> View:
     return View("\n".join(lines), keyboard(*rows))
 
 
+# -- what has just appeared ------------------------------------------------
+NEW_SHOWN = 12
+# A model listed for the first time within this long is worth a badge. Services
+# add models weekly, so a week is what "new" is worth calling.
+NEW_FOR = 7 * 86400
+
+
+def whats_new(ctx) -> View:
+    """Models that have appeared since this install started watching.
+
+    Free tiers gain and lose models weekly and the only way anyone noticed used
+    to be a 404 in the log. This is the same information, before it breaks.
+    """
+    rows = ctx.rt.registry.newest_models(NEW_SHOWN) if ctx.rt.registry else []
+    if not rows:
+        view = overview(ctx)
+        view.alert = "nothing listed yet; press sync"
+        return view
+
+    cutoff = time.time() - NEW_FOR
+    recent = [row for row in rows if (row["first_seen"] or 0) >= cutoff]
+    lines = ["🆕 New models\n"]
+    if recent:
+        lines.append(f"{len(recent)} appeared in the last week.\n")
+    else:
+        lines.append("Nothing new this week. The most recent are:\n")
+
+    for row in rows:
+        marks = " 🖼" if row["vision"] else ""
+        price = "free" if row["free"] else "paid"
+        fresh = "🆕 " if (row["first_seen"] or 0) >= cutoff else ""
+        lines.append(
+            f"{fresh}{row['model'].split('/', 1)[-1]}{marks}\n"
+            f"   {row['service']} · {_tokens(row['context'])} · {price}"
+            f" · first seen {ago(row['first_seen'])}"
+        )
+
+    lines.append("\nAssign one from its job screen; free mode uses the pool by itself.")
+    return View(
+        "\n".join(lines),
+        keyboard([button("🔄 scan again", "mdl", "rescan")], back_row("mdl")),
+    )
+
+
 # -- what the models did --------------------------------------------------
 def usage(ctx) -> View:
     """Tokens and calls per model today. Free models all cost nothing, so the
@@ -261,6 +309,7 @@ async def sync(ctx) -> View:
         log.warning("could not reload the catalog: %s", exc)
         view = overview(ctx)
         view.alert = f"could not read the catalog: {exc}"
+        view.extras["failed"] = True
         return view
 
     free = len(_pool(ctx, free_only=True))
@@ -268,3 +317,13 @@ async def sync(ctx) -> View:
     view = overview(ctx)
     view.alert = f"{free} free of {every} chat models"
     return view
+
+
+async def resync(ctx) -> View:
+    """Read the catalog again and stay on the new-models screen to see the result."""
+    view = await sync(ctx)
+    if view.extras.get("failed"):
+        return view
+    fresh = whats_new(ctx)
+    fresh.alert = view.alert
+    return fresh

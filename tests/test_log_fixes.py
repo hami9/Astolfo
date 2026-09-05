@@ -291,3 +291,101 @@ async def test_it_still_sends_when_nothing_is_wrong(rt):
 
     assert message.sent == ["hi there"]
     assert message.chat.id not in rt.dormant
+
+
+# -- 6. a bad model must not come back first after a restart --------------
+def _client(settings, registry=None):
+    return LLMClient(_settings(settings), transport=httpx.MockTransport(_ok), registry=registry)
+
+
+def test_a_models_record_survives_a_restart(settings, monkeypatch):
+    """The startup log showed the model that answered with silence twenty times
+    picked first for five of six jobs: strikes lived only in memory, and they
+    restart the bot every time they update."""
+    from astolfo.crypto import SecretBox
+    from astolfo.db import open_database
+    from astolfo.services import ServiceRegistry
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    database = open_database(settings.data_dir)
+    registry = ServiceRegistry(database, SecretBox(settings.data_dir))
+
+    before = _client(settings, registry)
+    for _ in range(3):
+        before.mark_unusable("minimax/minimax-m3:free")
+
+    after = _client(settings, registry)
+    assert after._strikes["minimax/minimax-m3:free"] == 3
+    assert after._scores["minimax/minimax-m3:free"] < 0, "it starts behind, not level"
+
+
+def test_the_worst_model_sinks_to_the_back_of_the_pool(settings, monkeypatch):
+    """Sunk, not banned: the free pool is ordered widest-context first, and the
+    widest model is not always a working one."""
+    from astolfo.crypto import SecretBox
+    from astolfo.db import open_database
+    from astolfo.services import ServiceRegistry
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    registry = ServiceRegistry(open_database(settings.data_dir), SecretBox(settings.data_dir))
+
+    first = _client(settings, registry)
+    first._free_text = ["wide/but-broken", "narrow/but-fine"]
+    for _ in range(3):
+        first.mark_unusable("wide/but-broken")
+
+    after = _client(settings, registry)
+    after._free_text = ["wide/but-broken", "narrow/but-fine"]
+    pool = after.free_pool()
+
+    assert pool[0] == "narrow/but-fine", "the working one is asked first now"
+    assert "wide/but-broken" in pool, "and the other is still tried, just last"
+
+
+def test_a_record_cannot_sink_a_model_without_limit(settings, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    client = _client(settings)
+    for _ in range(20):
+        client.mark_unusable("x")
+
+    assert client._scores["x"] == -guard_sink(), "capped, so six good replies can undo it"
+
+
+def guard_sink() -> int:
+    from astolfo.llm import MAX_SINK
+
+    return MAX_SINK
+
+
+def test_a_model_forgiven_by_pruning_starts_level_again(settings):
+    """Weights, hardware and endpoints all change under the same id."""
+    import time as _time
+
+    from astolfo.db import open_database
+
+    database = open_database(settings.data_dir)
+    database.note_strike("was/bad-once")
+    database.execute("UPDATE model_health SET last_bad = ?", (_time.time() - 200 * 86400,))
+
+    assert database.prune(90)["model_health"] == 1
+    assert database.model_strikes() == {}
+
+
+def test_recording_a_strike_never_breaks_a_turn(settings, monkeypatch):
+    """The database is a convenience here; answering the chat is not."""
+
+    class _Broken:
+        def rows(self):
+            return None
+
+        def model_strikes(self):
+            raise RuntimeError("disk is full")
+
+        def note_strike(self, model):
+            raise RuntimeError("disk is full")
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    client = _client(settings, _Broken())
+    client.mark_unusable("x")
+
+    assert client._strikes["x"] == 1, "it still counts in memory"

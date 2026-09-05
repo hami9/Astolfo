@@ -6,6 +6,7 @@ restart, so these check the whole way through: catalog to button to setting.
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -53,17 +54,26 @@ class CatalogLLM:
     def __init__(self, settings, registry=None, listing=LISTING):
         self.providers = [SimpleNamespace(name="openrouter")]
         self.listing = listing
+        self.registry = registry
         self.syncs = 0
-        self._models = catalog.read(listing)
+        self._models = catalog.read(listing, service="openrouter")
 
-    def models_offered(self, *, free_only: bool = True, vision: bool = False):
+    def models_offered(self, *, free_only: bool = True, vision: bool = False, service: str = ""):
         return [
-            m for m in self._models if (m.free or not free_only) and (m.vision or not vision)
+            m
+            for m in self._models
+            if (m.free or not free_only)
+            and (m.vision or not vision)
+            and (not service or m.service == service)
         ]
 
     async def load_catalog(self):
         self.syncs += 1
-        self._models = catalog.read(self.listing)
+        self._models = catalog.read(self.listing, service="openrouter")
+        if self.registry:
+            self.registry.note_models(
+                [(m.service, m.id, m.context, m.free, m.vision) for m in self._models]
+            )
 
     def resolve(self, model, **kwargs):
         return model
@@ -231,3 +241,57 @@ async def test_the_overview_shows_what_the_chosen_model_did(owned):
 async def test_the_usage_screen_says_so_when_nothing_has_run(owned):
     query, _ = await _press(owned, "ap:mdl:u")
     assert "no model calls" in query.answers[0]
+
+
+# -- what is new ----------------------------------------------------------
+async def test_what_is_new_lists_models_the_install_had_not_seen(owned):
+    await _press(owned, "ap:mdl:sync")
+
+    query, _ = await _press(owned, "ap:mdl:new")
+    text = query.edits[0]
+    assert "New models" in text
+    assert "model-00" in text and "sees-things" in text
+    assert "openrouter" in text, "which service offers it"
+    assert "🆕" in text
+
+
+async def test_a_model_stops_being_new_once_it_is_known(owned):
+    """The badge marks what has just appeared, not everything ever listed."""
+    await _press(owned, "ap:mdl:sync")
+    long_ago = time.time() - 30 * 86400
+    owned.db.execute("UPDATE seen_models SET first_seen = ?", (long_ago,))
+
+    query, _ = await _press(owned, "ap:mdl:new")
+    assert "Nothing new this week" in query.edits[0]
+    assert query.edits[0].count("🆕") == 1, "only the heading, no model is badged"
+
+
+async def test_only_the_new_arrival_is_badged(owned):
+    await _press(owned, "ap:mdl:sync")
+    owned.db.execute("UPDATE seen_models SET first_seen = ?", (time.time() - 30 * 86400,))
+    owned.llm.listing = [*LISTING, {
+        "id": "vendor/brand-new",
+        "context_length": 128000,
+        "pricing": {"prompt": "0", "completion": "0"},
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+    }]
+
+    query, _ = await _press(owned, "ap:mdl:rescan")
+    text = query.edits[0]
+    assert "1 appeared in the last week" in text
+    assert "🆕 brand-new" in text
+    assert text.count("🆕") == 2, "the heading and the one arrival, nothing else"
+
+
+async def test_the_screen_says_so_before_anything_has_been_scanned(owned):
+    query, _ = await _press(owned, "ap:mdl:new")
+    assert "press sync" in query.answers[0]
+
+
+async def test_scanning_again_stays_on_the_new_models_screen(owned):
+    await _press(owned, "ap:mdl:sync")
+    before = owned.llm.syncs
+
+    query, _ = await _press(owned, "ap:mdl:rescan")
+    assert owned.llm.syncs == before + 1
+    assert "New models" in query.edits[0]

@@ -20,7 +20,23 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+
+def today() -> str:
+    """The UTC day every daily counter is keyed by."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+SCHEMA_VERSION = 7
+
+# The most outcome rows one day may hold. In free mode the model changes turn to
+# turn, so the key space is models x variants x modes and only a ceiling keeps a
+# busy day from writing the file full on its own.
+MAX_OUTCOME_ROWS = 500
+
+# Thirteen services, and one of them lists four hundred models. A ceiling here
+# is what keeps a misbehaving listing from writing the file full; anything past
+# it is simply not remembered, which costs a "new" badge and nothing else.
+MAX_SEEN_MODELS = 4000
 
 # Provider keys used to live in `secrets`, one per service. They are credentials
 # now, so a service can hold more than one and each carries its own state.
@@ -143,6 +159,54 @@ CREATE TABLE IF NOT EXISTS credentials (
 );
 CREATE INDEX IF NOT EXISTS credentials_by_service ON credentials (service, position);
 
+-- What a model actually did, as opposed to what it cost. This is the evidence
+-- the bot used to throw away: a reply it had to repair, one it had to reject,
+-- and whether anybody answered it. Keyed by the prompt variant too, so the same
+-- model on two different prompts can be told apart.
+CREATE TABLE IF NOT EXISTS outcomes (
+    day        TEXT    NOT NULL,
+    service    TEXT    NOT NULL DEFAULT '',
+    model      TEXT    NOT NULL DEFAULT '',
+    variant    TEXT    NOT NULL DEFAULT '',
+    mode       TEXT    NOT NULL DEFAULT '',
+    calls      INTEGER NOT NULL DEFAULT 0,
+    answered   INTEGER NOT NULL DEFAULT 0,
+    repaired   INTEGER NOT NULL DEFAULT 0,
+    broken     INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cost       REAL    NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, service, model, variant, mode)
+);
+
+-- Every model id any service has ever listed, and when it first appeared. The
+-- catalog itself lives in memory and is rebuilt on each sync; this is only the
+-- memory of what was already there, so that "new" means new to this install and
+-- not merely new since the last restart. A model that stops being offered ages
+-- out with everything else, and counts as new again if it ever comes back.
+CREATE TABLE IF NOT EXISTS seen_models (
+    service    TEXT    NOT NULL,
+    model      TEXT    NOT NULL,
+    first_seen REAL,
+    last_seen  REAL,
+    context    INTEGER NOT NULL DEFAULT 0,
+    free       INTEGER NOT NULL DEFAULT 0,
+    vision     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (service, model)
+);
+CREATE INDEX IF NOT EXISTS seen_models_by_age ON seen_models (first_seen DESC);
+
+-- What a model has done to earn its place in the queue. Only the bad news: a
+-- model that answered with silence or nonsense, and how many times. Kept because
+-- the counters it mirrors live in memory, so every restart used to put the
+-- worst-behaved model back at the front of the free pool with a clean sheet.
+CREATE TABLE IF NOT EXISTS model_health (
+    model    TEXT PRIMARY KEY,
+    strikes  INTEGER NOT NULL DEFAULT 0,
+    last_bad REAL
+);
+
 CREATE TABLE IF NOT EXISTS service_usage (
     day       TEXT    NOT NULL,
     service   TEXT    NOT NULL,
@@ -164,6 +228,9 @@ TABLES = (
     "services",
     "credentials",
     "service_usage",
+    "outcomes",
+    "seen_models",
+    "model_health",
 )
 
 
@@ -183,6 +250,9 @@ class Database:
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        # Rows written today, counted once and kept in memory: the ceiling is
+        # checked on every turn and a COUNT(*) per turn would not be.
+        self._outcome_rows: dict[str, int] = {}
         _restrict(path, 0o600)
 
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -220,6 +290,7 @@ class Database:
         if current and current < 6:
             # Which reply lengths this chat answers.
             self._add_column("chats", "reception", "TEXT NOT NULL DEFAULT ''")
+        # v7 adds the outcomes table, which the schema above already creates.
 
         self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._db.commit()
@@ -310,6 +381,13 @@ class Database:
 
         drop("audit", "DELETE FROM audit WHERE at < ?", (cutoff,))
         drop("service_usage", "DELETE FROM service_usage WHERE day < ?", (day,))
+        drop("outcomes", "DELETE FROM outcomes WHERE day < ?", (day,))
+        # A model no service has listed for this long is gone. Forgetting it is
+        # what lets it count as new again if it ever comes back.
+        drop("seen_models", "DELETE FROM seen_models WHERE last_seen < ?", (cutoff,))
+        # A model that misbehaved long enough ago deserves another go: hardware,
+        # weights and endpoints all change under the same id.
+        drop("model_health", "DELETE FROM model_health WHERE last_bad < ?", (cutoff,))
         # Groups the bot was removed from long ago, and everything about them.
         drop(
             "members",
@@ -752,6 +830,143 @@ class Database:
     def service_usage(self, day: str) -> dict[str, sqlite3.Row]:
         rows = self.query("SELECT * FROM service_usage WHERE day = ?", (day,))
         return {row["service"]: row for row in rows}
+
+    # -- what a model actually did ----------------------------------------
+    def add_outcome(
+        self,
+        day: str,
+        *,
+        service: str,
+        model: str,
+        variant: str = "",
+        mode: str = "",
+        calls: int = 0,
+        answered: int = 0,
+        repaired: int = 0,
+        broken: int = 0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cost: float = 0.0,
+        latency_ms: int = 0,
+    ) -> None:
+        """Fold one turn into the counters for its model and prompt.
+
+        Refuses once the day already holds `MAX_OUTCOME_ROWS`. In free mode the
+        model changes turn to turn, so without a ceiling a busy day could write
+        a row per model per variant per mode and the file would grow on its own.
+        """
+        if self._outcome_rows.get(day) is None:
+            row = self.one("SELECT COUNT(*) AS n FROM outcomes WHERE day = ?", (day,))
+            self._outcome_rows = {day: int(row["n"]) if row else 0}
+        if self._outcome_rows[day] >= MAX_OUTCOME_ROWS:
+            return
+
+        before = self.execute(
+            """
+            INSERT INTO outcomes (day, service, model, variant, mode, calls, answered,
+                                  repaired, broken, prompt_tokens, completion_tokens,
+                                  cost, latency_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(day, service, model, variant, mode) DO UPDATE SET
+                calls    = outcomes.calls    + excluded.calls,
+                answered = outcomes.answered + excluded.answered,
+                repaired = outcomes.repaired + excluded.repaired,
+                broken   = outcomes.broken   + excluded.broken,
+                prompt_tokens     = outcomes.prompt_tokens     + excluded.prompt_tokens,
+                completion_tokens = outcomes.completion_tokens + excluded.completion_tokens,
+                cost       = outcomes.cost + excluded.cost,
+                -- A running mean, so one slow call does not define the model.
+                latency_ms = CASE WHEN outcomes.calls + excluded.calls > 0
+                    THEN (outcomes.latency_ms * outcomes.calls
+                          + excluded.latency_ms * excluded.calls)
+                         / (outcomes.calls + excluded.calls)
+                    ELSE excluded.latency_ms END
+            """,
+            (day, service, model, variant, mode, calls, answered, repaired, broken,
+             prompt_tokens, completion_tokens, cost, latency_ms),
+        )
+        if before.rowcount and before.lastrowid is not None:
+            self._outcome_rows[day] = self._outcome_rows.get(day, 0) + 1
+
+    def outcomes(self, day: str | None = None, *, limit: int = 100) -> list[sqlite3.Row]:
+        if day is None:
+            return self.query(
+                "SELECT * FROM outcomes ORDER BY day DESC, calls DESC LIMIT ?", (limit,)
+            )
+        return self.query(
+            "SELECT * FROM outcomes WHERE day = ? ORDER BY calls DESC LIMIT ?", (day, limit)
+        )
+
+    # -- what the services have offered before -----------------------------
+    def note_models(self, seen: list[tuple[str, str, int, bool, bool]]) -> list[str]:
+        """Remember a catalog listing, and say which ids had never been listed.
+
+        One statement per model, in a single transaction, because a sync of every
+        service is a few hundred rows at most and happens on a button press.
+        """
+        if not seen:
+            return []
+        now = time.time()
+        fresh: list[str] = []
+        with self._lock:
+            held = self.query("SELECT service, model FROM seen_models")
+            known = {(row["service"], row["model"]) for row in held}
+            room = MAX_SEEN_MODELS - len(known)
+            for service, model, context, free, vision in seen:
+                if (service, model) not in known:
+                    if room <= 0:
+                        continue
+                    room -= 1
+                    fresh.append(model)
+                self._db.execute(
+                    """
+                    INSERT INTO seen_models
+                        (service, model, first_seen, last_seen, context, free, vision)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(service, model) DO UPDATE SET
+                        last_seen = excluded.last_seen,
+                        context   = excluded.context,
+                        free      = excluded.free,
+                        vision    = excluded.vision
+                    """,
+                    (service, model, now, now, context, int(free), int(vision)),
+                )
+            self._db.commit()
+        return fresh
+
+    def newest_models(self, limit: int = 20) -> list[sqlite3.Row]:
+        """What appeared most recently, newest first."""
+        return self.query(
+            "SELECT * FROM seen_models ORDER BY first_seen DESC, model LIMIT ?", (limit,)
+        )
+
+    # -- how each model has behaved ----------------------------------------
+    def note_strike(self, model: str) -> int:
+        """Count one more unusable reply from this model, and say how many now."""
+        if not model:
+            return 0
+        self.execute(
+            """
+            INSERT INTO model_health (model, strikes, last_bad) VALUES (?, 1, ?)
+            ON CONFLICT(model) DO UPDATE SET
+                strikes  = model_health.strikes + 1,
+                last_bad = excluded.last_bad
+            """,
+            (model, time.time()),
+        )
+        row = self.one("SELECT strikes FROM model_health WHERE model = ?", (model,))
+        return int(row["strikes"]) if row else 1
+
+    def model_strikes(self) -> dict[str, int]:
+        """What each model has already been caught doing, across restarts."""
+        return {
+            str(row["model"]): int(row["strikes"])
+            for row in self.query("SELECT model, strikes FROM model_health")
+        }
+
+    def forget_model_health(self) -> None:
+        """Give every model a clean sheet again, from the panel."""
+        self.execute("DELETE FROM model_health")
 
     # -- audit ------------------------------------------------------------
     def record(self, *, actor: int | None, action: str, detail: str = "") -> None:

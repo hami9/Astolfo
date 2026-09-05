@@ -12,9 +12,10 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 
 from .config import Settings
+from .db import today as _today
 from .llm import Usage
 
 log = logging.getLogger(__name__)
@@ -41,10 +42,6 @@ class Allowance:
     @property
     def degraded(self) -> bool:
         return self.level != FULL
-
-
-def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _model_row(blob: object) -> dict:

@@ -11,15 +11,90 @@ service listed the last time the catalog was loaded.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
-# Text in, text out, but no conversation to be had.
-NOT_CONVERSATIONAL = ("content-safety", "guard", "moderation", "embed", "rerank", "classif")
+# Not a conversation partner: safety filters, embedders, and the speech and
+# image models the bare listings sit right next to the chat ones.
+NOT_CONVERSATIONAL = (
+    "content-safety", "guard", "moderation", "embed", "rerank", "classif",
+    "whisper", "tts", "-stt", "speech", "transcribe", "diffusion", "flux",
+    "dall-e", "sdxl", "stable-", "upscal",
+)
+
+# How much a service tells us about its models. Only OpenRouter answers in full;
+# Groq adds the context window to the OpenAI shape; the rest give an id and
+# nothing else, which is why everything below has to fall back to the name.
+RICH = "openrouter"
+SIZED = "groq"
+BARE = "bare"
+
+# Context windows by name, for the services that will not say. Longest key wins,
+# so a specific model beats its family. These are the published windows; being
+# wrong low costs a little history, being wrong high overflows, so where a family
+# is uncertain the smaller number is used.
+_WINDOWS: dict[str, int] = {
+    "gpt-oss": 131072,
+    "llama-4-scout": 131072,
+    "llama-4-maverick": 131072,
+    "llama-4": 131072,
+    "llama-3.3": 131072,
+    "llama-3.2": 131072,
+    "llama-3.1": 131072,
+    "llama-3": 8192,
+    "qwen3-coder": 262144,
+    "qwen3": 131072,
+    "qwen2.5": 32768,
+    "qwen2": 32768,
+    "gemma-3": 131072,
+    "gemma-2": 8192,
+    "gemini-2.5-pro": 1048576,
+    "gemini-2.5-flash": 1048576,
+    "gemini-flash": 1048576,
+    "gemini-pro": 1048576,
+    "gemini": 1048576,
+    "deepseek-reasoner": 65536,
+    "deepseek-chat": 65536,
+    "deepseek-v3": 65536,
+    "deepseek": 65536,
+    "mistral-small": 32768,
+    "mistral-nemo": 131072,
+    "open-mistral-nemo": 131072,
+    "pixtral": 131072,
+    "ministral": 131072,
+    "command-r7b": 131072,
+    "command-r": 131072,
+    "command": 131072,
+    "glm-5": 262144,
+    "glm-4": 131072,
+    "glm": 131072,
+    "minimax": 1000000,
+    "nemotron": 131072,
+    "inkling": 1000000,
+    "gpt-4o-mini": 128000,
+    "gpt-4o": 128000,
+    "gpt-4.1": 1047576,
+    "gpt-5": 400000,
+    "o4-mini": 200000,
+    "phi-4": 16384,
+    "smollm": 8192,
+}
+# When even the name says nothing. Small on purpose: a wrong-high guess overflows
+# the window, a wrong-low one only shortens the history.
+UNKNOWN_WINDOW = 8192
+
+# Names that mean the model can read a picture, for listings with no modalities.
+_SEES = re.compile(
+    r"(vision|--?vl\b|[-_]vl[-_]|pixtral|llava|gemma-3|llama-4|gpt-4o|gpt-4\.1|gpt-5"
+    r"|gemini|claude-3|inkling|qwen[\d.]*-?vl|internvl|molmo)",
+    re.I,
+)
+_HEARS = re.compile(r"(audio|whisper|voxtral|omni|realtime)", re.I)
 
 
 @dataclass(frozen=True)
 class Model:
-    """One model, as the service describes it."""
+    """One model, as the service describes it - or as its name gives it away."""
 
     id: str
     name: str = ""
@@ -29,6 +104,12 @@ class Model:
     audio: bool = False
     prompt_price: float = 0.0
     completion_price: float = 0.0
+    service: str = ""
+    # True when the context window was read from the listing rather than guessed
+    # from the id. A guess is still worth having - it is what stops the history
+    # budget from being unbounded - but it is worth replacing the moment the
+    # model tells us otherwise by refusing an overlong prompt.
+    known: bool = True
 
     @property
     def short(self) -> str:
@@ -36,10 +117,13 @@ class Model:
         return self.id.split("/", 1)[-1]
 
     @property
+    def key(self) -> tuple[str, str]:
+        return (self.service, self.id)
+
+    @property
     def window(self) -> str:
-        if self.context >= 1000:
-            return f"{self.context // 1000}k"
-        return str(self.context) if self.context else "?"
+        shown = f"{self.context // 1000}k" if self.context >= 1000 else str(self.context or "?")
+        return shown if self.known else f"~{shown}"
 
     @property
     def marks(self) -> str:
@@ -61,15 +145,21 @@ def _price(pricing: dict, key: str) -> float:
         return 0.0
 
 
-def is_free(entry: dict) -> bool:
+def is_free(entry: dict, *, default: bool = False) -> bool:
     """Every priced dimension must be zero, not just tokens.
 
     Image, audio and per-request charges live in their own pricing keys, so
-    checking prompt and completion alone marks paid models as free.
+    checking prompt and completion alone marks paid models as free. This stays
+    strict: it is guarding somebody's money.
+
+    A listing with no pricing at all says nothing either way, and that is the
+    shape every service but OpenRouter returns. `default` carries what the
+    service is known for: on a free-tier service silence means free, anywhere
+    else it means paid.
     """
     pricing = entry.get("pricing") or {}
     if not pricing:
-        return False
+        return default
     for value in pricing.values():
         if value in (None, ""):
             continue
@@ -82,51 +172,86 @@ def is_free(entry: dict) -> bool:
 
 
 def is_chat(entry: dict) -> bool:
-    """Take text in and give back text and nothing else.
+    """Whether this could hold a conversation.
 
-    Generators list their extra output alongside text - a music model reports
-    `text+image->text+audio` - so merely requiring text among the outputs
-    still matches them. Only a model whose whole output is text can chat.
+    A rich listing says so outright. A bare one - which is what every service
+    but OpenRouter returns - has only the id, and refusing those is why nothing
+    outside OpenRouter was ever discovered. So the modality test applies when
+    there are modalities to test, and the name carries it when there are not.
     """
+    model_id = str(entry.get("id") or "").lower()
+    if any(word in model_id for word in NOT_CONVERSATIONAL):
+        return False
+
     architecture = entry.get("architecture") or {}
     inputs = architecture.get("input_modalities") or []
     outputs = architecture.get("output_modalities") or []
-    if "text" not in inputs or set(outputs) != {"text"}:
-        return False
-    return not any(word in (entry.get("id") or "").lower() for word in NOT_CONVERSATIONAL)
+    if not inputs and not outputs:
+        return True  # a bare listing; the name filter above is all there is
+
+    # Where the listing does declare its modalities, they are trusted exactly as
+    # strictly as before. A generator lists its real output alongside text - a
+    # music model reports text+audio - so text has to be the whole of it.
+    return "text" in inputs and set(outputs) == {"text"}
 
 
-def parse(entry: dict) -> Model | None:
+def window_for(model_id: str) -> int:
+    """A context window guessed from the name, for listings that omit it."""
+    lowered = (model_id or "").lower()
+    best = ""
+    for name in _WINDOWS:
+        if name in lowered and len(name) > len(best):
+            best = name
+    return _WINDOWS[best] if best else UNKNOWN_WINDOW
+
+
+def _context(entry: dict) -> int:
+    """The window under any of the names the services give it."""
+    for key in ("context_length", "context_window", "max_model_len", "max_input_tokens"):
+        try:
+            value = int(entry.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    top = entry.get("top_provider") or {}
+    try:
+        return int(top.get("context_length") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse(entry: dict, *, service: str = "", free_tier: bool = False) -> Model | None:
     """One catalog entry as a record, or None when it cannot hold a conversation."""
     model_id = entry.get("id")
     if not model_id or not is_chat(entry):
         return None
+
     modalities = (entry.get("architecture") or {}).get("input_modalities") or []
     pricing = entry.get("pricing") or {}
-    try:
-        context = int(entry.get("context_length") or 0)
-    except (TypeError, ValueError):
-        context = 0
+    context = _context(entry)
     return Model(
         id=str(model_id),
         name=str(entry.get("name") or model_id),
-        context=context,
-        free=is_free(entry),
-        vision="image" in modalities,
-        audio="audio" in modalities,
+        context=context or window_for(str(model_id)),
+        free=is_free(entry, default=free_tier),
+        vision="image" in modalities if modalities else bool(_SEES.search(str(model_id))),
+        audio="audio" in modalities if modalities else bool(_HEARS.search(str(model_id))),
         prompt_price=_price(pricing, "prompt"),
         completion_price=_price(pricing, "completion"),
+        service=service,
+        known=bool(context),
     )
 
 
-def read(entries: list[dict]) -> list[Model]:
+def read(entries: list[dict], *, service: str = "", free_tier: bool = False) -> list[Model]:
     """The chat models in a catalog listing, longest context first.
 
     Context order matters more than it looks: the persona prompt alone is a few
     thousand tokens, so a 4k model is not a candidate for anything.
     """
-    models = [model for model in (parse(entry) for entry in entries) if model]
-    return sorted(models, key=lambda m: (-m.context, m.id))
+    parsed = (parse(entry, service=service, free_tier=free_tier) for entry in entries)
+    return sorted((m for m in parsed if m), key=lambda m: (-m.context, m.id))
 
 
 def search(models: list[Model], needle: str) -> list[Model]:

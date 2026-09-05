@@ -67,11 +67,27 @@ CATALOG = {
 }
 
 
+# Every service is asked for its own listing now, so each has to answer with
+# something it would plausibly say. Google returning OpenRouter's catalog would
+# have it adopt OpenRouter's ids, which is correct behaviour on absurd input.
+GOOGLE_LISTING = {
+    "data": [
+        {"id": "gemini-flash-latest"},
+        {"id": "gemini-flash-lite-latest"},
+        {"id": "gemini-pro-latest"},
+    ]
+}
+
+
+def _listing_for(host: str) -> dict:
+    return CATALOG if "openrouter" in host else GOOGLE_LISTING
+
+
 def _router(status_by_host: dict[str, int], seen: list[tuple[str, str]]):
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json=CATALOG)
+            return httpx.Response(200, json=_listing_for(host))
         model = json.loads(request.content)["model"]
         seen.append((host, model))
         status = status_by_host.get(host, 200)
@@ -258,7 +274,7 @@ def _listing(models_by_host: dict[str, list[str]], seen: list[tuple[str, str]]):
         offered = models_by_host.get(host)
         if request.url.path.endswith("/models"):
             if offered is None:
-                return httpx.Response(200, json=CATALOG)
+                return httpx.Response(200, json=_listing_for(host))
             return httpx.Response(200, json={"data": [{"id": m} for m in offered]})
 
         model = json.loads(request.content)["model"]
@@ -310,7 +326,7 @@ async def test_a_missing_model_moves_down_the_list(settings, monkeypatch):
     def stale(request: httpx.Request) -> httpx.Response:
         # The listing agrees with the preset, but a model 404s when called.
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json=CATALOG)
+            return httpx.Response(200, json=GOOGLE_LISTING)
         return handler(request)
 
     client = _multi(settings, monkeypatch, stale, order=("google",))
@@ -390,3 +406,182 @@ def test_deepseek_is_not_offered_as_a_way_to_read_pictures():
     """Its chat models are text only; offering them for media drops attachments."""
     assert providers_mod.PRESETS["deepseek"].vision_models == []
     assert providers_mod.PRESETS["openai"].vision_models
+
+
+# -- discovery across every service ---------------------------------------
+GROQ_LISTING = {
+    "data": [
+        {"id": "llama-4-scout-17b-16e-instruct", "context_window": 131072},
+        {"id": "qwen3-32b", "context_window": 131072},
+        {"id": "whisper-large-v3"},
+    ]
+}
+
+
+def _everyone(seen: list[str]):
+    """Each service answers with its own listing, the way each really shapes it."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if request.url.path.endswith("/models"):
+            seen.append(host)
+            if "openrouter" in host:
+                return httpx.Response(200, json=CATALOG)
+            if "groq" in host:
+                return httpx.Response(200, json=GROQ_LISTING)
+            return httpx.Response(200, json=GOOGLE_LISTING)
+        return httpx.Response(
+            200,
+            json={
+                "model": json.loads(request.content)["model"],
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "cost": 0},
+            },
+        )
+
+    return handler
+
+
+def _three(settings, monkeypatch, handler, **overrides):
+    for env in ("OPENROUTER_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.setenv(env, "k")
+    cfg = _settings(settings, providers=["openrouter", "google", "groq"], **overrides)
+    return LLMClient(cfg, transport=httpx.MockTransport(handler))
+
+
+async def test_every_service_is_asked_what_it_offers(settings, monkeypatch):
+    """Only one listing was ever read, so twelve services were invisible."""
+    asked: list[str] = []
+    client = _three(settings, monkeypatch, _everyone(asked))
+    await client.load_catalog()
+
+    assert len(asked) == 3, "each service, once"
+    services = {m.service for m in client.known_models()}
+    assert services == {"openrouter", "google", "groq"}
+
+
+async def test_a_new_model_on_a_bare_service_becomes_selectable(settings, monkeypatch):
+    client = _three(settings, monkeypatch, _everyone([]))
+    await client.load_catalog()
+
+    groq = {m.id: m for m in client.models_offered(free_only=False, service="groq")}
+    assert "qwen3-32b" in groq, "adopted from Groq's own listing"
+    assert "whisper-large-v3" not in groq, "and the speech model is not a chat model"
+    assert groq["llama-4-scout-17b-16e-instruct"].vision, "read from the name"
+
+
+async def test_a_window_is_known_for_every_service_not_just_one(settings, monkeypatch):
+    """context_window returned 0 for twelve services, so history was never trimmed."""
+    client = _three(settings, monkeypatch, _everyone([]))
+    await client.load_catalog()
+
+    assert client.context_window("qwen3-32b", "groq") == 131072, "Groq states it"
+    assert client.context_window("gemini-flash-latest", "google") > 0, "guessed from the name"
+    assert client.context_window("free/one", "openrouter") == 100000
+
+
+async def test_one_service_is_never_offered_another_s_model(settings, monkeypatch):
+    """The pool is global now, and asking OpenRouter for a Gemini id is a 404."""
+    client = _three(settings, monkeypatch, _everyone([]))
+    await client.load_catalog()
+
+    for name in ("openrouter", "google", "groq"):
+        provider = next(p for p in client.providers if p.name == name)
+        mine = {m.id for m in client.models_offered(free_only=False, service=name)}
+        assert set(client.free_pool(service=name)) <= mine, name
+        assert client._candidates(provider, "anything")[0] in mine | {"anything"}
+
+
+async def test_a_service_that_renamed_everything_heals_itself(settings, monkeypatch):
+    """A stale list used to answer 404 on every message, forever."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "gemini-9-turbo"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "g")
+    cfg = _settings(settings, providers=["google"], free_mode=False)
+    client = LLMClient(cfg, transport=httpx.MockTransport(handler))
+    await client.load_catalog()
+
+    assert client.providers[0].models == ["gemini-9-turbo"]
+
+
+async def test_a_service_that_will_not_say_keeps_what_it_was_given(settings, monkeypatch):
+    def silent(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(500, text="nope")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "g")
+    cfg = _settings(settings, providers=["google"], free_mode=False)
+    client = LLMClient(cfg, transport=httpx.MockTransport(silent))
+    await client.load_catalog()
+
+    assert client.providers[0].models == list(providers_mod.PRESETS["google"].models)
+
+
+async def test_the_adopted_list_stays_short(settings, monkeypatch):
+    """It is walked on failover, so a service listing hundreds cannot become the chain."""
+    many = {"data": [{"id": f"model-{i}"} for i in range(50)]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=many)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "g")
+    cfg = _settings(settings, providers=["google"], free_mode=False)
+    client = LLMClient(cfg, transport=httpx.MockTransport(handler))
+    await client.load_catalog()
+
+    from astolfo.llm import ADOPT_AT_MOST
+
+    assert len(client.providers[0].models) == ADOPT_AT_MOST
+    assert len(client.models_offered(free_only=False, service="google")) == 50, "all still known"
+
+
+# -- remembering what was already there -----------------------------------
+async def test_the_catalog_is_remembered_so_new_means_new(settings, monkeypatch):
+    """Held in the database, or every model would look new after a restart."""
+    from astolfo.crypto import SecretBox
+    from astolfo.db import open_database
+    from astolfo.services import ServiceRegistry
+
+    database = open_database(settings.data_dir)
+    registry = ServiceRegistry(database, SecretBox(settings.data_dir))
+    for env in ("OPENROUTER_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.setenv(env, "k")
+    cfg = _settings(settings, providers=["openrouter", "google", "groq"])
+
+    client = LLMClient(cfg, transport=httpx.MockTransport(_everyone([])), registry=registry)
+    await client.load_catalog()
+    remembered = {(row["service"], row["model"]) for row in database.newest_models(limit=100)}
+    assert ("groq", "qwen3-32b") in remembered
+    assert ("groq", "whisper-large-v3") not in remembered, "not a chat model"
+    assert {service for service, _ in remembered} == {"openrouter", "google", "groq"}
+
+    # A second read, in a second process, finds nothing new.
+    again = LLMClient(cfg, transport=httpx.MockTransport(_everyone([])), registry=registry)
+    await again.load_catalog()
+    assert registry.note_models([("groq", "qwen3-32b", 1, True, False)]) == []
+
+
+async def test_a_catalog_that_cannot_be_recorded_does_not_lose_the_catalog(
+    settings, monkeypatch
+):
+    """The memory is a convenience; the models themselves are the point."""
+
+    class Broken:
+        def rows(self):
+            return None
+
+        def note_models(self, seen):
+            raise RuntimeError("disk is full")
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "g")
+    cfg = _settings(settings, providers=["google"])
+    client = LLMClient(cfg, transport=httpx.MockTransport(_everyone([])), registry=Broken())
+    await client.load_catalog()
+
+    assert client.models_offered(free_only=False, service="google")

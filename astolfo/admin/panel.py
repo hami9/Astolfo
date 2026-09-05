@@ -205,6 +205,10 @@ async def _models(ctx: Ctx, rest: list[str]) -> View:
 
     if head == "sync":
         return await models_section.sync(ctx)
+    if head == "rescan":
+        return await models_section.resync(ctx)
+    if head == "new":
+        return models_section.whats_new(ctx)
     if head == "u":
         return models_section.usage(ctx)
     if head == "find" and len(rest) > 2:

@@ -32,6 +32,10 @@ EMPTY_COOLDOWN = 600.0
 # twenty times in one log. Escalating rather than a blocklist, because the
 # free pool is discovered: tomorrow the useless one is a different id.
 EMPTY_STRIKES = (EMPTY_COOLDOWN, 3600.0, 12 * 3600.0)
+# How far a model's record may sink it in the queue, mirroring the +3 a
+# working model can earn. It is an ordering, not a ban: a model that was
+# useless yesterday is still tried, just last.
+MAX_SINK = 3
 QUOTA_COOLDOWN = 6 * 3600.0
 # A refused key is a configuration problem; asking again this run cannot fix it.
 AUTH_COOLDOWN = 24 * 3600.0
@@ -39,6 +43,11 @@ AUTH_COOLDOWN = 24 * 3600.0
 # A free-tier 429 is account-wide, so every model is equally unavailable and the
 # only useful response is for the whole bot to stop knocking for a while.
 ACCOUNT_PAUSE = 60.0
+
+# How many of a service's own ids to take when every configured one is gone. The
+# list is walked on failover, so it stays short whatever the service lists;
+# everything else is still in the catalog and selectable by hand.
+ADOPT_AT_MOST = 6
 
 # How long a retiring client waits for its own requests before closing anyway.
 # Long enough for a think call with reasoning to finish; short enough that a
@@ -68,6 +77,11 @@ class Usage:
 class ChatResult:
     text: str | None = None
     model: str = ""
+    # Which service answered, and how long its call took. In free mode the model
+    # changes turn to turn, so a reply means nothing without knowing who served
+    # it; both are filled in by the caller that made the successful request.
+    service: str = ""
+    latency_ms: int = 0
     citations: list[Citation] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     error: str | None = None
@@ -141,8 +155,12 @@ class LLMClient:
         # did nothing about the model that had actually refused.
         self._text_only: set[tuple[str, str]] = set()
         self._scores: dict[str, int] = {}
-        # How many times each model has come back unusable this run.
+        # How many times each model has come back unusable - carried across
+        # restarts, because the free pool is ordered by widest context and the
+        # widest one is not always a working one. Without this, every restart put
+        # the worst-behaved model back at the front with a clean sheet.
         self._strikes: dict[str, int] = {}
+        self._restore_strikes()
         self._pace_lock = asyncio.Lock()
         # Requests using these connection pools right now, so a client being
         # retired can wait for them instead of closing under them.
@@ -192,6 +210,24 @@ class LLMClient:
         self._registry.record_call(
             provider.name, tokens=result.usage.total_tokens, cost=result.usage.cost
         )
+
+    def _restore_strikes(self) -> None:
+        """Carry what each model has already been caught doing into this run."""
+        if not self._registry:
+            return
+        try:
+            self._strikes = dict(self._registry.model_strikes())
+        except Exception as exc:
+            log.warning("could not read model health: %s", exc)
+            return
+        for model, strikes in self._strikes.items():
+            self._scores[model] = -min(strikes, MAX_SINK)
+        if self._strikes:
+            log.info(
+                "%d model(s) start behind on their record: %s",
+                len(self._strikes),
+                ", ".join(sorted(self._strikes)[:6]),
+            )
 
     def _restore_rests(self, stored: list[dict] | None) -> None:
         """Carry stored rest windows into this run.
@@ -327,26 +363,38 @@ class LLMClient:
             provider.last_request = time.monotonic()
 
     # -- model catalog ---------------------------------------------------
-    async def _confirm_models(self, provider: providers_mod.Provider) -> None:
-        """Keep only the model ids this service actually lists.
-
-        Preset ids go stale as services rename and retire models, and the answer
-        to asking for one that is gone is a 404 per message. The service's own
-        listing is the cheapest way to find out at startup instead.
-        """
+    async def _listing(self, provider: providers_mod.Provider) -> list[dict]:
+        """What this service says it offers, or an empty list if it will not say."""
         try:
             credential = provider.pick(time.time())
             headers = self._auth(credential) if credential else {}
-            resp = await self._clients[provider.name].get(
-                provider.models_url, timeout=20.0, headers=headers
-            )
+            async with self._in_flight():
+                resp = await self._clients[provider.name].get(
+                    provider.models_url, timeout=20.0, headers=headers
+                )
             resp.raise_for_status()
-            offered = {m["id"] for m in resp.json().get("data", []) if m.get("id")}
+            payload = resp.json()
         except Exception as exc:
             log.info(
                 "%s did not list its models (%s); using the configured ids", provider.name, exc
             )
-            return
+            return []
+        entries = payload.get("data") if isinstance(payload, dict) else payload
+        return [e for e in (entries or []) if isinstance(e, dict) and e.get("id")]
+
+    async def _confirm_models(self, provider: providers_mod.Provider, entries: list[dict]) -> None:
+        """Reconcile the configured ids with what the service actually offers.
+
+        Everything a service lists reaches the catalog, so the panel can offer it
+        and its window is known. What is *called*, though, stays deliberately
+        short: this list is walked on failover, and a service listing four
+        hundred models should not become a four-hundred-deep retry chain.
+
+        So configured ids that still exist are kept as they are, and adoption
+        happens only where it is needed - a service that has renamed everything
+        used to be left with a stale list answering 404 to every message.
+        """
+        offered = {str(e["id"]) for e in entries}
         if not offered:
             return
 
@@ -358,70 +406,125 @@ class LLMClient:
         dropped = [m for m in provider.models if not known(m)]
         if dropped:
             log.warning("%s does not offer %s", provider.name, ", ".join(dropped))
-        if not kept:
+        if kept:
+            provider.models = kept
+            provider.vision_models = [m for m in provider.vision_models if known(m)]
+            return
+
+        usable = catalog.read(entries, service=provider.name)
+        if not usable:
             log.warning(
-                "%s offers none of the configured models; set %s_MODELS from: %s",
+                "%s offers nothing that can chat; leaving its configured ids alone",
                 provider.name,
-                provider.name.upper(),
-                ", ".join(sorted(offered)[:12]),
             )
             return
-        provider.models = kept
-        provider.vision_models = [m for m in provider.vision_models if known(m)]
-        log.info("%s: %s", provider.name, ", ".join(kept))
+        provider.models = [m.id for m in usable[:ADOPT_AT_MOST]]
+        provider.vision_models = [m.id for m in usable[:ADOPT_AT_MOST] if m.vision]
+        log.warning(
+            "%s offers none of the configured models; using its own instead: %s",
+            provider.name,
+            ", ".join(provider.models),
+        )
 
     async def load_catalog(self) -> None:
+        """Ask every service what it offers, and merge the answers into one catalog.
+
+        Until now exactly one service was ever asked - whichever advertised a free
+        catalog, in practice OpenRouter - so `context_window` returned 0 for every
+        model on the other twelve and the history budget was a guess for all of
+        them, permanently.
+        """
+        found: list[Model] = []
+        rich_ids: set[str] = set()
+
         for provider in self.providers:
+            if not provider.discovers:
+                continue
+            entries = await self._listing(provider)
+            if not entries:
+                continue
             if not provider.discovers_free_models:
-                await self._confirm_models(provider)
+                await self._confirm_models(provider, entries)
+            else:
+                rich_ids |= {str(e["id"]) for e in entries}
+            found.extend(
+                catalog.read(entries, service=provider.name, free_tier=provider.free_tier)
+            )
 
-        discovering = next((p for p in self.providers if p.discovers_free_models), None)
-        if discovering is None:
-            log.info("no provider advertises a free catalog; using configured models")
+        # The id set is what `resolve` validates a configured model against, and
+        # it may only carry the service that discovers free models: elsewhere an
+        # unknown id is the operator's choice, not a mistake to correct.
+        self._catalog = rich_ids or None
+        if not found:
+            log.warning("no service listed its models; using the configured ids")
             self._seed_free_models()
             return
-        client = self._clients[discovering.name]
+
+        log.info(
+            "catalog: %d models across %s",
+            len(found),
+            ", ".join(sorted({m.service for m in found})),
+        )
+        self._index_free_models(found)
+        self._remember(self._models)
+
+    def _remember(self, models: list[Model]) -> None:
+        """Note what has been listed, so the panel can say what is actually new.
+
+        Kept in the database rather than in memory: without it every model would
+        look new after a restart, which is the same as saying nothing.
+        """
+        if not self._registry:
+            return
         try:
-            credential = discovering.pick(time.time())
-            async with self._in_flight():
-                resp = await client.get(
-                    discovering.models_url,
-                    timeout=25.0,
-                    headers=self._auth(credential) if credential else {},
-                )
-            resp.raise_for_status()
-            entries = resp.json().get("data", [])
+            fresh = self._registry.note_models(
+                [(m.service, m.id, m.context, m.free, m.vision) for m in models]
+            )
         except Exception as exc:
-            log.warning("could not load model catalog (%s); skipping validation", exc)
-            self._catalog = None
-            self._seed_free_models()
+            log.warning("could not record the catalog listing: %s", exc)
             return
-
-        self._catalog = {m["id"] for m in entries if m.get("id")}
-        log.info("loaded model catalog (%d models)", len(self._catalog))
-        self._index_free_models(entries)
+        if fresh:
+            log.info("%d model(s) offered for the first time: %s",
+                     len(fresh), ", ".join(fresh[:8]))
 
     _is_free = staticmethod(catalog.is_free)
     _is_chat = staticmethod(catalog.is_chat)
 
-    def context_window(self, model: str) -> int:
-        """Tokens this model can hold, or 0 when the catalog never named it."""
+    def context_window(self, model: str, service: str = "") -> int:
+        """Tokens this model can hold, or 0 when no service ever named it.
+
+        A service is preferred when given, because two services can offer the
+        same id with different windows; without one the longest match wins,
+        which is the order `_models` is already in.
+        """
         for entry in self._models:
-            if entry.id == model:
+            if entry.id == model and (not service or entry.service == service):
                 return entry.context
         return 0
 
-    def models_offered(self, *, free_only: bool = True, vision: bool = False) -> list[Model]:
+    def known_models(self) -> list[Model]:
+        return list(self._models)
+
+    def models_offered(
+        self, *, free_only: bool = True, vision: bool = False, service: str = ""
+    ) -> list[Model]:
         """The chat models the catalog listed, for the panel to show and choose from."""
         return [
             m
             for m in self._models
-            if (m.free or not free_only) and (m.vision or not vision)
+            if (m.free or not free_only)
+            and (m.vision or not vision)
+            and (not service or m.service == service)
         ]
 
-    def _index_free_models(self, entries: list[dict]) -> None:
+    def _index_free_models(self, models: list[Model]) -> None:
         """Discover zero-cost models instead of shipping a list that goes stale."""
-        self._models = catalog.read(entries)
+        # Longest context first, and one entry per id: several services offer the
+        # same model and the pool wants it once.
+        seen: dict[str, Model] = {}
+        for model in sorted(models, key=lambda m: (-m.context, m.id)):
+            seen.setdefault(model.id, model)
+        self._models = list(seen.values())
         free = [m for m in self._models if m.free]
         # Longest context first: the persona prompt alone is a few thousand tokens.
         self._free_text = [m.id for m in free]
@@ -444,17 +547,28 @@ class LLMClient:
         self._free_vision = []
         self._free_audio = []
 
-    def _all_free(self, *, vision: bool = False, audio: bool = False) -> list[str]:
+    def _all_free(
+        self, *, vision: bool = False, audio: bool = False, service: str = ""
+    ) -> list[str]:
         configured = list(self._s.free_models)
         if configured:
             return configured
         if audio:
-            return list(self._free_audio)
-        return list(self._free_vision if vision else self._free_text)
+            names = list(self._free_audio)
+        else:
+            names = list(self._free_vision if vision else self._free_text)
+        if not service:
+            return names
+        # A model belongs to the service that listed it. Now that every service
+        # is read, an unfiltered pool would offer OpenRouter one of Google's ids.
+        mine = {m.id for m in self._models if m.service == service}
+        return [name for name in names if name in mine]
 
-    def free_pool(self, *, vision: bool = False, audio: bool = False) -> list[str]:
+    def free_pool(
+        self, *, vision: bool = False, audio: bool = False, service: str = ""
+    ) -> list[str]:
         """Usable free models, worst-behaved last, skipping any that are resting."""
-        candidates = self._all_free(vision=vision, audio=audio)
+        candidates = self._all_free(vision=vision, audio=audio, service=service)
         now = time.monotonic()
         available = [m for m in candidates if self._cooldowns.get(m, 0.0) <= now]
         # If every one is resting, try them anyway rather than going silent.
@@ -513,14 +627,26 @@ class LLMClient:
         if not model:
             return
         strikes = self._strikes[model] = self._strikes.get(model, 0) + 1
+        if self._registry:
+            # Written now rather than on shutdown: the process being killed is
+            # exactly when this is worth having.
+            try:
+                strikes = self._registry.note_strike(model) or strikes
+            except Exception as exc:
+                log.debug("could not record the strike against %s: %s", model, exc)
         earned = EMPTY_STRIKES[min(strikes, len(EMPTY_STRIKES)) - 1]
         rest = earned if seconds is None else seconds
         self._rest(model, rest)
-        self._scores[model] = self._scores.get(model, 0) - 1
+        self._scores[model] = max(-MAX_SINK, self._scores.get(model, 0) - 1)
         log.info("resting %s for %.0fs: unusable reply (strike %d)", model, rest, strikes)
 
-    def _next_free(self, *, tried: set[str], vision: bool, audio: bool) -> str | None:
-        for candidate in self.free_pool(vision=vision, audio=audio) or self.free_pool():
+    def _next_free(
+        self, *, tried: set[str], vision: bool, audio: bool, service: str = ""
+    ) -> str | None:
+        pool = self.free_pool(vision=vision, audio=audio, service=service) or self.free_pool(
+            service=service
+        )
+        for candidate in pool:
             if candidate not in tried:
                 return candidate
         return None
@@ -535,7 +661,9 @@ class LLMClient:
     ) -> list[str]:
         """Everything worth asking this service for, best first."""
         if provider.discovers_free_models:
-            pool = self.free_pool(vision=vision, audio=audio) or self.free_pool()
+            pool = self.free_pool(
+                vision=vision, audio=audio, service=provider.name
+            ) or self.free_pool(service=provider.name)
             if vision:
                 pool = self._sighted(provider.name, pool)
             return pool or [requested]
@@ -556,8 +684,6 @@ class LLMClient:
         Only the service that publishes a catalog can be asked for free models by
         discovery; the rest answer with whatever their configuration names.
         """
-        if provider.discovers_free_models:
-            return self.resolve(requested, vision=vision, audio=audio)
         return self._candidates(provider, requested, vision=vision, audio=audio)[0]
 
     def _next_model(
@@ -571,7 +697,9 @@ class LLMClient:
     ) -> str | None:
         """Another model at the same service, or None when its list is used up."""
         if provider.discovers_free_models:
-            return self._next_free(tried=tried, vision=vision, audio=audio)
+            return self._next_free(
+                tried=tried, vision=vision, audio=audio, service=provider.name
+            )
         for candidate in self._candidates(provider, requested, vision=vision, audio=audio):
             if candidate not in tried:
                 return candidate
@@ -781,6 +909,7 @@ class LLMClient:
                 fallbacks=fallbacks,
             )
             try:
+                started = time.monotonic()
                 async with self._in_flight():
                     resp = await client.post(
                         provider.chat_url, json=payload, headers=self._auth(credential)
@@ -905,6 +1034,11 @@ class LLMClient:
 
                 result = self._parse(data)
                 if result.ok:
+                    result.service = provider.name
+                    # A bare service often echoes no model name, and the one asked
+                    # for is not the one that ran once free mode has walked on.
+                    result.model = result.model or model
+                    result.latency_ms = int((time.monotonic() - started) * 1000)
                     self._note_result(provider, credential, result)
                     self._scores[model] = min(self._scores.get(model, 0) + 1, 3)
                     if self._s.free_mode and attempt > 1:

@@ -261,6 +261,58 @@ def db(settings):
     return open_database(settings.data_dir)
 
 
+# -- remembering what the services have offered ----------------------------
+def listing(*names, service="groq"):
+    return [(service, name, 32768, True, False) for name in names]
+
+
+def test_a_first_listing_is_all_new(db):
+    assert db.note_models(listing("qwen3-32b", "llama-4-scout")) == [
+        "qwen3-32b",
+        "llama-4-scout",
+    ]
+
+
+def test_a_model_is_only_new_once(db):
+    db.note_models(listing("qwen3-32b"))
+    assert db.note_models(listing("qwen3-32b", "gpt-oss-120b")) == ["gpt-oss-120b"]
+
+
+def test_being_listed_again_does_not_reset_when_it_first_appeared(db):
+    """Otherwise every sync would report the whole catalog as new."""
+    db.note_models(listing("qwen3-32b"))
+    first = db.newest_models()[0]["first_seen"]
+    db.note_models(listing("qwen3-32b"))
+
+    row = db.newest_models()[0]
+    assert row["first_seen"] == first
+    assert row["last_seen"] >= first
+
+
+def test_the_same_id_at_two_services_is_two_models(db):
+    """They can differ in window and in price, and one can vanish without the other."""
+    db.note_models(listing("gpt-oss-120b", service="groq"))
+    assert db.note_models(listing("gpt-oss-120b", service="cerebras")) == ["gpt-oss-120b"]
+    assert len(db.newest_models()) == 2
+
+
+def test_a_listing_cannot_write_the_file_full(db):
+    from astolfo.db import MAX_SEEN_MODELS
+
+    db.note_models(listing(*(f"model-{n}" for n in range(MAX_SEEN_MODELS + 100))))
+    assert len(db.newest_models(limit=MAX_SEEN_MODELS + 200)) == MAX_SEEN_MODELS
+
+
+def test_a_model_nobody_offers_any_more_is_forgotten(db):
+    """And counts as new again if it comes back, which is what it would be."""
+    db.note_models(listing("retired", "current"))
+    db.execute("UPDATE seen_models SET last_seen = ? WHERE model = 'retired'", (LONG_AGO,))
+
+    assert db.prune(90)["seen_models"] == 1
+    assert [row["model"] for row in db.newest_models()] == ["current"]
+    assert db.note_models(listing("retired")) == ["retired"]
+
+
 def test_the_audit_trail_does_not_grow_forever(db):
     db.execute("INSERT INTO audit (at, actor, action) VALUES (?, 1, 'old')", (LONG_AGO,))
     db.record(actor=1, action="recent")
