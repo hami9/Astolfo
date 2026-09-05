@@ -11,6 +11,31 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.7.2] - 2026-09-05
+
+### Fixed
+
+- **The diagnostics report lost its most useful section on the first real
+  database.** `services` came back as "(this section could not be read: No item
+  with that key)" - it read `last_ok` off the services table, and that column
+  belongs to credentials. Every other section says what happened; only this one
+  says which services could have answered at all. The test fixture that missed it
+  had no service and no credential rows, so the section rendered "(nothing yet)"
+  and the bad line never ran; it has both now, and stubbing the bug back in fails
+  the test.
+- **A free daily quota was being read as an empty wallet.** Google answers an
+  exhausted free-tier quota with "you exceeded your current quota, please check
+  your plan and billing details", and the word *billing* was enough to class it
+  as out of credit and rest the service for six hours. An empty wallet says
+  something about the balance itself - insufficient balance, no credits
+  remaining, a payment method required, depleted your included credits - and that
+  is what is matched now. All eight of the messages the live services actually
+  returned are in the tests.
+- A quota that does not name its window now rests fifteen minutes rather than
+  ten, and is called a quota rather than an account pause. Google's per-minute
+  ceiling arrives with a structured violation naming it, so an unnamed one that
+  reaches the text reader is wider than a minute.
+
 ## [2.7.1] - 2026-09-05
 
 ### Added
@@ -846,7 +871,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.2...HEAD
+[2.7.2]: https://github.com/hami9/Astolfo/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/hami9/Astolfo/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/hami9/Astolfo/compare/v2.6.9...v2.7.0
 [2.6.9]: https://github.com/hami9/Astolfo/compare/v2.6.8...v2.6.9
