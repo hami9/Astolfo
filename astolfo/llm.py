@@ -32,6 +32,10 @@ EMPTY_COOLDOWN = 600.0
 # twenty times in one log. Escalating rather than a blocklist, because the
 # free pool is discovered: tomorrow the useless one is a different id.
 EMPTY_STRIKES = (EMPTY_COOLDOWN, 3600.0, 12 * 3600.0)
+# How far a model's record may sink it in the queue, mirroring the +3 a
+# working model can earn. It is an ordering, not a ban: a model that was
+# useless yesterday is still tried, just last.
+MAX_SINK = 3
 QUOTA_COOLDOWN = 6 * 3600.0
 # A refused key is a configuration problem; asking again this run cannot fix it.
 AUTH_COOLDOWN = 24 * 3600.0
@@ -151,8 +155,12 @@ class LLMClient:
         # did nothing about the model that had actually refused.
         self._text_only: set[tuple[str, str]] = set()
         self._scores: dict[str, int] = {}
-        # How many times each model has come back unusable this run.
+        # How many times each model has come back unusable - carried across
+        # restarts, because the free pool is ordered by widest context and the
+        # widest one is not always a working one. Without this, every restart put
+        # the worst-behaved model back at the front with a clean sheet.
         self._strikes: dict[str, int] = {}
+        self._restore_strikes()
         self._pace_lock = asyncio.Lock()
         # Requests using these connection pools right now, so a client being
         # retired can wait for them instead of closing under them.
@@ -202,6 +210,24 @@ class LLMClient:
         self._registry.record_call(
             provider.name, tokens=result.usage.total_tokens, cost=result.usage.cost
         )
+
+    def _restore_strikes(self) -> None:
+        """Carry what each model has already been caught doing into this run."""
+        if not self._registry:
+            return
+        try:
+            self._strikes = dict(self._registry.model_strikes())
+        except Exception as exc:
+            log.warning("could not read model health: %s", exc)
+            return
+        for model, strikes in self._strikes.items():
+            self._scores[model] = -min(strikes, MAX_SINK)
+        if self._strikes:
+            log.info(
+                "%d model(s) start behind on their record: %s",
+                len(self._strikes),
+                ", ".join(sorted(self._strikes)[:6]),
+            )
 
     def _restore_rests(self, stored: list[dict] | None) -> None:
         """Carry stored rest windows into this run.
@@ -601,10 +627,17 @@ class LLMClient:
         if not model:
             return
         strikes = self._strikes[model] = self._strikes.get(model, 0) + 1
+        if self._registry:
+            # Written now rather than on shutdown: the process being killed is
+            # exactly when this is worth having.
+            try:
+                strikes = self._registry.note_strike(model) or strikes
+            except Exception as exc:
+                log.debug("could not record the strike against %s: %s", model, exc)
         earned = EMPTY_STRIKES[min(strikes, len(EMPTY_STRIKES)) - 1]
         rest = earned if seconds is None else seconds
         self._rest(model, rest)
-        self._scores[model] = self._scores.get(model, 0) - 1
+        self._scores[model] = max(-MAX_SINK, self._scores.get(model, 0) - 1)
         log.info("resting %s for %.0fs: unusable reply (strike %d)", model, rest, strikes)
 
     def _next_free(

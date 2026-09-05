@@ -197,6 +197,16 @@ CREATE TABLE IF NOT EXISTS seen_models (
 );
 CREATE INDEX IF NOT EXISTS seen_models_by_age ON seen_models (first_seen DESC);
 
+-- What a model has done to earn its place in the queue. Only the bad news: a
+-- model that answered with silence or nonsense, and how many times. Kept because
+-- the counters it mirrors live in memory, so every restart used to put the
+-- worst-behaved model back at the front of the free pool with a clean sheet.
+CREATE TABLE IF NOT EXISTS model_health (
+    model    TEXT PRIMARY KEY,
+    strikes  INTEGER NOT NULL DEFAULT 0,
+    last_bad REAL
+);
+
 CREATE TABLE IF NOT EXISTS service_usage (
     day       TEXT    NOT NULL,
     service   TEXT    NOT NULL,
@@ -220,6 +230,7 @@ TABLES = (
     "service_usage",
     "outcomes",
     "seen_models",
+    "model_health",
 )
 
 
@@ -374,6 +385,9 @@ class Database:
         # A model no service has listed for this long is gone. Forgetting it is
         # what lets it count as new again if it ever comes back.
         drop("seen_models", "DELETE FROM seen_models WHERE last_seen < ?", (cutoff,))
+        # A model that misbehaved long enough ago deserves another go: hardware,
+        # weights and endpoints all change under the same id.
+        drop("model_health", "DELETE FROM model_health WHERE last_bad < ?", (cutoff,))
         # Groups the bot was removed from long ago, and everything about them.
         drop(
             "members",
@@ -925,6 +939,34 @@ class Database:
         return self.query(
             "SELECT * FROM seen_models ORDER BY first_seen DESC, model LIMIT ?", (limit,)
         )
+
+    # -- how each model has behaved ----------------------------------------
+    def note_strike(self, model: str) -> int:
+        """Count one more unusable reply from this model, and say how many now."""
+        if not model:
+            return 0
+        self.execute(
+            """
+            INSERT INTO model_health (model, strikes, last_bad) VALUES (?, 1, ?)
+            ON CONFLICT(model) DO UPDATE SET
+                strikes  = model_health.strikes + 1,
+                last_bad = excluded.last_bad
+            """,
+            (model, time.time()),
+        )
+        row = self.one("SELECT strikes FROM model_health WHERE model = ?", (model,))
+        return int(row["strikes"]) if row else 1
+
+    def model_strikes(self) -> dict[str, int]:
+        """What each model has already been caught doing, across restarts."""
+        return {
+            str(row["model"]): int(row["strikes"])
+            for row in self.query("SELECT model, strikes FROM model_health")
+        }
+
+    def forget_model_health(self) -> None:
+        """Give every model a clean sheet again, from the panel."""
+        self.execute("DELETE FROM model_health")
 
     # -- audit ------------------------------------------------------------
     def record(self, *, actor: int | None, action: str, detail: str = "") -> None:

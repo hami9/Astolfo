@@ -44,6 +44,15 @@ release only looks.
   gain and lose models weekly and the only way anyone noticed used to be a 404 in the
   log. What has been listed before is kept in the database, so "new" means new to this
   install rather than new since the last restart.
+- **A model's record survives a restart.** The escalating cooldown added in 2.5.3
+  lived only in memory, and the free pool is ordered widest-context-first - so
+  every restart put the widest model back at the front with a clean sheet, even
+  when it was the one that had answered with silence twenty times the day before.
+  A real startup log showed exactly that: `minimax/minimax-m3:free` chosen for
+  five of the six jobs. Strikes are now kept in a `model_health` table and
+  restored on start. It is an ordering, not a ban - a model that misbehaved is
+  still tried, just last - and the rows age out with everything else, because
+  weights, hardware and endpoints all change under the same id.
 - **What each model and prompt actually did (schema v7).** A new `outcomes` table
   counts, per day and per service, model, prompt shape and mode: calls, replies a
   human answered, replies that had to be repaired, replies rejected as broken, tokens,

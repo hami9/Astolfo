@@ -270,6 +270,7 @@ migrated backwards.
 | `service_usage` | requests, failures, tokens and cost per service per day |
 | `outcomes` | per day, service, model, prompt shape and mode: calls, answered, repaired, broken, tokens, cost, latency |
 | `seen_models` | every model id any service has listed, and when it first appeared |
+| `model_health` | how many unusable replies each model has produced, so a restart does not forget |
 | `audit` | who pressed what in the panel |
 
 **Message text is never written to disk.** History lives in memory; the database keeps
