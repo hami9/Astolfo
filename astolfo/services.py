@@ -137,6 +137,14 @@ class ServiceRegistry:
         if credential_id is not None:
             self._db.update_credential(credential_id, last_ok=time.time(), last_error="")
 
+    def revive_service(self, name: str) -> None:
+        """Stop treating a service as unwell once it has answered."""
+        self._db.save_service(name, rested_until=0.0, last_error="")
+
+    def revive_credential(self, credential_id: int | None) -> None:
+        if credential_id is not None:
+            self._db.update_credential(credential_id, rested_until=0.0, last_error="")
+
     def record_call(
         self, service: str, *, failed: bool = False, tokens: int = 0, cost: float = 0.0
     ) -> None:
