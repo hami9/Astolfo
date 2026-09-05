@@ -11,6 +11,63 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.6] - 2026-09-05
+
+### Fixed
+
+- **It had become a doormat.** One evening in the group, all of it real output:
+  told it talks too much, it apologised; called a clown, it said being a clown is
+  cool; called a name, it said the name back; handed a crude two-way insult about
+  its parents, it answered "maybe both". Every reply took the other person's side
+  against itself. Nothing in the prompt was wrong - "unbothered" is right, "never
+  apologise for being weak" is right - but a small model reads unbothered as
+  agreeable, and free mode runs the compact prompt, which said neither. A new
+  `<spine>` layer says the part that was missing, in both prompts: never agree with
+  an insult, never apologise for being yourself, never hand the name back as though
+  it were a compliment, and never sulk or lecture about it either.
+- **And it can hold a round now.** Being wound up is the best part of the day, so it
+  bites back, gets smug, calls itself the winner early, and keeps going as long as
+  the other person does rather than tapping out after one line. Three limits, all of
+  them in the prompt: **never a swear word** - it lands cleaner without them, and
+  somebody who had to reach for a filthy word has already lost the round; it goes
+  after **what somebody chose** - the bragging, the attempt, their taste, their aim
+  in a game - and never what they did not, meaning a family, a body, money, illness,
+  where somebody is from or what they believe; and it stops first, warmly, the
+  moment they are actually upset, the group is all on one person, or they stop.
+  Something crude about its parents buys being told that was lazy, never an answer
+  in kind. A `[bites back]` sample joins the examples in both languages, and the
+  compact prompt now carries two samples instead of one - a small model copies a
+  sample far more reliably than it follows a rule.
+- **Echoing and shrugging, the mechanics of how it caved.** "Handing back the words
+  of the message you are answering" and "maybe, maybe not, I don't know" are now
+  named in both prompts. Half those replies were the incoming message with an
+  exclamation mark on it.
+- **It answered the wrong person by name.** Summoned by one member, it opened with
+  "جانم حامی؟" - the owner's name, on a message somebody else sent. The transcript
+  said who was talking, but the turn context never did, so the most familiar name in
+  the chat won. It now names the sender outright and says theirs is the only name
+  the reply may use.
+
+## [2.6.5] - 2026-09-05
+
+### Fixed
+
+- **A model retired for the rest of the day was asked again anyway.** The server
+  showed 49 calls to `cohere/command-r-08-2024`, 21 of them unusable, 23 strikes
+  against it - and not one call to `command-r7b-12-2024`, the other model that
+  service names. Two faults behind one number. The cooldown a broken model earns
+  was only ever consulted for the discovered pool, so at the twelve services that
+  name their own models it did nothing: the free-mode retry after an unusable
+  reply asked the same model a second time. It now applies wherever a model is
+  chosen, and a service with nothing left awake still answers rather than going
+  silent.
+- **And the rest itself did not survive the update that earned it.** Strikes were
+  written down; the cooldown they buy was not. A model retired for twelve hours
+  came back with the next restart, and the log covering this held three of them.
+  `model_health` gained `rested_until` (schema v8), restored on start the same
+  way a service's rest already was. Clearing a model's record in the panel still
+  wakes it immediately.
+
 ## [2.6.4] - 2026-09-05
 
 ### Fixed
@@ -639,7 +696,9 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.4...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.6...HEAD
+[2.6.6]: https://github.com/hami9/Astolfo/compare/v2.6.5...v2.6.6
+[2.6.5]: https://github.com/hami9/Astolfo/compare/v2.6.4...v2.6.5
 [2.6.4]: https://github.com/hami9/Astolfo/compare/v2.6.3...v2.6.4
 [2.6.3]: https://github.com/hami9/Astolfo/compare/v2.6.2...v2.6.3
 [2.6.2]: https://github.com/hami9/Astolfo/compare/v2.6.1...v2.6.2

@@ -189,6 +189,23 @@ def validate(candidate: str, *, participants: tuple[str, ...] = ()) -> Verdict:
     return Verdict(True)
 
 
+# Locked layers that a render may legitimately not contain: the two settings are
+# exclusive, `limits` drops out on a heavy-lifting turn and `roles` in a private
+# chat. Everything else has to be there, every time.
+CONDITIONAL: frozenset[str] = frozenset({"group", "private", "limits", "roles"})
+
+
+def unconditional() -> tuple[str, ...]:
+    """The locked layers every render must carry, read from the registry.
+
+    Read rather than listed, because a list goes stale: `<spine>` was added to
+    the constitution and the fixed list here did not know about it, so the one
+    check that is supposed to catch a render losing a rule would have waved it
+    through.
+    """
+    return tuple(name for name in persona.LOCKED if name not in CONDITIONAL)
+
+
 def renders_safely(candidate: str, *, recipe, context_tokens: int = 0) -> Verdict:
     """Whether the prompt built from this candidate is still the bot's own.
 
@@ -210,7 +227,7 @@ def renders_safely(candidate: str, *, recipe, context_tokens: int = 0) -> Verdic
         if persona.COMPACT_BLOCK not in rendered:
             return Verdict(False, "the render lost the compact rules")
     else:
-        for name in ("identity", "never", "boundaries", "truth", "output"):
+        for name in unconditional():
             if persona.LOCKED[name] not in rendered:
                 return Verdict(False, f"the render lost the {name} layer")
     if not fits_window(rendered, context_tokens=context_tokens):

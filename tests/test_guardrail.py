@@ -259,3 +259,37 @@ def test_back_to_factory_clears_everything() -> None:
     breaker.check_global(broken_rate=0.9, median_rate=0.01)
     breaker.reset()
     assert not breaker.tripped and not breaker.blocked("qwen3")
+
+
+# -- the check that has to keep up with the constitution -------------------
+def test_every_unconditional_locked_layer_is_checked() -> None:
+    """This went wrong once already. `<spine>` joined the locked layers and the
+    fixed list in `renders_safely` did not know, so the check that exists to
+    catch a render losing a rule would have passed one that had."""
+    from astolfo import persona
+    from astolfo.guardrail import CONDITIONAL, unconditional
+
+    assert set(unconditional()) == set(persona.LOCKED) - CONDITIONAL
+    assert "spine" in unconditional()
+    assert set(persona.LOCKED) >= CONDITIONAL, "it only excuses layers that exist"
+
+
+def test_a_render_missing_a_locked_layer_is_refused(monkeypatch) -> None:
+    """Every one of them, named, not just the five somebody remembered. The
+    render is what loses a layer, so that is what gets sabotaged here."""
+    from astolfo import persona
+    from astolfo.guardrail import renders_safely, unconditional
+    from astolfo.recipes import FACTORY_LAYERED
+
+    whole = persona.render
+    for name in unconditional():
+        dropped = persona.LOCKED[name]
+        monkeypatch.setattr(
+            persona,
+            "render",
+            lambda *a, _drop=dropped, **k: whole(*a, **k).replace(_drop, ""),
+        )
+        verdict = renders_safely("cheerful and short", recipe=FACTORY_LAYERED)
+
+        assert not verdict.ok, name
+        assert name in verdict.reason, verdict.reason

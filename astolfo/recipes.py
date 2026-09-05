@@ -85,7 +85,7 @@ class Recipe:
 # it falls back to, so neither can ever be removed from the pool.
 FACTORY_LAYERED = Recipe(name="layered")
 FACTORY_COMPACT = Recipe(
-    name="compact", base=persona.COMPACT, examples=1, media=MEDIA_COMPACT
+    name="compact", base=persona.COMPACT, examples=persona.COMPACT_EXAMPLES, media=MEDIA_COMPACT
 )
 
 FACTORY = {r.name: r for r in (FACTORY_LAYERED, FACTORY_COMPACT)}
