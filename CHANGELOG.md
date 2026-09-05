@@ -11,6 +11,38 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.1] - 2026-09-05
+
+Three things a real group conversation showed going wrong, and one of them was
+making the other two hard to see.
+
+### Fixed
+
+- **The log named the wrong model on every line.** It was written before the call,
+  so it named the model the turn *meant* to ask for. With three services out of
+  allowance the answer came from the fourth, and every line still said the first -
+  which is a good way to spend an afternoon blaming the wrong model for somebody
+  else's replies. It is written after the call now, naming the service and model
+  that actually answered, and the one it set out to ask for when they differ.
+- **It answered Persian messages in English, and kept doing it.** "چطوری؟" got
+  "I'm good, thanks!", then did it again after "فارسی بگو" and again after "فقط
+  فارسی بگو". The prompt has said mirror their language since 2.5.1 and a small
+  model ignores it. A Persian message answered with no Persian in it at all is now
+  treated as broken, the same as a leaked prompt, and asked again on another model.
+  Finglish is untouched: Latin script is the right answer to a Latin-script
+  question.
+- **It appended its own English translation to Persian replies.** "همیشه خوبم!
+  (I'm always good!)" - subtitles nobody asked for. The trailing gloss is stripped,
+  and only when the reply is Persian and the bracket holds no Persian at all, so an
+  ordinary aside stays where it is. It counts as a repair, so the model that needed
+  it is recorded as having needed it.
+- **Six replies in a row opened with the same three words.** "I'm not sure, I just
+  do!", "I'm not sure I need fixing!", "I'm not sure what you did!", and three more
+  - a member said out loud that its whimsy had gone. The repeat check only ever
+  compared whole replies for an exact match, and no two of those were identical.
+  Two replies that open exactly alike are now worth another model. Three words,
+  because two would fire on anybody agreeing twice.
+
 ## [2.6.0] - 2026-09-04
 
 The bot could only see one service's models and remembered nothing about how any of
@@ -557,7 +589,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/hami9/Astolfo/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.4...v2.6.0
 [2.5.4]: https://github.com/hami9/Astolfo/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/hami9/Astolfo/compare/v2.5.2...v2.5.3
