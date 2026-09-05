@@ -144,6 +144,12 @@ class Settings:
     # Off by default: it is a group-chat regular, not a solver. On, it will attempt
     # heavy maths, whole programs and homework instead of declining them.
     heavy_lifting: bool = _env("HEAVY_LIFTING", default=False)
+    # Let the bot learn which prompt each model family answers to. Off: it uses the
+    # one prompt per mode it has always used, byte for byte.
+    brain: bool = _env("BRAIN", default=False)
+    # A second switch, also off, for the part that writes a layer rather than
+    # choosing between written ones. Selection gets trusted first.
+    brain_writes: bool = _env("BRAIN_WRITES", default=False)
     # Read who runs each group, so it can be useful to them without acting like staff.
     read_admins: bool = _env("READ_ADMINS", default=True)
     max_history: int = _env("MAX_HISTORY", default=80)

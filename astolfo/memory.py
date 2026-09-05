@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from .config import Settings
 from .db import Database
-from .learning import LEARN_RULES, Style
+from .learning import LEARN_RULES, Mood, Style
 from .llm import LLMClient, Usage
 from .text import shorten
 from .tuning import Credit, Reception
@@ -77,6 +77,9 @@ class ChatState:
     history: deque[dict]
     notes: str = ""
     style: Style = field(default_factory=Style)
+    # What kind of day the bot is having here, which it decides for itself in the
+    # summary call that already runs. Fades back to bright on its own.
+    mood: Mood = field(default_factory=Mood)
     # Which reply lengths people here actually answer.
     reception: Reception = field(default_factory=Reception)
     # True while the bot spoke last and nobody has answered it yet.
@@ -298,6 +301,7 @@ class ChatStore:
                 daily_limit=int(row["daily_limit"] or 0),
                 off=bool(row["dormant"]),
                 style=Style.loads(row["style"]),
+                mood=Mood.loads(row["mood"]),
                 reception=Reception.load(_json(row["reception"])),
             )
         if self._chats:
@@ -351,6 +355,7 @@ class ChatStore:
                 daily_limit=state.daily_limit,
                 dormant=1 if state.off else 0,
                 style=state.style.dumps(),
+                mood=state.mood.dumps(),
                 # sent is always a dict of three keys, so it is always truthy: the
                 # values decide whether there is anything to store. Writing "{}"
                 # here would make every chat look worth restoring at startup.
@@ -381,7 +386,7 @@ nothing is worth remembering, return the old notes unchanged.
 {LEARN_RULES}
 
 Reply with JSON only, and nothing else:
-{{"notes": "...", "style": "...", "people": {{"name": "..."}}}}"""
+{{"notes": "...", "style": "...", "people": {{"name": "..."}}, "mood": "..."}}"""
 
 
 async def update_notes(llm: LLMClient, settings: Settings, state: ChatState) -> Usage:
@@ -431,6 +436,8 @@ async def update_notes(llm: LLMClient, settings: Settings, state: ChatState) -> 
             chat=data.get("style") if isinstance(data.get("style"), str) else "",
             people=data.get("people") if isinstance(data.get("people"), dict) else {},
         )
+        if isinstance(data.get("mood"), str) and state.mood.learn(data["mood"]):
+            log.info("chat %s: mood is %s now", state.chat_id, state.mood.now())
         return usage
     except Exception as exc:
         log.warning("summary failed for chat %s: %s", state.chat_id, exc)

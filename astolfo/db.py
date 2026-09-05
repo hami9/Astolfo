@@ -26,7 +26,7 @@ def today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # The most outcome rows one day may hold. In free mode the model changes turn to
 # turn, so the key space is models x variants x modes and only a ceiling keeps a
@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS chats (
     mode        TEXT    NOT NULL DEFAULT '',
     dormant     INTEGER NOT NULL DEFAULT 0,
     style       TEXT    NOT NULL DEFAULT '',
-    reception   TEXT    NOT NULL DEFAULT ''
+    reception   TEXT    NOT NULL DEFAULT '',
+    mood        TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -292,6 +293,10 @@ class Database:
             # Which reply lengths this chat answers.
             self._add_column("chats", "reception", "TEXT NOT NULL DEFAULT ''")
         # v7 adds the outcomes table, which the schema above already creates.
+        if current and current < 9:
+            # What kind of day the bot is having in this chat, which it decides
+            # itself. In memory only, it would reset with every update.
+            self._add_column("chats", "mood", "TEXT NOT NULL DEFAULT ''")
         if current and current < 8:
             # A model retired for twelve hours used to come back with the next
             # restart, because only the strike count was written down.
@@ -472,7 +477,7 @@ class Database:
         """Persist the per-chat knobs the bot itself changes."""
         allowed = {
             "muted", "reply_chance", "forced_mode", "locale", "notes", "title",
-            "daily_limit", "mode", "dormant", "style", "reception",
+            "daily_limit", "mode", "dormant", "style", "reception", "mood",
         }
         fields = {k: v for k, v in columns.items() if k in allowed}
         # An empty title means "this state never learned one", not "clear it".
@@ -496,11 +501,11 @@ class Database:
         return self.query(
             """
             SELECT chat_id, notes, reply_chance, forced_mode, muted, title, locale,
-                   mode, daily_limit, dormant, style, reception
+                   mode, daily_limit, dormant, style, reception, mood
             FROM chats
             WHERE notes <> '' OR reply_chance IS NOT NULL OR forced_mode IS NOT NULL
                OR muted = 1 OR mode <> '' OR daily_limit > 0 OR dormant = 1
-               OR style <> '' OR reception <> ''
+               OR style <> '' OR reception <> '' OR mood <> ''
             """
         )
 
