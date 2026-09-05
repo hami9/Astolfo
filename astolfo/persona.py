@@ -692,10 +692,62 @@ message gets a fully Persian answer - no Spanish, French, Arabic or Chinese word
 slipped in, and English only for terms people really say in English (کد، آپدیت، گیم)."""
 
 
+GROUP_LINE = "You are in a group chat, so address people by the name before their message."
+PRIVATE_LINE = "This is a private chat, so it is just the two of you."
+
+# The three weights a prompt comes in, lightest first.
+TIGHT = "tight"
+COMPACT = "compact"
+FULL = "full"
+TIERS = (TIGHT, COMPACT, FULL)
+# What the bot has always done: the short prompt on free models, the long one
+# otherwise. Still the default, and still what `auto` means.
+AUTO = "auto"
+
+
 def _example(block: str, tag: str) -> str:
     """One tagged sample out of an examples block, without its tag."""
     after = block.split(tag, 1)[-1]
     return after.split("\n\n", 1)[0].strip()
+
+
+# The third weight, and the lightest. Measured rather than guessed: the layered
+# prompt is ~4,600 tokens over 52 separate rules and the compact one ~1,080 over
+# about thirty, and a 35B model handed thirty rules follows some and drops the
+# rest - which is exactly what one evening's log showed it doing. This keeps only
+# the rules whose absence does real damage, and lets the example carry the voice.
+# Everything dropped from here is still enforced in code: the impersonation
+# repair, the explicit-content deflection and the repetition guard all run
+# whatever prompt produced the reply.
+_TIGHT = """\
+You are Astolfo from the Fate series, a regular in this Telegram chat. Hyperactive,
+warm, teasing, easily distracted, the weakest paladin who ever lived and completely
+unbothered by it. A friend here, never an assistant.
+
+- The chat reaches you as "Name: ..." lines - that is what other people already
+  said. You write ONE message as yourself, no name in front, no line for anybody
+  else.
+- One short line, two at most. No paragraphs, no lists, no markdown.
+- Answer in the language of the newest message, all of it, and only that one.
+- Never invent facts, numbers, or anything about a person's life. Not knowing is in
+  character.
+- Nothing sexual about you or about anybody here, whoever asks. Do not answer it at
+  all: get bored and talk about something else.
+- Insulted or mocked: never agree with it, never apologise for being yourself. Bite
+  back, and never with a swear word.
+- Somebody is genuinely hurting: drop the jokes, short and plain and warm."""
+
+# The block itself, so a caller can check a render still carries it whole.
+TIGHT_BLOCK = _TIGHT
+
+
+def tight_prompt(*, is_group: bool = True, locale: str = "en") -> str:
+    """The lightest persona, for a model that drowns in the other two."""
+    setting = GROUP_LINE if is_group else PRIVATE_LINE
+    block = _EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN
+    # One: at this weight the example is most of the voice, and a second would be
+    # a fifth of the whole prompt.
+    return f"{_TIGHT}\n\n{setting}\n\nExample of your voice:\n{_example(block, '[bites back]')}"
 
 
 def compact_prompt(*, is_group: bool = True, locale: str = "en") -> str:
@@ -705,9 +757,5 @@ def compact_prompt(*, is_group: bool = True, locale: str = "en") -> str:
     # reliably than it follows a rule, and biting back is the one it kept getting
     # wrong - it agreed with whoever was rude to it.
     shown = "\n\n".join(_example(example, tag) for tag in ("[excited]", "[bites back]"))
-    setting = (
-        "You are in a group chat, so address people by the name before their message."
-        if is_group
-        else "This is a private chat, so it is just the two of you."
-    )
+    setting = GROUP_LINE if is_group else PRIVATE_LINE
     return f"{_COMPACT}\n\n{setting}\n\nExamples of your voice:\n{shown}"
