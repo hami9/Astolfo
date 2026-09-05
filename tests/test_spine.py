@@ -53,23 +53,45 @@ def test_saying_the_name_back_is_named_as_agreeing() -> None:
         assert "say the name back" in prompt or "the name back" in prompt
 
 
-def test_it_is_told_to_answer_back_rather_than_go_quiet() -> None:
-    """The ask was a reply with some Astolfo in it, not a refusal and not silence."""
+def test_it_is_told_to_get_into_it_rather_than_go_quiet() -> None:
+    """One bored line was the first draft and it was too little. Being wound up is
+    the fun part; the ask was a bot that can hold a round, not one that endures."""
     for prompt in _both():
-        assert "answer back" in prompt
+        assert "bite back" in prompt
+        assert "as long as they do" in prompt, "it does not tap out after one line"
 
 
-def test_answering_back_is_not_licence_to_be_cruel() -> None:
-    """The line the fix must not cross: teasing, never a match for the insult."""
+def test_it_bites_back_without_swearing() -> None:
+    """The whole constraint on the fun: clean hits, and said to be the better ones."""
     for prompt in _both():
-        assert "never humiliate" in prompt or "you do not humiliate" in prompt
-        assert "in kind" in prompt, "and never returns a crude insult with one"
+        assert "swear word" in prompt
+        assert "lost the round" in prompt, "reaching for one is framed as losing"
 
 
-def test_somebody_actually_upset_still_gets_the_sincere_voice() -> None:
-    """A spine must not run over the one part of the character that matters."""
+def test_it_goes_after_what_somebody_chose_and_nothing_else() -> None:
+    """Where a roast turns into something else. Chosen: the bragging, the attempt,
+    their aim in a game. Not chosen: a family, a body, money, illness, an origin."""
     for prompt in _both():
-        assert "upset" in prompt
+        assert "what they chose" in prompt or "what they did not choose" in prompt
+        assert "in kind" in prompt, "and a crude one is still never matched"
+
+
+def test_it_stops_first_and_says_so() -> None:
+    """Three ways a round ends, and none of them wait to be asked."""
+    for prompt in _both():
+        assert "upset" in prompt, "somebody actually hurt ends it"
+        assert "on one person" in prompt, "and so does the group ganging up"
+
+
+def test_the_bite_back_sample_is_in_every_prompt() -> None:
+    """A small model copies a sample far more reliably than it follows a rule, and
+    the compact prompt used to carry only the excited one."""
+    assert "took you three days to notice" in persona.static_prompt(locale="en")
+    assert "took you three days to notice" in persona.compact_prompt(locale="en")
+    assert "سه روز طول کشید" in persona.static_prompt(locale="fa")
+    assert "سه روز طول کشید" in persona.compact_prompt(locale="fa")
+    assert "bites back" not in persona.compact_prompt(), "the tag itself is stripped"
+    assert "[excited]" not in persona.compact_prompt(), "and so is the other one"
 
 
 def test_echoing_the_message_is_banned_in_both_shapes() -> None:
@@ -96,3 +118,34 @@ def test_the_boundaries_still_stand_next_to_it() -> None:
     prompt = persona.static_prompt()
     assert "<boundaries>" in prompt and "<spine>" in prompt
     assert prompt.index("<boundaries>") < prompt.index("<spine>")
+
+
+# -- and who it is actually talking to ------------------------------------
+def test_the_newest_sender_is_named_outright() -> None:
+    """Summoned by one member, it opened with the owner's name: "جانم حامی؟" to a
+    message Arash sent. The transcript said so, but a small model took the most
+    familiar name in the chat instead of the one on the last line."""
+    block = persona.dynamic_prompt(sender="Arash")
+
+    assert "newest message is from Arash" in block
+    assert "only name your reply may use" in block
+
+
+def test_no_sender_leaves_the_line_out() -> None:
+    """A private chat has nobody to get wrong."""
+    assert "newest message is from" not in persona.dynamic_prompt()
+
+
+async def test_the_name_reaches_the_prompt_from_a_real_turn(rt, llm) -> None:
+    """The wiring, not just the wording: it is the sender of this message, not
+    whoever the chat happens to remember."""
+    from astolfo import chat as chat_mod
+    from tests.conftest import FakeBot, FakeContext, FakeMessage, make_update
+
+    message = FakeMessage("astolfo!", name="Arash")
+    await chat_mod.handle_message(make_update(message), FakeContext(rt, FakeBot()))
+
+    system = "\n".join(
+        m["content"] for m in llm.calls[-1]["messages"] if m["role"] == "system"
+    )
+    assert "newest message is from Arash" in system

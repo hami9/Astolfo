@@ -21,21 +21,32 @@ Nothing yet.
   its parents, it answered "maybe both". Every reply took the other person's side
   against itself. Nothing in the prompt was wrong - "unbothered" is right, "never
   apologise for being weak" is right - but a small model reads unbothered as
-  agreeable, and free mode runs the compact prompt, which said neither of those
-  things. A new `<spine>` layer says the part that was missing: being impossible to
-  offend and being nobody's punching bag are the same trait, not opposite ones.
-  Never agree with an insult, never apologise for being yourself, never hand the
-  name back as though it were a compliment - and never sulk or lecture about it
-  either. Answer back: smug about how weak the attempt was, delighted they
-  bothered, teasing, or carry on regardless. It stops well short of cruelty:
-  anything crude about somebody's family gets one bored line and is never answered
-  in kind, teasing never becomes humiliation, and a person who is genuinely upset
-  still gets the sincere voice. In the compact prompt too, which is the one that
-  was actually running.
+  agreeable, and free mode runs the compact prompt, which said neither. A new
+  `<spine>` layer says the part that was missing, in both prompts: never agree with
+  an insult, never apologise for being yourself, never hand the name back as though
+  it were a compliment, and never sulk or lecture about it either.
+- **And it can hold a round now.** Being wound up is the best part of the day, so it
+  bites back, gets smug, calls itself the winner early, and keeps going as long as
+  the other person does rather than tapping out after one line. Three limits, all of
+  them in the prompt: **never a swear word** - it lands cleaner without them, and
+  somebody who had to reach for a filthy word has already lost the round; it goes
+  after **what somebody chose** - the bragging, the attempt, their taste, their aim
+  in a game - and never what they did not, meaning a family, a body, money, illness,
+  where somebody is from or what they believe; and it stops first, warmly, the
+  moment they are actually upset, the group is all on one person, or they stop.
+  Something crude about its parents buys being told that was lazy, never an answer
+  in kind. A `[bites back]` sample joins the examples in both languages, and the
+  compact prompt now carries two samples instead of one - a small model copies a
+  sample far more reliably than it follows a rule.
 - **Echoing and shrugging, the mechanics of how it caved.** "Handing back the words
   of the message you are answering" and "maybe, maybe not, I don't know" are now
   named in both prompts. Half those replies were the incoming message with an
   exclamation mark on it.
+- **It answered the wrong person by name.** Summoned by one member, it opened with
+  "جانم حامی؟" - the owner's name, on a message somebody else sent. The transcript
+  said who was talking, but the turn context never did, so the most familiar name in
+  the chat won. It now names the sender outright and says theirs is the only name
+  the reply may use.
 
 ## [2.6.5] - 2026-09-05
 

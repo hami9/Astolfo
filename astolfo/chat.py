@@ -181,6 +181,7 @@ def build_messages(
         # why replies used to wander off to whoever was not talking.
         participants=list(state.participants) if len(state.history) <= 1 else None,
         bot_name=bot_name,
+        sender=sender,
         search_query=decision.query if decision.mode == SEARCH else None,
         style=state.style.for_turn(sender, answering.who if answering else ""),
         threaded=answering is not None,
