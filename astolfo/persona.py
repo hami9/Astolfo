@@ -469,6 +469,81 @@ REMINDER = (
     "If your last reply sounded flat, formal or bot-like, fix it before sending."
 )
 
+# -- the layer registry ---------------------------------------------------
+# The constitution lives here, in code, and the renderer emits it whether or not
+# anything asked for it. A recipe chooses among the mutable slots below and can
+# do nothing else: it cannot drop a locked layer, reorder one ahead of another,
+# or shadow one. If the whole recipe store were emptied or corrupted, every rule
+# in this table would still be in the rendered prompt.
+LOCKED: dict[str, str] = {
+    "identity": _IDENTITY,
+    "canon": _CANON,
+    "group": _GROUP,
+    "private": _PRIVATE,
+    "language": _LANGUAGE,
+    "never": _NEVER,
+    "boundaries": _BOUNDARIES,
+    "limits": _LIMITS,
+    "roles": ROLES_BLOCK,
+    "meta": _META,
+    "truth": _TRUTH,
+    "output": _OUTPUT,
+}
+
+# Style, never rules. That distinction is the whole of the locked/mutable split:
+# how it writes is up for grabs, what it may say is not.
+VOICES: dict[str, str] = {"factory": _VOICE}
+
+# Which shape of prompt a recipe builds on.
+LAYERED = "layered"
+COMPACT = "compact"
+
+# What kind of day it is having. Chosen by the bot from the summary call that
+# already runs, decaying back to bright, and deliberately shallow: a mood tilts
+# the delivery and nothing else. Every one of these still sits above the locked
+# layers, so a prickly Astolfo is short and dry and never cruel, and `serious`
+# mode overrides all of it when somebody is actually hurting.
+BRIGHT = "bright"
+MOODS: dict[str, str] = {
+    BRIGHT: "",  # the baseline the voice layer already describes
+    "teasing": (
+        "<mood>\nYou are in a teasing mood today: quicker to poke fun, quicker to "
+        "argue for the sake of it. Still warm underneath, and you drop it the "
+        "moment somebody is not enjoying it.\n</mood>"
+    ),
+    "sleepy": (
+        "<mood>\nYou are sleepy: shorter than usual, fewer exclamation marks, "
+        "trailing off more. You still care, you just cannot be bothered with the "
+        "long version.\n</mood>"
+    ),
+    "soft": (
+        "<mood>\nYou are in a soft mood: gentler, a bit clingy, more likely to ask "
+        "how somebody is doing than to make a joke about it.\n</mood>"
+    ),
+    "prickly": (
+        "<mood>\nYou are a bit put out today: blunter, drier, less patient with "
+        "being wound up. Short sentences, no tildes. Never mean, never cold to "
+        "somebody who did nothing - you get over things in about four seconds and "
+        "this is no exception.\n</mood>"
+    ),
+}
+
+# The slots a recipe controls. Everything else in the skeleton below is read
+# straight from LOCKED and cannot be moved.
+MUTABLE: tuple[str, ...] = ("voice", "mood", "examples")
+
+# The shape of the layered prompt, in the order it is emitted. "setting" resolves
+# to group or private, "limits" and "roles" drop out where they do not apply, and
+# the three mutable slots are the only ones a recipe may permute among themselves.
+_SKELETON: tuple[str, ...] = (
+    "identity", "voice", "mood", "canon", "setting", "language", "never",
+    "boundaries", "limits", "roles", "meta", "truth", "examples", "output",
+)
+
+# Every example the locale has. A recipe asking for this many or more gets the
+# block exactly as written, which is what keeps the factory render identical.
+ALL_EXAMPLES = 99
+
 _PERSIAN = re.compile(r"[؀-ۿ]")
 
 
@@ -484,6 +559,95 @@ def detect_locale(samples: Iterable[str], default: str = "en") -> str:
     if not total:
         return default
     return "fa" if persian * 2 >= total else "en"
+
+
+def _split_examples(block: str) -> tuple[str, list[str]]:
+    """The instruction line, and each tagged example after it."""
+    body = block.removeprefix("<examples>\n").removesuffix("\n</examples>")
+    head, *blocks = body.split("\n\n")
+    return head, blocks
+
+
+def examples(locale: str = "en", count: int = ALL_EXAMPLES) -> str:
+    """The examples layer, cut to the number a recipe asked for.
+
+    Asking for everything returns the constant itself rather than a rebuilt copy,
+    so a factory render is identical to the old one by construction and not by
+    my having reassembled the string correctly.
+    """
+    block = _EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN
+    head, blocks = _split_examples(block)
+    if count >= len(blocks):
+        return block
+    if count <= 0:
+        return ""
+    return "<examples>\n" + "\n\n".join([head, *blocks[:count]]) + "\n</examples>"
+
+
+def example_lines(locale: str = "en", count: int = 1) -> str:
+    """The same examples with their [tags] dropped, for the compact prompt."""
+    _, blocks = _split_examples(_EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN)
+    kept = [block.split("\n", 1)[-1].strip() for block in blocks[: max(0, count)]]
+    return "\n\n".join(part for part in kept if part)
+
+
+def _slot(
+    name: str,
+    recipe,
+    *,
+    is_group: bool,
+    locale: str,
+    heavy_lifting: bool,
+) -> str:
+    """One slot's text, or "" when it does not apply to this turn."""
+    if name == "setting":
+        return LOCKED["group"] if is_group else LOCKED["private"]
+    if name == "limits":
+        return "" if heavy_lifting else LOCKED["limits"]
+    if name == "roles":
+        return LOCKED["roles"] if is_group else ""
+    if name == "voice":
+        return VOICES.get(recipe.voice) or VOICES["factory"]
+    if name == "mood":
+        return MOODS.get(recipe.mood, "")
+    if name == "examples":
+        return examples(locale, recipe.examples)
+    return LOCKED.get(name, "")
+
+
+def _ordered(recipe) -> tuple[str, ...]:
+    """The skeleton, with the mutable slots permuted the way the recipe asks.
+
+    A recipe naming anything but the mutable slots, or naming them incompletely,
+    gets the factory order: a malformed recipe must not be able to move a locked
+    layer, and the safe reading of one is that it asked for nothing.
+    """
+    wanted = tuple(recipe.order or ())
+    if sorted(wanted) != sorted(MUTABLE):
+        return _SKELETON
+    spare = iter(wanted)
+    return tuple(next(spare) if name in MUTABLE else name for name in _SKELETON)
+
+
+def render(
+    recipe,
+    *,
+    is_group: bool = True,
+    locale: str = "en",
+    heavy_lifting: bool = False,
+) -> str:
+    """Build the static prompt this recipe asks for.
+
+    Deterministic: the same recipe and the same three arguments produce the same
+    bytes every time, which is what keeps the provider-side prompt cache warm.
+    """
+    if recipe.base == COMPACT:
+        return _render_compact(recipe, is_group=is_group, locale=locale)
+    parts = [
+        _slot(name, recipe, is_group=is_group, locale=locale, heavy_lifting=heavy_lifting)
+        for name in _ordered(recipe)
+    ]
+    return "\n\n".join(part for part in parts if part)
 
 
 def static_prompt(
@@ -621,14 +785,29 @@ message gets a fully Persian answer - no Spanish, French, Arabic or Chinese word
 slipped in, and English only for terms people really say in English (کد، آپدیت، گیم)."""
 
 
+GROUP_LINE = "You are in a group chat, so address people by the name before their message."
+PRIVATE_LINE = "This is a private chat, so it is just the two of you."
+
+
+def _render_compact(recipe, *, is_group: bool, locale: str) -> str:
+    """The short persona, with whatever the recipe asked to put around it.
+
+    `_COMPACT` itself is locked: it carries the identity, the transcript rules
+    and the boundaries, and a recipe may add a mood line and choose how many
+    examples anchor the voice, nothing else.
+    """
+    parts = [_COMPACT, GROUP_LINE if is_group else PRIVATE_LINE]
+    mood = MOODS.get(recipe.mood, "")
+    if mood:
+        parts.append(mood)
+    shown = example_lines(locale, recipe.examples)
+    if shown:
+        parts.append(f"Example of your voice:\n{shown}")
+    return "\n\n".join(parts)
+
+
 def compact_prompt(*, is_group: bool = True, locale: str = "en") -> str:
     """A short persona for small models, with one example to anchor the voice."""
-    example = _EXAMPLES_FA if locale == "fa" else _EXAMPLES_EN
-    excited = example.split("[teasing]")[0]
-    first = excited.split("[excited]")[-1].strip()
-    setting = (
-        "You are in a group chat, so address people by the name before their message."
-        if is_group
-        else "This is a private chat, so it is just the two of you."
-    )
+    setting = GROUP_LINE if is_group else PRIVATE_LINE
+    first = example_lines(locale, 1)
     return f"{_COMPACT}\n\n{setting}\n\nExample of your voice:\n{first}"
