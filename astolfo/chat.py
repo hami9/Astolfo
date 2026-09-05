@@ -31,6 +31,7 @@ from .text import (
     split_message,
     strip_speaker,
     typing_indicator,
+    went_explicit,
 )
 
 log = logging.getLogger(__name__)
@@ -414,6 +415,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     if looks_broken(reply, echoes=text, previous=_last_reply(state)):
                         rt.llm.mark_unusable(result.model)
                         reply = ""
+
+            if reply and went_explicit(reply):
+                # Not a retry: another model would answer the same question the
+                # same way, and the reply we want is the one the prompt asks for
+                # anyway. Sent as itself getting bored, never as a refusal notice.
+                log.warning("chat %s: reply from %s was explicit, deflecting instead",
+                            chat.id, result.model)
+                reply = persona.deflection(resolve_locale(rt, state), state.turn_count)
 
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
