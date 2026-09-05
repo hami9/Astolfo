@@ -31,6 +31,7 @@ from .text import (
     split_message,
     strip_speaker,
     typing_indicator,
+    went_explicit,
 )
 
 log = logging.getLogger(__name__)
@@ -224,12 +225,37 @@ def build_messages(
     return messages
 
 
-async def send_reply(message, text: str) -> None:
+# Telegram's wording when the bot is in a group it may not post in.
+NO_RIGHTS = ("not enough rights", "have no rights", "chat_write_forbidden")
+
+
+async def send_reply(message, text: str, rt: Runtime | None = None) -> None:
+    """Send a reply, and stop talking to a chat that will not let it.
+
+    A group where the bot lacks permission used to cost a model call per message
+    forever: the send failed, the failure was logged, and the next message did it
+    all again. Twenty-one of those in one log. The first refusal now switches the
+    chat off exactly as the panel would, so it costs nothing until somebody fixes
+    the permission and turns it back on.
+    """
     for chunk in split_message(text):
         try:
             await message.reply_text(chunk, link_preview_options=NO_PREVIEW)
         except Exception as exc:
             log.warning("could not send reply to chat %s: %s", message.chat_id, exc)
+            reason = str(exc).lower()
+            if rt is not None and any(mark in reason for mark in NO_RIGHTS):
+                rt.set_chat_off(message.chat_id, True)
+                rt.db.record(
+                    actor=None,
+                    action="chat_muted_no_rights",
+                    detail=f"{message.chat_id}: {exc}"[:200],
+                )
+                log.warning(
+                    "chat %s will not let the bot post; switching it off until "
+                    "somebody grants the permission and turns it back on",
+                    message.chat_id,
+                )
             return
 
 
@@ -302,7 +328,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         now = time.monotonic()
         if addressed and allowance.level == STOPPED and now - state.budget_notice_at > 3600:
             state.budget_notice_at = now
-            await send_reply(message, rt.strings("budget_stopped"))
+            await send_reply(message, rt.strings("budget_stopped"), rt)
         return
 
     if not addressed and not participation.should_join(
@@ -328,7 +354,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             state.last_reply_at = time.monotonic()
             said = offline.answer(text, locale=resolve_locale(rt, state))
             state.add_assistant(said or "")
-        await send_reply(message, said or _offline_excuse(rt, state))
+        await send_reply(message, said or _offline_excuse(rt, state), rt)
         return
 
     async with composing(state):
@@ -344,7 +370,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 rt.budget.record_cache_hit()
                 state.add_assistant(cached)
                 log.info("chat %s served from response cache", chat.id)
-                await send_reply(message, cached)
+                await send_reply(message, cached, rt)
                 return
 
         async with typing_indicator(context.bot, chat.id, ChatAction.TYPING):
@@ -455,6 +481,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     mode=decision.mode,
                 )
 
+            if reply and went_explicit(reply):
+                # Not a retry: another model would answer the same question the
+                # same way, and the reply we want is the one the prompt asks for
+                # anyway. Sent as itself getting bored, never as a refusal notice.
+                log.warning("chat %s: reply from %s was explicit, deflecting instead",
+                            chat.id, result.model)
+                reply = persona.deflection(resolve_locale(rt, state), state.turn_count)
+
         if not reply:
             log.warning("no completion for chat %s: %s", chat.id, result.error)
             if not addressed:
@@ -481,7 +515,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if settings.show_sources and result.citations and decision.mode == SEARCH:
         reply += format_sources(result.citations)
 
-    await send_reply(message, reply)
+    await send_reply(message, reply, rt)
 
     if settings.summaries:
         context.application.create_task(_summarize(rt, state))
@@ -584,11 +618,11 @@ async def _announce_failure(rt: Runtime, state: ChatState, message, result: Chat
         # Nothing the chat can do about it, and it will not clear on its own.
         if now - state.budget_notice_at > 3600:
             state.budget_notice_at = now
-            await send_reply(message, rt.strings("no_credit"))
+            await send_reply(message, rt.strings("no_credit"), rt)
         return
     if now - state.error_notice_at > ERROR_NOTICE_INTERVAL:
         state.error_notice_at = now
-        await send_reply(message, rt.strings("error_reply"))
+        await send_reply(message, rt.strings("error_reply"), rt)
 
 
 def _last_reply(state: ChatState) -> str:

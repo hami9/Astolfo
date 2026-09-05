@@ -44,6 +44,15 @@ release only looks.
   gain and lose models weekly and the only way anyone noticed used to be a 404 in the
   log. What has been listed before is kept in the database, so "new" means new to this
   install rather than new since the last restart.
+- **A model's record survives a restart.** The escalating cooldown added in 2.5.3
+  lived only in memory, and the free pool is ordered widest-context-first - so
+  every restart put the widest model back at the front with a clean sheet, even
+  when it was the one that had answered with silence twenty times the day before.
+  A real startup log showed exactly that: `minimax/minimax-m3:free` chosen for
+  five of the six jobs. Strikes are now kept in a `model_health` table and
+  restored on start. It is an ordering, not a ban - a model that misbehaved is
+  still tried, just last - and the rows age out with everything else, because
+  weights, hardware and endpoints all change under the same id.
 - **What each model and prompt actually did (schema v7).** A new `outcomes` table
   counts, per day and per service, model, prompt shape and mode: calls, replies a
   human answered, replies that had to be repaired, replies rejected as broken, tokens,
@@ -67,6 +76,87 @@ release only looks.
   treated as something you can talk to.
 - Speech, transcription and image models are recognised by name, which is all there is
   to go on in a listing that carries no modalities.
+## [2.5.4] - 2026-09-05
+
+### Fixed
+
+- **A panel screen that stopped redrawing said nothing about it.** Making the
+  redraw survive an expired callback query in 2.5.3 wrapped it in a bare
+  `suppress`, which also swallowed the failures worth knowing about - a message
+  too long, markup the API rejects, a message somebody deleted. Answering a dead
+  query stays silent, because a stale spinner really is nothing; a failed redraw
+  is logged with what went wrong.
+
+### Changed
+
+- A test awaited a task by name to join it, which is correct but reads as doing
+  nothing - to CodeQL and to the next person. It waits on it with a timeout
+  instead, which also asserts the close completes rather than only that it was
+  awaited.
+
+## [2.5.3] - 2026-09-05
+
+Five bugs a diagnostic run against the live server turned up. Each one is
+something that actually happened in the log, not something that might.
+
+### Fixed
+
+- **Every panel press could kill a reply that was being written.** Changing any
+  setting calls `reconfigure`, which builds a new LLM client and closed the old one
+  immediately - while requests still held it. Those turns died with `RuntimeError:
+  Cannot send a request, as the client has been closed`, and the chat saw nothing.
+  A retiring client now waits for its own requests before closing, capped so a
+  wedged one cannot hold the connection pools forever, and the wait happens in the
+  background so pressing a button still returns at once.
+- **A slow panel action lost the change behind it.** Answering an expired callback
+  query raises, and that call sat one line *above* the settings reload and outside
+  the `try` that wrapped everything else - so a stale spinner took the reload and
+  the redraw down with it. Both are best effort now.
+- **One model refusing an image blinded its whole service.** The "does not take
+  images" learning was keyed by service, so a single refusal from a free model
+  marked the whole of OpenRouter text-only: its real vision models became
+  unreachable, and the model that had actually refused was asked again nine more
+  times. It is keyed by service *and* model now, and a service is skipped for media
+  only when everything it would try has refused.
+- **A model that answers with silence kept being asked.** One free model returned
+  nothing twenty times in a single log: the ten-minute cooldown expired and it
+  rejoined the pool to waste another turn. Repeat offences now earn ten minutes,
+  then an hour, then the rest of the day. Escalating rather than a blocklist,
+  because the free pool is discovered and tomorrow the useless one is a different
+  id.
+- **Twenty-one replies into a group that would not let it post.** Each one cost a
+  model call to produce a message nobody received. The first "not enough rights"
+  now switches that chat off exactly as the panel would, with an audit line, so it
+  costs nothing until somebody fixes the permission and turns it back on. An
+  ordinary send failure - a timeout, a blip - still leaves the chat alone.
+
+## [2.5.2] - 2026-09-05
+
+### Fixed
+
+- **It could be walked into saying explicit things about itself, and about a real
+  member of the group.** A member asked a crude yes/no question, it answered, and the
+  next question came; twelve answers later it was describing itself and had been asked
+  about the owner by name. Every individual reply was short and mild, which is exactly
+  why nothing caught it - the thread was the problem, not any one line.
+
+  The prompt had nothing to say about this at all. It covered teasing about the
+  character's gender ("unbothered, breeze past it") and assumed the rest followed. It
+  does not: a small model reads a yes/no question as a form to fill in, and answers it.
+  Both prompts now carry a boundaries block, and the compact one - which is what the
+  free models actually run, and where this happened - carries it too. It names the
+  ladder rather than only the content: answering "no" is still answering, and the next
+  message is "then what about Y", so the rule is not to take the first step. What it
+  does instead is what the character would do - get bored, change the subject, tease
+  them for trying - because a refusal notice is the one response the persona rules out.
+
+  A prompt rule alone was not enough for the transcript bug in 2.5.1 and it is not
+  enough here, so there is a backstop in code as well: a reply the bot wrote that
+  contains explicit terms is never sent. It is replaced with one of its own bored
+  lines, in the chat's language. The check reads the bot's output only - nothing anyone
+  sends is filtered, blocked or judged, and the group's own crude jokes are untouched.
+  It holds in paid mode too, unlike the free-mode retry it sits next to, because this
+  is not a quality problem that another model would answer differently.
 
 ## [2.5.1] - 2026-09-04
 
@@ -468,7 +558,10 @@ download; the link below goes to the last commit it covers.
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
 [Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.0...HEAD
-[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.6.0
+[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.4...v2.6.0
+[2.5.4]: https://github.com/hami9/Astolfo/compare/v2.5.3...v2.5.4
+[2.5.3]: https://github.com/hami9/Astolfo/compare/v2.5.2...v2.5.3
+[2.5.2]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/hami9/Astolfo/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/hami9/Astolfo/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/hami9/Astolfo/compare/v2.3.3...v2.4.0
