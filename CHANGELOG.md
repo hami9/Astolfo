@@ -11,6 +11,42 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.5.3] - 2026-09-05
+
+Five bugs a diagnostic run against the live server turned up. Each one is
+something that actually happened in the log, not something that might.
+
+### Fixed
+
+- **Every panel press could kill a reply that was being written.** Changing any
+  setting calls `reconfigure`, which builds a new LLM client and closed the old one
+  immediately - while requests still held it. Those turns died with `RuntimeError:
+  Cannot send a request, as the client has been closed`, and the chat saw nothing.
+  A retiring client now waits for its own requests before closing, capped so a
+  wedged one cannot hold the connection pools forever, and the wait happens in the
+  background so pressing a button still returns at once.
+- **A slow panel action lost the change behind it.** Answering an expired callback
+  query raises, and that call sat one line *above* the settings reload and outside
+  the `try` that wrapped everything else - so a stale spinner took the reload and
+  the redraw down with it. Both are best effort now.
+- **One model refusing an image blinded its whole service.** The "does not take
+  images" learning was keyed by service, so a single refusal from a free model
+  marked the whole of OpenRouter text-only: its real vision models became
+  unreachable, and the model that had actually refused was asked again nine more
+  times. It is keyed by service *and* model now, and a service is skipped for media
+  only when everything it would try has refused.
+- **A model that answers with silence kept being asked.** One free model returned
+  nothing twenty times in a single log: the ten-minute cooldown expired and it
+  rejoined the pool to waste another turn. Repeat offences now earn ten minutes,
+  then an hour, then the rest of the day. Escalating rather than a blocklist,
+  because the free pool is discovered and tomorrow the useless one is a different
+  id.
+- **Twenty-one replies into a group that would not let it post.** Each one cost a
+  model call to produce a message nobody received. The first "not enough rights"
+  now switches that chat off exactly as the panel would, with an audit line, so it
+  costs nothing until somebody fixes the permission and turns it back on. An
+  ordinary send failure - a timeout, a blip - still leaves the chat alone.
+
 ## [2.5.2] - 2026-09-05
 
 ### Fixed
@@ -438,7 +474,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.5.2...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.5.3...HEAD
+[2.5.3]: https://github.com/hami9/Astolfo/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/hami9/Astolfo/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/hami9/Astolfo/compare/v2.4.0...v2.5.0

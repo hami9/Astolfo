@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -42,6 +43,9 @@ class Runtime:
     blocked: set[int] = field(default_factory=set)
     user_limits: dict[int, int] = field(default_factory=dict)
     dormant: set[int] = field(default_factory=set)
+    # Retiring clients still draining their own requests. Held so the tasks
+    # are not garbage collected mid-close.
+    _retiring: set = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.responses = TTLCache(maxsize=512, ttl=self.settings.response_cache_ttl)
@@ -118,7 +122,14 @@ class Runtime:
         self.responses = TTLCache(maxsize=512, ttl=settings.response_cache_ttl)
         self.attention.configure(settings.attention_hold)
         await self.llm.load_catalog()
-        await previous.aclose()
+        # Not awaited, and not closed outright. A reply already in flight still
+        # holds the old client, and closing it under them is what let every panel
+        # press kill a turn with "Cannot send a request, as the client has been
+        # closed". The press returns now; those pools close when the last request
+        # using them finishes.
+        retiring = asyncio.create_task(previous.aclose())
+        self._retiring.add(retiring)
+        retiring.add_done_callback(self._retiring.discard)
         log.info("settings reloaded: %s", ", ".join(p.name for p in self.llm.providers))
 
     def record(
