@@ -204,6 +204,7 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 | [docs/ADMIN.md](docs/ADMIN.md) | the owner's panel, services, modes, limits, updating the server |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | VPS with systemd, Docker, Replit |
 | [docs/COST.md](docs/COST.md) | what each turn costs and every lever that lowers it |
+| [docs/BRAIN-ROLLOUT.md](docs/BRAIN-ROLLOUT.md) | turning the prompt-weight bandit on, and every button that stops it |
 | [SECURITY.md](SECURITY.md) | what this protects, what it does not, and how to report a problem |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | how to set up, what the tests expect, house style |
 | [CHANGELOG.md](CHANGELOG.md) | what changed and when |

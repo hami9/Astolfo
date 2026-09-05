@@ -65,10 +65,16 @@ _LINES = ("flash", "pro", "mini", "coder", "scout", "maverick")
 _RELEASE = re.compile(r"[-_](?:\d{2}-\d{4}|\d{4}-\d{2}(?:-\d{2})?|\d{6,8}|v?\d+(?:\.\d+)*)$")
 
 
+# A family is a dict key and a line on a panel screen. Model ids are discovered
+# from thirteen services, so they are not trusted to be short or to be words.
+MAX_FAMILY = 40
+_TIDY = re.compile(r"[^\w.-]+")
+
+
 def family(model: str) -> str:
     """The name to learn under, so a rename inherits what the last one taught."""
     lowered = (model or "").split("/", 1)[-1].lower()
-    lowered = lowered.split(":", 1)[0].strip()
+    lowered = _TIDY.sub("-", lowered.split(":", 1)[0]).strip("-.")
     if not lowered:
         return "unknown"
 
@@ -84,8 +90,9 @@ def family(model: str) -> str:
 
     for line in _LINES:
         if re.search(rf"[-_]{line}\b", lowered) and line not in best:
-            return f"{best}-{line}"
-    return best
+            best = f"{best}-{line}"
+            break
+    return best[:MAX_FAMILY] or "unknown"
 
 
 def reward(
@@ -120,6 +127,21 @@ def _scaled(value: float) -> float:
     return (value - FLOOR) / (CEILING - FLOOR)
 
 
+def _weights(*, free_mode: bool) -> tuple[recipes.Recipe, ...]:
+    """The weights worth trying in this mode.
+
+    Free mode never gets the layered prompt. A free model is a small model, the
+    layered prompt is 4,600 tokens over 52 rules, and an evening of watching a
+    35B model drop most of them is what started all of this - so exploring it
+    would spend one turn in ten producing exactly the failure being fixed. The
+    brain moves between weights that could plausibly win, not across the whole
+    range.
+    """
+    if free_mode:
+        return (recipes.FACTORY_TIGHT, recipes.FACTORY_COMPACT)
+    return tuple(recipes.FACTORY.values())
+
+
 def pool(*, free_mode: bool) -> tuple[recipes.Recipe, ...]:
     """What there is to choose between before anything has been written.
 
@@ -134,7 +156,7 @@ def pool(*, free_mode: bool) -> tuple[recipes.Recipe, ...]:
     """
     here = recipes.factory_for(free_mode=free_mode)
     out: list[recipes.Recipe] = [here]
-    for weight in recipes.FACTORY.values():
+    for weight in _weights(free_mode=free_mode):
         if weight.name != here.name and len(out) < MAX_VARIANTS:
             out.append(weight)
     for count in (1, 2):
@@ -214,9 +236,16 @@ class Brain:
             return factory
 
         options = pool(free_mode=free_mode)
-        if self.rng.random() < EXPLORATION_FLOOR:
-            # Deliberately off the winner, so a recipe that was best in a week
-            # that no longer exists cannot hold the family forever.
+        roll = self.rng.random()
+        if roll < EXPLORATION_FLOOR / 2:
+            # Half the exploration goes to the control arm on purpose. It is what
+            # the breaker measures everything else against, and once the bandit
+            # has learned the factory recipe is poor it stops choosing it - which
+            # starves the baseline and leaves the breaker unable to judge at all.
+            return factory
+        if roll < EXPLORATION_FLOOR:
+            # The other half is off the winner entirely, so a recipe that was best
+            # in a week that no longer exists cannot hold the family forever.
             return self.rng.choice(options)
         return max(options, key=lambda r: self._arm(fam, r.name).draw(self.rng))
 

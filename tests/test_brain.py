@@ -279,3 +279,59 @@ def test_the_control_arm_feeds_the_breakers_baseline() -> None:
 
     assert brain.breaker.baseline["qwen3"], "the factory turn"
     assert brain.breaker.families["qwen3"], "and the chosen one, kept apart"
+
+
+# -- what a stress run before deployment turned up -------------------------
+def test_free_mode_never_explores_the_layered_prompt() -> None:
+    """A free model is a small model. The layered prompt is 4,600 tokens over 52
+    rules, and watching a 35B model drop most of them is what started all of
+    this - so exploring it would spend one turn in ten reproducing the bug."""
+    names = [r.name for r in pool(free_mode=True)]
+
+    assert "full" not in names, names
+    assert all(len(r.render()) < 6000 for r in pool(free_mode=True))
+
+
+def test_paid_mode_still_has_the_whole_ladder() -> None:
+    names = [r.name for r in pool(free_mode=False)]
+    assert {"tight", "compact", "full"} <= set(names), names
+
+
+def test_the_control_arm_does_not_starve() -> None:
+    """Found by stressing it before deployment: once the bandit learns the
+    factory recipe is poor it stops choosing it, so the breaker's baseline stops
+    filling and the breaker can no longer judge anything at all. Half the
+    exploration is now reserved for the control.
+
+    The bar is measured rather than guessed. Over twelve seeds the control gets
+    26-39 turns in 400 with the reserve and 8-23 without it, so 25 separates
+    them without being tight enough to flake."""
+    factory = recipes.factory_for(free_mode=True)
+    worst = 400
+    for seed in range(12):
+        brain = Brain(on=True, rng=random.Random(seed))
+        for _ in range(ENOUGH * 2):
+            brain.note(model="c/command-r7b", recipe=factory, free_mode=True, broken=True)
+        picks = [brain.choose(model="c/command-r7b", free_mode=True).name for _ in range(400)]
+        worst = min(worst, picks.count(factory.name))
+
+    assert worst >= 25, f"the control got as little as {worst} of 400"
+
+
+def test_a_family_name_is_short_and_looks_like_a_name() -> None:
+    """Ids are discovered from thirteen services, so they are not trusted to be
+    short or to be words. They end up as dict keys and as lines on a screen."""
+    from astolfo.brain import MAX_FAMILY
+
+    assert family("../../etc/passwd") == "etc-passwd"
+    assert len(family("a" * 400)) <= MAX_FAMILY
+    assert family("🙂/🙂") == "unknown"
+    for junk in ("", "/", ":free", "   "):
+        assert family(junk) == "unknown", junk
+
+
+def test_a_family_name_is_still_the_family() -> None:
+    """Tidying must not merge two models that are genuinely different."""
+    assert family("cohere/command-r-08-2024") == "command-r"
+    assert family("command-r7b-12-2024") == "command-r7b"
+    assert family("google/gemini-2.5-flash") == "gemini-flash"
