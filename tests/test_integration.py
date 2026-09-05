@@ -135,10 +135,27 @@ def test_every_setting_round_trips_through_the_environment(monkeypatch):
         annotation = str(f.type).replace('"', "").strip()
         if annotation not in samples:
             raise AssertionError(f"{f.name} has unsupported annotation {annotation!r}")
-        if f.name in {"telegram_token", "api_key"}:
+        # The two required ones are checked elsewhere, and prompt_tier is the one
+        # setting that constrains its own value rather than taking any string -
+        # it has its own round-trip test below.
+        if f.name in {"telegram_token", "api_key", "prompt_tier"}:
             continue
 
         monkeypatch.setenv(f.metadata["env"], samples[annotation])
         value = getattr(Settings.from_env(), f.name)
         assert value == expected[annotation], f"{f.name} coerced to {value!r}"
         monkeypatch.delenv(f.metadata["env"])
+
+
+def test_the_prompt_weight_round_trips_and_refuses_a_typo(monkeypatch) -> None:
+    """Typed by hand in the panel, so a typo has to land somewhere safe rather
+    than quietly sending the wrong weight for the rest of the day."""
+    from astolfo import persona
+    from astolfo.config import Settings
+
+    for tier in (*persona.TIERS, persona.AUTO):
+        monkeypatch.setenv("PROMPT_TIER", tier.upper())
+        assert Settings.from_env().prompt_tier == tier
+
+    monkeypatch.setenv("PROMPT_TIER", "tigth")
+    assert Settings.from_env().prompt_tier == persona.AUTO

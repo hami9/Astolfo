@@ -51,17 +51,38 @@ QUOTE_CHARS = 140
 # The two shapes the system prompt comes in. Recorded against every reply, so
 # that how each one fares on each model is measured before anything chooses
 # between them.
-COMPACT = "compact"
-LAYERED = "layered"
+COMPACT = persona.COMPACT
+LAYERED = persona.FULL
 
 
 def prompt_variant(settings) -> str:
-    """Which of the prompt shapes a turn will use.
+    """Which of the three prompt weights a turn will use.
 
-    Free models are small and drown in the full layered prompt, so free mode
-    takes the short one. One switch, and the name of what it chose.
+    Measured, not guessed: the full prompt is ~4,600 tokens over 52 separate
+    rules and the compact one ~1,080 over about thirty, and a 35B model handed
+    thirty rules follows some and drops the rest. So there is a third, lighter
+    weight, and a setting that picks one by hand.
+
+    `auto` is what the bot has always done - the short prompt on free models,
+    the long one otherwise - and it is still the default. It is also the hook
+    the brain takes over: choosing the weight per model family is the job, and
+    until it can, this is a person choosing it.
     """
+    wanted = (getattr(settings, "prompt_tier", "") or persona.AUTO).strip().lower()
+    if wanted in persona.TIERS:
+        return wanted
     return COMPACT if settings.free_mode else LAYERED
+
+
+def static_block_for(variant: str, *, is_group: bool, locale: str, heavy_lifting: bool) -> str:
+    """The persona at the chosen weight."""
+    if variant == persona.TIGHT:
+        return persona.tight_prompt(is_group=is_group, locale=locale)
+    if variant == COMPACT:
+        return persona.compact_prompt(is_group=is_group, locale=locale)
+    return persona.static_prompt(
+        is_group=is_group, locale=locale, heavy_lifting=heavy_lifting
+    )
 
 
 def model_params(settings, decision: Decision, has_media: bool) -> dict:
@@ -164,13 +185,15 @@ def build_messages(
     has_media = bundle.has_content or bool(bundle.notes)
 
     locale = resolve_locale(rt, state)
-    compact = prompt_variant(settings) == COMPACT
-    static_block = (
-        persona.compact_prompt(is_group=is_group, locale=locale)
-        if compact
-        else persona.static_prompt(
-            is_group=is_group, locale=locale, heavy_lifting=settings.heavy_lifting
-        )
+    variant = prompt_variant(settings)
+    # The media block has its own two weights, and anything but the full prompt
+    # takes the short one: a model that drowns in the persona drowns in this too.
+    compact = variant != LAYERED
+    static_block = static_block_for(
+        variant,
+        is_group=is_group,
+        locale=locale,
+        heavy_lifting=settings.heavy_lifting,
     )
     dynamic_block = persona.dynamic_prompt(
         mode=decision.mode,

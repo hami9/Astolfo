@@ -11,6 +11,33 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.6.8] - 2026-09-05
+
+### Added
+
+- **Three prompt weights, because one size was measurably the wrong size.** The
+  full prompt is ~4,600 tokens across 52 separate rules; the compact one ~1,080
+  across about thirty. `cohere/command-r-08-2024` is a 35B model, and an evening
+  of its output is what thirty rules buys: it followed some and dropped the rest -
+  the language rule, the one-line rule and the sincere rule all went in the same
+  conversation. There is now a third, `tight`, at ~300 tokens: who it is, the six
+  rules whose absence does real damage, and one example carrying the voice.
+  `PROMPT_TIER` (`auto` | `tight` | `compact` | `full`) chooses, from the .env or
+  from **panel → settings → prompt weight**, and a typo falls back to `auto` with
+  a warning rather than quietly sending the wrong thing all day.
+- `auto` is the default and changes nothing: compact on free models, full
+  otherwise, exactly as before. It is also the hook the brain takes over -
+  choosing the weight per model family is its job, and until it can, a person
+  chooses it.
+
+### Note
+
+Everything the lightest prompt drops is still enforced in code, not in the
+prompt: the impersonation repair, the explicit-content deflection, the
+repetition guard and the language check all run whatever prompt produced the
+reply. There is a test asserting that, because the moment those become
+tier-dependent the lightest weight stops being safe.
+
 ## [2.6.7] - 2026-09-05
 
 ### Fixed
@@ -724,7 +751,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.7...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.8...HEAD
+[2.6.8]: https://github.com/hami9/Astolfo/compare/v2.6.7...v2.6.8
 [2.6.7]: https://github.com/hami9/Astolfo/compare/v2.6.6...v2.6.7
 [2.6.6]: https://github.com/hami9/Astolfo/compare/v2.6.5...v2.6.6
 [2.6.5]: https://github.com/hami9/Astolfo/compare/v2.6.4...v2.6.5
