@@ -70,5 +70,6 @@ ignore = ["B008", "SIM105"]
 # persona.py is mostly prompt prose; rewrapping it would change what the model reads.
 "astolfo/persona.py" = ["E501"]
 # Tests assert on behaviour, including the assert statement itself and sample keys
-# that are not credentials.
-"tests/*" = ["S101", "S105", "S106", "S108"]
+# that are not credentials. S311: the bandit is seeded on purpose so a test that
+# samples a distribution gives the same answer every run.
+"tests/*" = ["S101", "S105", "S106", "S108", "S311"]
