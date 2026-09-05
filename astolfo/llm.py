@@ -168,6 +168,10 @@ class LLMClient:
         # of OpenRouter blind, which took its real vision models down with it and
         # did nothing about the model that had actually refused.
         self._text_only: set[tuple[str, str]] = set()
+        # (service, model) pairs the service has said outright it does not serve.
+        # Kept for the life of the process for the same reason as the pair above:
+        # it is a fact about the pair, and asking again only buys the same answer.
+        self._unknown: set[tuple[str, str]] = set()
         # service -> the last few refusals, oldest first.
         self._faults: dict[str, list[tuple[float, faults.Fault]]] = {}
         self._scores: dict[str, int] = {}
@@ -666,6 +670,10 @@ class LLMClient:
             if self._inflight <= 0:
                 self._idle.set()
 
+    def _known(self, service: str, models: list[str]) -> list[str]:
+        """The ones this service has not already said it does not serve."""
+        return [m for m in models if (service, m) not in self._unknown]
+
     def _sighted(self, service: str, models: list[str]) -> list[str]:
         """The ones this service has not already refused an image on."""
         return [m for m in models if (service, m) not in self._text_only]
@@ -719,6 +727,22 @@ class LLMClient:
         merged = [pair for kept in self._faults.values() for pair in kept]
         return sorted(merged, key=lambda pair: -pair[0])
 
+    def stuck_on(self, model: str) -> bool:
+        """Whether another go would land on this same model anyway.
+
+        The free-mode retry exists to try a *different* model. When the pool has
+        come down to one, every service's first choice is the same id, and the
+        retry spends a call to be told the same thing - which is what filled a
+        log with the same model rested and re-used four times in forty seconds.
+        """
+        if not model:
+            return False
+        for provider in self._live_providers():
+            options = self._candidates(provider, model)
+            if any(option != model for option in options):
+                return False
+        return True
+
     def _rest(self, model: str, seconds: float) -> None:
         self._cooldowns[model] = time.monotonic() + seconds
 
@@ -730,6 +754,12 @@ class LLMClient:
         today rejoined the pool every ten minutes and wasted a turn each time.
         """
         if not model:
+            return
+        if self._cooldowns.get(model, 0.0) > time.monotonic():
+            # Already resting and used anyway, because it was the only thing left.
+            # A forced turn is not new evidence: without this the count climbed
+            # from seven to ten in forty seconds and said nothing about anything.
+            log.info("%s is already resting; the strike is not counted twice", model)
             return
         strikes = self._strikes[model] = self._strikes.get(model, 0) + 1
         if self._registry:
@@ -777,12 +807,15 @@ class LLMClient:
             ) or self.free_pool(service=provider.name)
             if vision:
                 pool = self._sighted(provider.name, pool)
-            return pool or [requested]
+            # `requested` is the last resort, but only when this service has not
+            # already said it does not have it: offering it again is how the same
+            # rejection arrived seven times.
+            return self._known(provider.name, pool or [requested])
         options = provider.vision_models if vision else provider.models
         found = list(options or provider.models or [requested])
         if vision:
             found = self._sighted(provider.name, found)
-        return self._usable(found)
+        return self._usable(self._known(provider.name, found))
 
     def _pick_model(
         self,
@@ -797,7 +830,8 @@ class LLMClient:
         Only the service that publishes a catalog can be asked for free models by
         discovery; the rest answer with whatever their configuration names.
         """
-        return self._candidates(provider, requested, vision=vision, audio=audio)[0]
+        found = self._candidates(provider, requested, vision=vision, audio=audio)
+        return found[0] if found else ""
 
     def _next_model(
         self,
@@ -996,6 +1030,13 @@ class LLMClient:
         client = self._clients[provider.name]
         requested = model
         model = self._pick_model(provider, model, vision=vision, audio=audio)
+        if not model:
+            # Everything this service could be asked for, it has already said it
+            # does not have. Move on rather than send the id back for a fifth no.
+            return ChatResult(
+                error=f"{provider.name} serves none of the models left to try",
+                error_kind="rejected",
+            )
 
         retries = self._s.max_retries if max_retries is None else max_retries
         if self._s.free_mode:
@@ -1074,6 +1115,26 @@ class LLMClient:
                         log.warning("web plugin rejected, retrying without search")
                         web = False
                         continue
+                    if _about_the_model(lowered):
+                        # A durable fact about (service, model), not about this
+                        # turn: OpenRouter was asked for a Google-shaped id seven
+                        # times in forty-five seconds and rejected every one,
+                        # because nothing remembered the first refusal.
+                        self._unknown.add((provider.name, model))
+                        log.warning(
+                            "%s does not serve %s; it will not be asked again",
+                            provider.name, model,
+                        )
+                        alternative = self._next_model(
+                            provider, requested, tried=tried, vision=vision, audio=audio
+                        )
+                        if alternative:
+                            model = alternative
+                            continue
+                        return ChatResult(
+                            error=f"HTTP 400: {provider.name} serves none of these models",
+                            error_kind="rejected",
+                        )
                     if vision and _about_images(lowered):
                         # Learned once and remembered for the life of the process,
                         # so every later photo skips this model instead of spending
@@ -1230,6 +1291,20 @@ class LLMClient:
         if not result.ok:
             return None, result.usage
         return parse_json(result.text or ""), result.usage
+
+
+# A service saying it does not have this model at all, in the words each of them
+# uses. Distinct from a 400 about the request's shape, which is this turn's
+# problem rather than the model's.
+_NOT_A_MODEL = (
+    "not a valid model", "is not a valid model id", "model not found",
+    "no such model", "unknown model", "invalid model", "does not exist",
+    "model_not_found",
+)
+
+
+def _about_the_model(body: str) -> bool:
+    return any(phrase in body for phrase in _NOT_A_MODEL)
 
 
 def _about_images(body: str) -> bool:

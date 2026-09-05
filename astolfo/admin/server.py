@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from .. import server_ops
 from .guard import audit
 from .sections import View
@@ -49,8 +51,47 @@ def check(ctx) -> View:
     return view
 
 
-def log(ctx) -> View:
-    return View(f"📄 recent log\n\n{server_ops.journal()}", keyboard(back_row("srv")))
+def log(ctx, *, errors_only: bool = False, skip: int = 0) -> View:
+    """The service log, a page at a time, with a file for when a page is not enough."""
+    page = server_ops.journal(errors_only=errors_only, skip=skip)
+    where = f", {skip} lines back" if skip else ""
+    head = f"{'⚠️ errors only' if errors_only else '📄 recent log'}{where}"
+    flag = "1" if errors_only else "0"
+    older = skip + server_ops.SCREEN_LINES
+    rows = [
+        [
+            button("⬅️ older", "srv", "log", flag, str(older)),
+            button("➡️ newer", "srv", "log", flag,
+                   str(max(0, skip - server_ops.SCREEN_LINES))),
+        ],
+        [
+            button("📄 all" if errors_only else "⚠️ errors only", "srv", "log",
+                   "0" if errors_only else "1", "0"),
+            button("📎 as a file", "srv", "logfile", flag),
+        ],
+        back_row("srv"),
+    ]
+    return View(f"{head}\n\n{page}", keyboard(*rows))
+
+
+def log_file(ctx, *, errors_only: bool = False) -> View:
+    """The last few thousand lines as an attachment.
+
+    A message holds about four thousand characters and a log worth reading is
+    longer than that, which is why the screen kept cutting off before the part
+    that mattered.
+    """
+    name = "astolfo-errors.log" if errors_only else "astolfo.log"
+    path = server_ops.journal_file(
+        os.path.join(ctx.rt.settings.data_dir, name), errors_only=errors_only
+    )
+    view = log(ctx, errors_only=errors_only)
+    if not path:
+        view.alert = "the log is not readable from here"
+        return view
+    view.document = path
+    view.alert = "sent as a file"
+    return view
 
 
 def job(ctx, action: str, confirmed: bool) -> View:

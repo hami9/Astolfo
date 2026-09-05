@@ -150,6 +150,31 @@ def went_explicit(reply: str) -> bool:
     return bool(_EXPLICIT.search(reply or ""))
 
 
+# Racial and ethnic slurs, in the scripts they arrive in. Kept deliberately short
+# and deliberately unambiguous: every entry here means one thing and only one
+# thing. Persian "نیگا" is not on it, because it is also everyday shorthand for
+# "look", and a guard that eats real speech is its own failure - the English word
+# it transliterates is on it, which is what actually arrived.
+_SLURS = re.compile(
+    r"\b(n[i1!]gg+(er|a|uh)s?|f[a4]gg+(ot)?s?|k[i1]kes?|sp[i1]cs?|ch[i1]nks?"
+    r"|w[e3]tb[a4]cks?|tr[a4]nn(y|ies)|r[e3]t[a4]rd(s|ed)?)\b"
+    r"|کاکاسیاه|سیاه\s*سوخته",
+    re.I,
+)
+
+
+def has_slur(text: str) -> bool:
+    """Whether this carries a slur, wherever it came from.
+
+    Asked of an incoming message as well as of a reply, which is the difference
+    that mattered: a member typed one in English and the bot transliterated it
+    into Persian and sent it back to the group. The reply was not a slur it
+    thought of - it was the message handed back - so the message is where this
+    has to be caught.
+    """
+    return bool(_SLURS.search(text or ""))
+
+
 def stray_language(reply: str) -> str | None:
     """Which foreign script leaked into this reply, if any.
 
@@ -361,6 +386,12 @@ def _opening(text: str, words: int = SAME_OPENING_WORDS) -> list[str]:
 RECENT_REPLIES = 6
 SAME_FIRST_WORD = 3
 
+# How far back an echo may reach. Further than the bot's own replies, because it
+# was stitching several people's messages together: "الد، استالفود، میگم ایدیم
+# چیه؟" is three members' sentences in a row, and the oldest was well past the
+# newest message.
+RECENT_HEARD = 10
+
 
 def opens_like_recent(reply: str, recent: Sequence[str]) -> bool:
     """Whether this reply starts the way the last few already did.
@@ -393,6 +424,78 @@ def _folded(text: str) -> str:
     return " ".join((text or "").lower().split())
 
 
+# Punctuation, and the zero-width joiner Persian writes half-spaces with. Stripped
+# before two pieces of text are compared, because "من کیم ؟" and "من کیم؟" are the
+# same sentence and an exact comparison called them different - which is how a
+# whole evening of verbatim echoes got through the check meant to catch them.
+#
+# `\w` is Unicode-aware, so Persian letters survive it on their own. Naming the
+# Arabic block by hand instead kept "؟" alive - it sits at U+061F, inside that
+# block - and that one character was the whole of the difference.
+_PUNCT = re.compile(r"[^\w\s]")
+
+# How much of a reply may come from the message it is answering before it is not a
+# reply any more. Two thirds: a short answer legitimately reuses the question's
+# words ("خوبی؟" / "خوبم") and that has to survive.
+ECHO_SHARE = 0.67
+
+
+def _words(text: str) -> list[str]:
+    """The words, with punctuation gone and half-spaces closed up.
+
+    The zero-width joiner is deleted rather than turned into a space: it is what
+    Persian writes inside a word, so replacing it split "می‌کنی" into two words
+    that matched nothing.
+    """
+    return _PUNCT.sub(" ", (text or "").lower().replace("\u200c", "")).split()
+
+
+def _squashed(text: str) -> str:
+    """Every letter, in order, with nothing between them.
+
+    For the "is this the same sentence" test only. Persian half-spaces are
+    genuinely ambiguous - "دل‌شکسته" is one word and "دل شکسته" is two, and they
+    are the same thing - so the comparison stops caring where the gaps are.
+    """
+    return "".join(_words(text))
+
+
+_ASKS = re.compile(r"[?؟]\s*$")
+
+
+def echoes_back(reply: str, asked: str, heard: Sequence[str] = ()) -> bool:
+    """Whether this reply is what was said to it, handed back.
+
+    Not only word for word, and not only the newest message. In one evening a
+    member asked "من کیم ؟" and got "من کیم؟"; asked "میگم خوبی ؟" and got
+    "خوبی؟"; and then each new message from anybody was prepended to the last
+    reply until it was three people's sentences in a row. None of those is an
+    exact match against the newest message, and every one of them is the same
+    failure, so all three shapes are checked and the last few messages count as
+    the source.
+    """
+    here = _words(reply)
+    if not here:
+        return False
+    there = _words(asked)
+    if _squashed(reply) and _squashed(reply) == _squashed(asked):
+        return True
+
+    everything = set(there)
+    for said in list(heard)[:RECENT_HEARD]:
+        everything.update(_words(said))
+    if not everything:
+        return False
+
+    borrowed = sum(1 for word in here if word in everything)
+    if len(here) >= 3 and borrowed / len(here) >= ECHO_SHARE:
+        return True
+    # A question answered by asking it back. Short, so the share above cannot
+    # see it, and unmistakable: every word came from them and it is still a
+    # question. "خوبی؟" answering "میگم خوبی ؟" is not an answer.
+    return bool(_ASKS.search(reply.strip())) and borrowed == len(here) and bool(there)
+
+
 def reuses_opening(reply: str, previous: str) -> bool:
     """Whether this reply opens exactly as the last one did.
 
@@ -413,6 +516,7 @@ def looks_broken(
     echoes: str = "",
     previous: str = "",
     recent: Sequence[str] = (),
+    heard: Sequence[str] = (),
     asked: str = "",
 ) -> str | None:
     """Why this reply is unusable, or None when it is fine.
@@ -439,8 +543,7 @@ def looks_broken(
         # anyway, then keeps doing it after being asked twice to stop.
         return "answered a Persian message in English"
 
-    folded = _folded(body)
-    if echoes and folded == _folded(echoes):
+    if (echoes or heard) and echoes_back(body, echoes, heard):
         return "echoed the message"
     # `previous` is the reply before this one; `recent` is the handful before
     # that, and a tic is only visible across the handful.

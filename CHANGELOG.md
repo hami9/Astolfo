@@ -11,6 +11,49 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.7.0] - 2026-09-05
+
+### Fixed
+
+- **It answered by handing people their own messages back, and one of them was a
+  slur.** A member asked "من کیم ؟" and got "من کیم؟"; asked "میگم خوبی ؟" and
+  got "خوبی؟"; then each new message from anybody was prepended to the last reply
+  until it was three members' sentences in a row. Then somebody typed a racial
+  slur in English and the bot transliterated it into Persian and sent it to the
+  group. The echo check existed and none of it fired: it compared whole strings
+  for an exact match against the single newest message, and `؟` with a space in
+  front of it is not `؟` without one.
+  - The comparison now folds punctuation and Persian half-spaces away, so
+    "من کیم ؟" and "من کیم؟" are one sentence.
+  - It reaches back over the last ten messages, not just the newest, which is
+    what the stitched-together replies were drawn from.
+  - Two thirds of a reply coming from what was said to it counts as handing it
+    back; so does a question answered by asking it again. Short answers that
+    reuse a word or two are untouched, and there is a test full of them.
+  - **A message carrying a slur never reaches a model at all.** No guard on the
+    reply can be trusted for that one - the syllables the bot produced are also
+    ordinary Persian for "look" - so it stops at the message, gets Astolfo being
+    bored, and costs nothing.
+- **The same rejected model, seven times in forty-five seconds.** OpenRouter was
+  asked for a Google-shaped id and answered "not a valid model ID" every time,
+  because nothing remembered the first no. A service saying it does not have a
+  model is now a durable fact about that pair, like a model refusing images
+  already was, and a service with nothing left to offer is skipped rather than
+  asked again. A 400 about the request's shape still says nothing about the model.
+- **Strike seven to strike ten in forty seconds.** All of them the same model,
+  rested and then used anyway because it was the only one left. A forced turn is
+  not new evidence, so a model already resting is not struck again - and when the
+  pool is down to one, the free-mode retry no longer spends a second call to be
+  told the same thing.
+
+### Added
+
+- **panel → server → log** shows forty lines instead of twenty-five, pages
+  backwards through what came before, filters to errors only, and can send the
+  last three thousand lines as a file. A Telegram message holds about four
+  thousand characters, which is a page and a half of a log, and the part worth
+  reading is always further back than that.
+
 ## [2.6.9] - 2026-09-05
 
 ### Fixed
@@ -787,7 +830,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.9...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/hami9/Astolfo/compare/v2.6.9...v2.7.0
 [2.6.9]: https://github.com/hami9/Astolfo/compare/v2.6.8...v2.6.9
 [2.6.8]: https://github.com/hami9/Astolfo/compare/v2.6.7...v2.6.8
 [2.6.7]: https://github.com/hami9/Astolfo/compare/v2.6.6...v2.6.7
