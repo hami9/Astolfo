@@ -88,3 +88,51 @@ async def test_an_ordinary_private_chat_answers(rt, llm) -> None:
     await run(rt, message)
 
     assert message.sent == ["yahoo~ what's up?"]
+
+
+# -- and the way out that looked like it worked ----------------------------
+async def test_unmute_brings_a_switched_off_chat_back(rt, llm) -> None:
+    """Screenshot from the server: /unmute answered "I'm baaack! 🎉" and the
+    chat stayed silent. Muted and switched off are separate flags and only one
+    of them had a command, so the bot said something untrue about itself."""
+    from astolfo import commands
+    from tests.conftest import FakeContext, FakeMessage, make_update
+
+    rt.set_chat_off(781, True)
+    rt.store.get(781).muted = True
+
+    said = FakeMessage("/unmute", chat_type="private", chat_id=781, user_id=1)
+    await commands.unmute(make_update(said), FakeContext(rt, FakeBot()))
+
+    assert said.sent, "it answers"
+    assert 781 not in rt.dormant, "and it means it"
+    assert not rt.store.get(781).muted
+
+    llm.reply = "yahoo~"
+    after = FakeMessage("سلام", chat_type="private", chat_id=781)
+    await run(rt, after)
+
+    assert after.sent == ["yahoo~"]
+
+
+async def test_status_says_when_a_chat_is_switched_off(rt) -> None:
+    """Nothing anywhere said so. A chat in that state answers commands and
+    nothing else, which reads as the bot being broken."""
+    from astolfo import commands
+    from tests.conftest import FakeContext, FakeMessage, make_update
+
+    rt.set_chat_off(782, True)
+    said = FakeMessage("/status", chat_type="private", chat_id=782, user_id=1)
+    await commands.status(make_update(said), FakeContext(rt, FakeBot()))
+
+    assert "switched off" in said.sent[-1] or "خاموش" in said.sent[-1], said.sent
+
+
+async def test_status_says_nothing_extra_when_the_chat_is_on(rt) -> None:
+    from astolfo import commands
+    from tests.conftest import FakeContext, FakeMessage, make_update
+
+    said = FakeMessage("/status", chat_type="private", chat_id=783, user_id=1)
+    await commands.status(make_update(said), FakeContext(rt, FakeBot()))
+
+    assert "switched off" not in said.sent[-1] and "خاموش" not in said.sent[-1]

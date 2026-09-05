@@ -151,10 +151,20 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Come back - from either of the two ways of being away.
+
+    Muted and switched off are separate flags, and only one of them had a
+    command. Somebody whose chat had been switched off typed /unmute, got
+    "I'm baaack!", and then watched it stay silent - the bot said something
+    untrue about itself, which is worse than doing nothing. Whoever may unmute
+    may switch it back on, so /unmute now clears both.
+    """
     if not await _is_admin(update, context):
         return await _deny(update, context)
     rt = runtime.get(context)
-    rt.store.get(update.effective_chat.id).muted = False
+    chat_id = update.effective_chat.id
+    rt.store.get(chat_id).muted = False
+    rt.set_chat_off(chat_id, False)
     rt.store.mark_dirty()
     await update.effective_message.reply_text(rt.strings("unmuted"))
 
@@ -188,8 +198,14 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             model_think=settings.model_think,
         )
 
+    # Switched off is not muted, and nothing used to say so anywhere. A chat in
+    # that state answers commands and nothing else, which reads as the bot being
+    # broken rather than as a switch somebody could find.
+    off = rt.strings("status_off") if state.off else ""
+
     await update.effective_message.reply_text(
-        rt.strings(
+        off
+        + rt.strings(
             "status",
             mode=state.forced_mode or "auto",
             muted="yes" if state.muted else "no",

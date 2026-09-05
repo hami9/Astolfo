@@ -11,6 +11,21 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.7.4] - 2026-09-06
+
+### Fixed
+
+- **`/unmute` said "I'm baaack!" and stayed silent.** Muted and switched off are
+  two separate flags and only one of them had a command, so somebody whose chat
+  had been switched off got a cheerful message about a thing that had not
+  happened - the bot saying something untrue about itself, which is worse than
+  doing nothing. Whoever may unmute a chat may switch it back on, so `/unmute`
+  now clears both.
+- **`/status` says when a chat is switched off**, and how to bring it back.
+  Nothing anywhere said so before: a chat in that state answers commands and
+  nothing else, which reads as the bot being broken rather than as a switch
+  somebody could find.
+
 ## [2.7.3] - 2026-09-05
 
 ### Fixed
@@ -886,7 +901,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.3...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.4...HEAD
+[2.7.4]: https://github.com/hami9/Astolfo/compare/v2.7.3...v2.7.4
 [2.7.3]: https://github.com/hami9/Astolfo/compare/v2.7.2...v2.7.3
 [2.7.2]: https://github.com/hami9/Astolfo/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/hami9/Astolfo/compare/v2.7.0...v2.7.1
