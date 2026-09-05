@@ -103,9 +103,15 @@ def test_a_third_strike_still_costs_the_rest_of_the_day_after_a_restart(settings
     monkeypatch.setenv("COHERE_API_KEY", "k")
     registry = _registry(settings)
 
+    # A fresh client each time, which is also what a restart looks like: the
+    # strike count carries, and the rest that would have suppressed the next
+    # strike is only in memory.
     for _ in range(2):
-        _client(settings, registry).mark_unusable("command-r-08-2024")
+        earlier = _client(settings, registry)
+        earlier._cooldowns.clear()  # the previous rest has run out by now
+        earlier.mark_unusable("command-r-08-2024")
     third = _client(settings, registry)
+    third._cooldowns.clear()
     third.mark_unusable("command-r-08-2024")
 
     earned = third._cooldowns["command-r-08-2024"] - time.monotonic()

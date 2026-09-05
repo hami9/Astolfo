@@ -313,6 +313,10 @@ def test_a_models_record_survives_a_restart(settings, monkeypatch):
     before = _client(settings, registry)
     for _ in range(3):
         before.mark_unusable("minimax/minimax-m3:free")
+        # A strike earns a rest, and a model that is resting is not struck again
+        # for being used anyway. Three strikes are three separate occasions, so
+        # the clock has to move between them.
+        before._cooldowns.clear()
 
     after = _client(settings, registry)
     assert after._strikes["minimax/minimax-m3:free"] == 3
@@ -334,6 +338,7 @@ def test_the_worst_model_sinks_to_the_back_of_the_pool(settings, monkeypatch):
     first._free_text = ["wide/but-broken", "narrow/but-fine"]
     for _ in range(3):
         first.mark_unusable("wide/but-broken")
+        first._cooldowns.clear()
 
     after = _client(settings, registry)
     after._free_text = ["wide/but-broken", "narrow/but-fine"]
@@ -352,6 +357,7 @@ def test_a_record_cannot_sink_a_model_without_limit(settings, monkeypatch):
     client = _client(settings)
     for _ in range(20):
         client.mark_unusable("x")
+        client._cooldowns.clear()  # twenty separate occasions, not twenty in a second
 
     assert client._scores["x"] == -guard_sink(), "capped, so six good replies can undo it"
 

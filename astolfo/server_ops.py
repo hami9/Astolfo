@@ -111,14 +111,54 @@ def service_state() -> str:
     return text or ("active" if ok else "unknown")
 
 
-def journal(lines: int = 25) -> str:
-    ok, text = _run(
-        ["journalctl", "-u", SERVICE, "-n", str(lines), "--no-pager", "--output", "cat"],
-        timeout=15.0,
-    )
+# What fits in one Telegram message, and what fits in a file. The screen used to
+# show twenty-five lines cut to three thousand characters, which is a page and a
+# half of a log - not enough to see what led to anything.
+SCREEN_LINES = 40
+SCREEN_CHARS = 3400
+FILE_LINES = 3000
+
+UNREADABLE = "the log is not readable from here (the service user needs systemd-journal)"
+
+
+def journal(lines: int = SCREEN_LINES, *, errors_only: bool = False, skip: int = 0) -> str:
+    """The last few lines of the service log, newest last.
+
+    `skip` pages backwards: a page is `lines` long, so skip=40 is the forty lines
+    before the forty you just read. Chasing a bug means reading what came before
+    it, and before this the screen could only ever show the end.
+    """
+    wanted = ["journalctl", "-u", SERVICE, "--no-pager", "--output", "cat",
+              "-n", str(lines + max(0, skip))]
+    if errors_only:
+        # priority 3 and above: err, crit, alert, emerg. Warnings are noisy and
+        # the interesting ones are logged as errors anyway.
+        wanted += ["-p", "3"]
+    ok, text = _run(wanted, timeout=15.0)
     if not ok:
-        return "the log is not readable from here (the service user needs systemd-journal)"
-    return text[-3000:]
+        return UNREADABLE
+    rows = text.splitlines()
+    if skip:
+        rows = rows[: len(rows) - skip] if len(rows) > skip else []
+    return "\n".join(rows[-lines:])[-SCREEN_CHARS:] or "(nothing that far back)"
+
+
+def journal_file(path: str, *, errors_only: bool = False) -> str:
+    """The whole recent log written to a file, for reading somewhere with room.
+
+    A Telegram message holds about four thousand characters; a document holds as
+    much as anybody needs. Returns the path, or "" when the log cannot be read.
+    """
+    text = journal(FILE_LINES, errors_only=errors_only)
+    if text == UNREADABLE:
+        return ""
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError as exc:
+        log.warning("could not write the log file: %s", exc)
+        return ""
+    return path
 
 
 # -- asking for a privileged job ------------------------------------------
