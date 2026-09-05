@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import random
@@ -26,6 +27,11 @@ MAX_FALLBACKS = 3
 # and a broken model both clear soon; an exhausted daily quota does not.
 RATE_LIMIT_COOLDOWN = 600.0
 EMPTY_COOLDOWN = 600.0
+# What a model earns for going on producing nothing. Ten minutes was one
+# strike, and a model that answers with silence all day came straight back
+# twenty times in one log. Escalating rather than a blocklist, because the
+# free pool is discovered: tomorrow the useless one is a different id.
+EMPTY_STRIKES = (EMPTY_COOLDOWN, 3600.0, 12 * 3600.0)
 QUOTA_COOLDOWN = 6 * 3600.0
 # A refused key is a configuration problem; asking again this run cannot fix it.
 AUTH_COOLDOWN = 24 * 3600.0
@@ -38,6 +44,11 @@ ACCOUNT_PAUSE = 60.0
 # list is walked on failover, so it stays short whatever the service lists;
 # everything else is still in the catalog and selectable by hand.
 ADOPT_AT_MOST = 6
+
+# How long a retiring client waits for its own requests before closing anyway.
+# Long enough for a think call with reasoning to finish; short enough that a
+# wedged request cannot hold connection pools open for the life of the process.
+DRAIN_TIMEOUT = 90.0
 
 
 @dataclass(frozen=True)
@@ -133,12 +144,21 @@ class LLMClient:
         self._free_vision: list[str] = []
         self._free_audio: list[str] = []
         self._cooldowns: dict[str, float] = {}
-        # Services that answered a photo with "image content is not supported".
-        # Remembered for the life of the process, not the database: it is a fact
-        # about the model in use, and that changes from the panel.
-        self._text_only: set[str] = set()
+        # (service, model) pairs that answered a photo with "image content is not
+        # supported". Keyed by both because it is a fact about one model, not
+        # about its service: one refusal from a free model used to mark the whole
+        # of OpenRouter blind, which took its real vision models down with it and
+        # did nothing about the model that had actually refused.
+        self._text_only: set[tuple[str, str]] = set()
         self._scores: dict[str, int] = {}
+        # How many times each model has come back unusable this run.
+        self._strikes: dict[str, int] = {}
         self._pace_lock = asyncio.Lock()
+        # Requests using these connection pools right now, so a client being
+        # retired can wait for them instead of closing under them.
+        self._inflight = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
 
     def _build_client(self, provider: providers_mod.Provider) -> httpx.AsyncClient:
         # No Authorization here: a service can hold several keys, so the header
@@ -230,6 +250,23 @@ class LLMClient:
         )
 
     async def aclose(self) -> None:
+        """Close the connection pools once nothing is still using them.
+
+        Closing while a request is in flight raises "Cannot send a request, as
+        the client has been closed" inside whichever chat was mid-reply. That
+        happened on every panel press: `Runtime.reconfigure` builds a new client
+        and retires this one, and any turn already awaiting a response still
+        holds it.
+        """
+        if self._inflight:
+            log.info("waiting for %d request(s) before closing", self._inflight)
+            try:
+                await asyncio.wait_for(self._idle.wait(), timeout=DRAIN_TIMEOUT)
+            except (TimeoutError, asyncio.TimeoutError):
+                log.warning(
+                    "%d request(s) still running after %.0fs; closing anyway",
+                    self._inflight, DRAIN_TIMEOUT,
+                )
         for client in self._clients.values():
             await client.aclose()
 
@@ -305,9 +342,10 @@ class LLMClient:
         try:
             credential = provider.pick(time.time())
             headers = self._auth(credential) if credential else {}
-            resp = await self._clients[provider.name].get(
-                provider.models_url, timeout=20.0, headers=headers
-            )
+            async with self._in_flight():
+                resp = await self._clients[provider.name].get(
+                    provider.models_url, timeout=20.0, headers=headers
+                )
             resp.raise_for_status()
             payload = resp.json()
         except Exception as exc:
@@ -518,15 +556,56 @@ class LLMClient:
     def supports_free_audio(self) -> bool:
         return bool(self._all_free(audio=True))
 
+    @contextlib.asynccontextmanager
+    async def _in_flight(self):
+        """Hold the pools open for the duration of one request."""
+        self._inflight += 1
+        self._idle.clear()
+        try:
+            yield
+        finally:
+            self._inflight -= 1
+            if self._inflight <= 0:
+                self._idle.set()
+
+    def _sighted(self, service: str, models: list[str]) -> list[str]:
+        """The ones this service has not already refused an image on."""
+        return [m for m in models if (service, m) not in self._text_only]
+
+    def blind_to(self, service: str, model: str) -> bool:
+        return (service, model) in self._text_only
+
+    def can_see(self, provider: providers_mod.Provider, *, audio: bool = False) -> bool:
+        """Whether this service still has a model that has not refused an image.
+
+        Asked before the request rather than after, and separately from
+        `_candidates`, which always falls back to the requested id and so can
+        never answer "nothing here works".
+        """
+        if provider.discovers_free_models:
+            pool = self.free_pool(vision=True, audio=audio) or self.free_pool()
+        else:
+            pool = list(provider.vision_models or provider.models)
+        return bool(self._sighted(provider.name, pool))
+
     def _rest(self, model: str, seconds: float) -> None:
         self._cooldowns[model] = time.monotonic() + seconds
 
-    def mark_unusable(self, model: str, seconds: float = EMPTY_COOLDOWN) -> None:
-        """Retire a model the caller judged unusable, e.g. it wrote nonsense."""
-        if model:
-            self._rest(model, seconds)
-            self._scores[model] = self._scores.get(model, 0) - 1
-            log.info("resting %s: unusable reply", model)
+    def mark_unusable(self, model: str, seconds: float | None = None) -> None:
+        """Retire a model the caller judged unusable, e.g. it wrote nonsense.
+
+        Each further offence costs it more: ten minutes, then an hour, then the
+        rest of the day. One fixed cooldown meant a model that was simply broken
+        today rejoined the pool every ten minutes and wasted a turn each time.
+        """
+        if not model:
+            return
+        strikes = self._strikes[model] = self._strikes.get(model, 0) + 1
+        earned = EMPTY_STRIKES[min(strikes, len(EMPTY_STRIKES)) - 1]
+        rest = earned if seconds is None else seconds
+        self._rest(model, rest)
+        self._scores[model] = self._scores.get(model, 0) - 1
+        log.info("resting %s for %.0fs: unusable reply (strike %d)", model, rest, strikes)
 
     def _next_free(
         self, *, tried: set[str], vision: bool, audio: bool, service: str = ""
@@ -549,13 +628,15 @@ class LLMClient:
     ) -> list[str]:
         """Everything worth asking this service for, best first."""
         if provider.discovers_free_models:
-            return (
-                self.free_pool(vision=vision, audio=audio, service=provider.name)
-                or self.free_pool(service=provider.name)
-                or [requested]
-            )
+            pool = self.free_pool(
+                vision=vision, audio=audio, service=provider.name
+            ) or self.free_pool(service=provider.name)
+            if vision:
+                pool = self._sighted(provider.name, pool)
+            return pool or [requested]
         options = provider.vision_models if vision else provider.models
-        return list(options or provider.models or [requested])
+        found = list(options or provider.models or [requested])
+        return self._sighted(provider.name, found) if vision else found
 
     def _pick_model(
         self,
@@ -709,10 +790,10 @@ class LLMClient:
 
         last = ChatResult(error="no provider attempted", error_kind="throttled")
         for provider in live:
-            if vision and provider.name in self._text_only:
-                # It told us so the last time. Asking again is a round trip that
-                # can only end the same way.
-                log.debug("skipping %s: it does not take images", provider.name)
+            if vision and not self.can_see(provider, audio=audio):
+                # Every model it would try has already refused an image. Asking
+                # again is a round trip that can only end the same way.
+                log.debug("skipping %s: nothing it offers takes images", provider.name)
                 continue
             last = await self._chat_with(
                 provider,
@@ -796,9 +877,10 @@ class LLMClient:
             )
             try:
                 started = time.monotonic()
-                resp = await client.post(
-                    provider.chat_url, json=payload, headers=self._auth(credential)
-                )
+                async with self._in_flight():
+                    resp = await client.post(
+                        provider.chat_url, json=payload, headers=self._auth(credential)
+                    )
 
                 if resp.status_code == 429 or resp.status_code >= 500:
                     last_error = f"HTTP {resp.status_code}"
@@ -831,11 +913,12 @@ class LLMClient:
                         continue
                     if vision and _about_images(lowered):
                         # Learned once and remembered for the life of the process,
-                        # so every later photo skips this service instead of
-                        # spending a call to be told the same thing.
-                        self._text_only.add(provider.name)
-                        log.info("%s does not take images; it will be skipped for "
-                                 "media from now on", provider.name)
+                        # so every later photo skips this model instead of spending
+                        # a call to be told the same thing. Its service keeps its
+                        # other models: the two are not the same fact.
+                        self._text_only.add((provider.name, model))
+                        log.info("%s cannot take images on %s; it will be skipped "
+                                 "for media from now on", provider.name, model)
                     log.error("%s rejected the request: %s", provider.name, body)
                     return ChatResult(error=f"HTTP 400: {body[:200]}", error_kind="rejected")
 
@@ -942,8 +1025,7 @@ class LLMClient:
                 # A model that keeps returning nothing is unusable for this turn,
                 # and waiting will not change that: move to the next one.
                 if self._s.free_mode and provider.discovers_free_models:
-                    self._rest(model, EMPTY_COOLDOWN)
-                    self._scores[model] = self._scores.get(model, 0) - 1
+                    self.mark_unusable(model)
                     alternative = self._next_free(tried=tried, vision=vision, audio=audio)
                     if alternative:
                         log.info("%s returned nothing, switching to %s", model, alternative)
