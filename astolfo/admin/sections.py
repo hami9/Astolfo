@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .. import branding, master, participation, settings_store
+from .. import branding, diagnostics, master, participation, settings_store
 from ..config import ConfigError
 from .guard import audit
 from .ui import ago, back_row, button, confirm_rows, keyboard, trim, yes_no
@@ -580,6 +581,7 @@ def data(ctx) -> View:
     return View(
         "\n".join(lines),
         keyboard(
+            [button("🩺 diagnostics", "data", "diag")],
             [button("📜 recent actions", "data", "audit")],
             [button("🧽 clean up now", "data", "prune")],
             [button("⬇️ send me a backup", "data", "backup")],
@@ -587,6 +589,25 @@ def data(ctx) -> View:
             back_row(),
         ),
     )
+
+
+def diagnostics_report(ctx) -> View:
+    """Everything a shell on the box would have been used for, as one file.
+
+    Read-only and free of anything private: model and service counters, what
+    each service last refused in its own words, and what the brain has learned.
+    No credentials, no chat text, no names - so it can be pasted anywhere.
+    """
+    path = diagnostics.write(
+        ctx.rt, os.path.join(ctx.rt.settings.data_dir, "astolfo-diagnostics.txt")
+    )
+    view = data(ctx)
+    if not path:
+        view.alert = "the report could not be written"
+        return view
+    view.document = path
+    view.alert = "sent as a file"
+    return view
 
 
 def _megabytes(size: int) -> str:

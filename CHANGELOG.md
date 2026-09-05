@@ -11,6 +11,22 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.7.1] - 2026-09-05
+
+### Added
+
+- **panel → data → diagnostics** writes everything a shell on the box would have
+  been used for into one file: the switches that change behaviour, every
+  service's state and rest, what each one last refused in its own words, today's
+  usage, what each model actually produced (calls, broken, repaired, answered),
+  every model's strike count, what the brain has learned, and the size of each
+  table. One bad table says so and the rest of the report still arrives.
+- It is written to be pasted anywhere: no credentials, no chat text, nobody's
+  name. The counters are about models and services, and the two places a message
+  could leak in - the long-term notes and the learned style - are not in it.
+  There is a test that a key set in the settings does not appear in the report,
+  and one that a chat's notes and people do not either.
+
 ## [2.7.0] - 2026-09-05
 
 ### Fixed
@@ -830,7 +846,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.1...HEAD
+[2.7.1]: https://github.com/hami9/Astolfo/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/hami9/Astolfo/compare/v2.6.9...v2.7.0
 [2.6.9]: https://github.com/hami9/Astolfo/compare/v2.6.8...v2.6.9
 [2.6.8]: https://github.com/hami9/Astolfo/compare/v2.6.7...v2.6.8
