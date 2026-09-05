@@ -20,6 +20,7 @@ from .persona import FAST, SEARCH, SERIOUS, THINK
 from .routing import Decision
 from .runtime import Runtime
 from .text import (
+    RECENT_REPLIES,
     clean_name,
     cut_impersonation,
     drop_translation,
@@ -565,8 +566,13 @@ def _fault(result: ChatResult, shaped: Shaped, echoes: str, state: ChatState) ->
     """
     if not result.ok:
         return ""  # nothing came back; that is a failed call, not a bad reply
+    said = _recent_replies(state)
     return looks_broken(
-        shaped.text, echoes=echoes, previous=_last_reply(state), asked=echoes
+        shaped.text,
+        echoes=echoes,
+        previous=said[0] if said else "",
+        recent=said[1:],
+        asked=echoes,
     ) or ""
 
 
@@ -649,11 +655,21 @@ async def _announce_failure(rt: Runtime, state: ChatState, message, result: Chat
         await send_reply(message, rt.strings("error_reply"), rt)
 
 
-def _last_reply(state: ChatState) -> str:
+def _recent_replies(state: ChatState, count: int = RECENT_REPLIES) -> list[str]:
+    """The bot's own last few replies here, newest first.
+
+    One was not enough. A tic - the same opening word, or a sentence it already
+    used - shows up across a handful of turns and is invisible in a comparison
+    against the single reply before.
+    """
+    said: list[str] = []
     for turn in reversed(state.history):
-        if turn.get("role") == "assistant":
-            return str(turn.get("content") or "")
-    return ""
+        if turn.get("role") != "assistant":
+            continue
+        said.append(str(turn.get("content") or ""))
+        if len(said) >= count:
+            break
+    return said
 
 
 def _can_read_media(rt: Runtime, bundle: media_mod.MediaBundle) -> bool:
