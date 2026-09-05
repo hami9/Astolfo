@@ -67,6 +67,33 @@ release only looks.
   treated as something you can talk to.
 - Speech, transcription and image models are recognised by name, which is all there is
   to go on in a listing that carries no modalities.
+## [2.5.2] - 2026-09-05
+
+### Fixed
+
+- **It could be walked into saying explicit things about itself, and about a real
+  member of the group.** A member asked a crude yes/no question, it answered, and the
+  next question came; twelve answers later it was describing itself and had been asked
+  about the owner by name. Every individual reply was short and mild, which is exactly
+  why nothing caught it - the thread was the problem, not any one line.
+
+  The prompt had nothing to say about this at all. It covered teasing about the
+  character's gender ("unbothered, breeze past it") and assumed the rest followed. It
+  does not: a small model reads a yes/no question as a form to fill in, and answers it.
+  Both prompts now carry a boundaries block, and the compact one - which is what the
+  free models actually run, and where this happened - carries it too. It names the
+  ladder rather than only the content: answering "no" is still answering, and the next
+  message is "then what about Y", so the rule is not to take the first step. What it
+  does instead is what the character would do - get bored, change the subject, tease
+  them for trying - because a refusal notice is the one response the persona rules out.
+
+  A prompt rule alone was not enough for the transcript bug in 2.5.1 and it is not
+  enough here, so there is a backstop in code as well: a reply the bot wrote that
+  contains explicit terms is never sent. It is replaced with one of its own bored
+  lines, in the chat's language. The check reads the bot's output only - nothing anyone
+  sends is filtered, blocked or judged, and the group's own crude jokes are untouched.
+  It holds in paid mode too, unlike the free-mode retry it sits next to, because this
+  is not a quality problem that another model would answer differently.
 
 ## [2.5.1] - 2026-09-04
 
@@ -468,7 +495,8 @@ download; the link below goes to the last commit it covers.
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
 [Unreleased]: https://github.com/hami9/Astolfo/compare/v2.6.0...HEAD
-[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.6.0
+[2.6.0]: https://github.com/hami9/Astolfo/compare/v2.5.2...v2.6.0
+[2.5.2]: https://github.com/hami9/Astolfo/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/hami9/Astolfo/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/hami9/Astolfo/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/hami9/Astolfo/compare/v2.3.3...v2.4.0
