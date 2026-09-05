@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 
@@ -48,7 +49,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Checked again here on purpose: a panel message can be forwarded, and its
     # buttons keep working for whoever presses them unless we say otherwise.
     if not allowed(update, context):
-        await query.answer("not for you", show_alert=False)
+        with contextlib.suppress(Exception):
+            await query.answer("not for you", show_alert=False)
         return
 
     rt = runtime.get(context)
@@ -60,11 +62,20 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("panel action failed: %s", query.data)
         view = View(f"that did not work: {exc}", sections.home(ctx).markup)
 
-    await query.answer(view.alert[:200] if view.alert else None, show_alert=bool(view.alert))
+    # Answering and editing are both best effort. A callback query expires while
+    # a slow action runs, and answering a dead one raises - which used to kill the
+    # handler here, on the line before the settings reload, so the change the
+    # person had just made was silently dropped as well. A stale spinner is not a
+    # reason to lose the action.
+    with contextlib.suppress(Exception):
+        await query.answer(
+            view.alert[:200] if view.alert else None, show_alert=bool(view.alert)
+        )
     if view.extras.get("reload"):
         await rt.reconfigure(settings_store.reload(rt.db))
     context.user_data[PROMPT_KEY] = view.prompt if view.prompt else None
-    await _edit(view, query, context)
+    with contextlib.suppress(Exception):
+        await _edit(view, query, context)
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

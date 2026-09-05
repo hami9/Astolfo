@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from astolfo import runtime as runtime_mod
@@ -42,6 +43,10 @@ async def test_reconfiguring_reaches_every_part_of_the_bot(settings, monkeypatch
     assert rt.budget._s.free_mode is True
     assert rt.strings.locale == "fa"
     assert rt.router._llm is rt.llm, "the router must not keep the retired client"
+
+    # The old client is retired in the background now, so that a reply already in
+    # flight is not cut off by somebody pressing a panel button.
+    await asyncio.sleep(0)
     assert first.closed, "the old client's connections are released"
     assert rt.llm.catalog_loads == 1, "the new key needs its own model list"
 
