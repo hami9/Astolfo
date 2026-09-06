@@ -42,6 +42,11 @@ Nothing yet.
   until the token ceiling cut it off. That is the commonest way a small model
   fails and the shape people call nonsense, and it is now caught before it is
   sent.
+- **The same canned line came back a minute later.** A reply was compared with
+  earlier replies for an exact match, so the identical sentence with only its
+  first word swapped - "هه، ببخشید..." then "اوه، ببخشید..." - counted as a new
+  one and the group got it twice inside a minute. It now allows for a word
+  changed.
 - **The backup button never made a backup.** The database is WAL, so a commit
   lands in `astolfo.db-wal` and reaches the main file only at a checkpoint - and
   the button handed over the main file. Every backup taken from the panel was

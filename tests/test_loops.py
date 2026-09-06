@@ -62,3 +62,29 @@ def test_a_long_varied_reply_is_not(persian_essay="""
     فارم کنم. تو رزینت رو کجا خرج می‌کنی این روزا؟
 """):
     assert not loops_internally(persian_essay)
+
+
+# -- the same canned line, twice, a minute apart --------------------------
+CANNED = (
+    "هه، ببخشید، من فقط می‌خواستم کمی شوخی کنم. البته، من اصلاً نمی‌دانم assa چیه، "
+    "ولی فکر می‌کنم تو داری با من شوخی می‌کنی، Hami!"
+)
+AGAIN = "او" + CANNED[2:]  # the same line with its first word swapped
+
+
+def test_the_same_canned_line_with_one_word_changed_is_still_a_repeat():
+    from astolfo.text import repeats_recent
+
+    assert repeats_recent(AGAIN, [CANNED])
+    assert looks_broken(AGAIN, previous=CANNED, recent=[CANNED]) is not None
+
+
+def test_two_genuinely_different_replies_are_not_a_repeat():
+    from astolfo.text import repeats_recent
+
+    for other in (
+        "نمی‌دونم والا، تو بگو",
+        "هه، باشه قبول، تو بردی این دفعه",
+        "yahoo~ nothing much, just chilling",
+    ):
+        assert not repeats_recent(other, [CANNED]), other

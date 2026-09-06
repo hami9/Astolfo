@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 
 from telegram import Message, User
@@ -409,6 +410,22 @@ def opens_like_recent(reply: str, recent: Sequence[str]) -> bool:
     return same >= SAME_FIRST_WORD
 
 
+# How much of a reply has to match one it already sent for it to be the same
+# reply. Not exact: the same canned line came back with only its first word
+# changed - "هه، ببخشید..." then "اوه، ببخشید..." - and an exact comparison called
+# them different, so the group got it twice within the minute.
+SAME_REPLY_SHARE = 0.85
+
+
+def _same_reply(reply: str, said: str) -> bool:
+    """Whether two replies are the same one, allowing for a word swapped."""
+    here, there = _words(reply), _words(said)
+    if not here or not there:
+        return False
+    shared = sum((Counter(here) & Counter(there)).values())
+    return shared / max(len(here), len(there)) >= SAME_REPLY_SHARE
+
+
 def repeats_recent(reply: str, recent: Sequence[str]) -> bool:
     """Whether this reply is one the bot already sent a few turns ago.
 
@@ -416,8 +433,9 @@ def repeats_recent(reply: str, recent: Sequence[str]) -> bool:
     twenty-first and twenty-third reply of one evening, and a check that holds
     a single previous reply cannot see that.
     """
-    folded = _folded(reply)
-    return bool(folded) and any(folded == _folded(said) for said in recent[:RECENT_REPLIES])
+    if not _folded(reply):
+        return False
+    return any(_same_reply(reply, said) for said in recent[:RECENT_REPLIES])
 
 
 def _folded(text: str) -> str:
