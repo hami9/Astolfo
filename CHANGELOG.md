@@ -28,6 +28,11 @@ Nothing yet.
   minutes while its service rested a day, from the same refusal. Both now make
   the same distinction: a 401 is about the key and lasts, a 403 is about this
   request and usually does not.
+- **The key count hid a key from `.env`.** The column added in v2.8.2 was built
+  from the database, and a key set in the environment has no row there - so a
+  service holding two keys reported `1/1`, and the one it hid was the one that
+  could be serving the traffic. That is the exact question the column was added
+  to answer. It is now counted off the live services.
 - **The diagnostics stopped claiming a writer that does not exist.** v2.8.3
   retired the switch but the report still read `brain_writes` back, so a value
   stored before then kept it printing "writing on" for the one step of the brain

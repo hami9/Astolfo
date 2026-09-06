@@ -12,6 +12,7 @@ os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 
 from astolfo.config import Settings  # noqa: E402
 from astolfo.llm import ChatResult, Usage  # noqa: E402
+from astolfo.providers import Credential  # noqa: E402
 from astolfo.runtime import Runtime  # noqa: E402
 
 
@@ -30,7 +31,15 @@ class FakeLLM:
         self.calls: list[dict] = []
         self.json_calls: list[dict] = []
         self.json_result: dict | None = None
-        self.providers = [SimpleNamespace(name="openrouter")]
+        # `credentials` is not decoration: the diagnostics counts keys off the
+        # live providers, because a key from .env has no database row and
+        # counting only rows hid the key that was serving the traffic.
+        self.providers = [
+            SimpleNamespace(
+                name="openrouter",
+                credentials=[Credential(value="test-key")],
+            )
+        ]
         self.reachable = True
         self.rested: list[str] = []
 
