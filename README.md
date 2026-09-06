@@ -204,6 +204,7 @@ Unknown model ids are detected at startup and replaced from `FALLBACK_MODELS`.
 | [docs/ADMIN.md](docs/ADMIN.md) | the owner's panel, services, modes, limits, updating the server |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | VPS with systemd, Docker, Replit |
 | [docs/COST.md](docs/COST.md) | what each turn costs and every lever that lowers it |
+| [docs/BRAIN-ROLLOUT.md](docs/BRAIN-ROLLOUT.md) | turning the prompt-weight bandit on, and every button that stops it |
 | [SECURITY.md](SECURITY.md) | what this protects, what it does not, and how to report a problem |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | how to set up, what the tests expect, house style |
 | [CHANGELOG.md](CHANGELOG.md) | what changed and when |
@@ -246,6 +247,10 @@ attached, and pushes `ghcr.io/hami9/astolfo:X.Y.Z`. See
 main.py                    entry point
 astolfo/config.py          environment-driven settings
 astolfo/persona.py         layered prompt, few-shot examples, locale detection
+astolfo/recipes.py         which layers a prompt is built from, and by whom
+astolfo/guardrail.py       the bounds, validator, probation and breakers
+astolfo/brain.py           which recipe this model answers to, learned
+astolfo/admin/brain.py     what it is doing, and the buttons that stop it
 astolfo/routing.py         fast / think / search / serious dispatcher
 astolfo/interest.py        whether an unprompted message is worth answering
 astolfo/attention.py       which chat has its attention right now

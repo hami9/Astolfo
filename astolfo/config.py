@@ -150,6 +150,12 @@ class Settings:
     # How heavy a persona prompt to send: auto | tight | compact | full. `auto`
     # is what it has always done - compact on free models, full otherwise.
     prompt_tier: str = _env("PROMPT_TIER", default="auto")
+    # Let the bot learn which prompt each model family answers to. Off: it uses the
+    # one prompt per mode it has always used, byte for byte.
+    brain: bool = _env("BRAIN", default=False)
+    # A second switch, also off, for the part that writes a layer rather than
+    # choosing between written ones. Selection gets trusted first.
+    brain_writes: bool = _env("BRAIN_WRITES", default=False)
     # Read who runs each group, so it can be useful to them without acting like staff.
     read_admins: bool = _env("READ_ADMINS", default=True)
     max_history: int = _env("MAX_HISTORY", default=80)

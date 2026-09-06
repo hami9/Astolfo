@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 
 from .attention import Attention
+from .brain import Brain
 from .budget import BudgetTracker
 from .cache import TTLCache
 from .config import Settings
@@ -44,6 +46,9 @@ class Runtime:
     blocked: set[int] = field(default_factory=set)
     user_limits: dict[int, int] = field(default_factory=dict)
     dormant: set[int] = field(default_factory=set)
+    # Which prompt each model family answers to. Off unless BRAIN is on, and with
+    # it off `choose` returns exactly what the bot has always returned.
+    brain: Brain = field(default_factory=Brain)
     # Retiring clients still draining their own requests. Held so the tasks
     # are not garbage collected mid-close.
     _retiring: set = field(default_factory=set)
@@ -54,6 +59,30 @@ class Runtime:
         self.blocked = self.db.blocked_ids()
         self.user_limits = self.db.user_limits()
         self.dormant = self.db.dormant_ids()
+        self.brain.on = bool(self.settings.brain)
+        self._restore_brain()
+
+    def _restore_brain(self) -> None:
+        """Carry the counters into this run. A bad blob costs the learning only."""
+        try:
+            stored = json.loads(self.db.note("brain") or "[]")
+        except ValueError:
+            log.warning("could not read the brain's counters, starting them over")
+            return
+        if isinstance(stored, list):
+            self.brain.restore(stored)
+
+    def save_brain(self) -> None:
+        """Counters out, on the same autosave everything else rides. Never per turn:
+        160 rows written on every message would be pure SQLite churn."""
+        if not self.brain.dirty:
+            return
+        try:
+            self.db.set_note("brain", json.dumps(self.brain.rows(), ensure_ascii=False))
+        except Exception as exc:
+            log.warning("could not store the brain's counters: %s", exc)
+            return
+        self.brain.dirty = False
 
     def limit_for(self, user_id: int) -> int:
         """This person's own daily cap, or 0 when they follow the global one."""
@@ -191,6 +220,7 @@ class Runtime:
     def save(self, force: bool = False) -> None:
         self.store.save(force=force)
         self.budget.save(force=force)
+        self.save_brain()
 
     async def aclose(self) -> None:
         self.save(force=True)

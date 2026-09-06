@@ -12,6 +12,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from .. import runtime, server_ops, settings_store
 from ..config import ConfigError
+from . import brain as brain_section
 from . import models as models_section
 from . import sections, server
 from . import services as services_section
@@ -123,6 +124,9 @@ async def _route(ctx: Ctx, parts: list[str]) -> View:
 
     if head == "mdl":
         return await _models(ctx, rest)
+
+    if head == "brain":
+        return brain_section.route(ctx, rest)
 
     if head == "cfg":
         action = rest[0] if rest else ""

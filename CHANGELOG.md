@@ -11,6 +11,59 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.0] - 2026-09-06
+
+### Added
+
+- **It learns which prompt weight each model can actually hold.** The prompt did
+  not know which model it was talking to: one switch chose between a 4,600-token
+  layered prompt and a 1,080-token compact one, and every model on either side of
+  it got byte-identical text. Prompt sensitivity is relative to the model, and the
+  free pool changes what is running from week to week, so the choice is learned
+  instead of configured - Thompson sampling over recipes, keyed by model family so
+  that a rename inherits what the last name taught. Off by default: with `BRAIN=0`
+  the rendered prompt is byte for byte what it has always been, and a test asserts
+  it in both modes.
+- **A mood that the bot picks rather than a setting.** One extra field in the
+  summary call that already runs, decaying back to bright over hours and rendering
+  as a single line. Its floor is the locked layers - an annoyed Astolfo is short
+  and dry, never cruel - and serious mode still overrides it when somebody is
+  actually hurting.
+- **panel → 🧩 brain**: what each family is running, on how much evidence, which
+  families the breaker has sent home, and four buttons - selecting on/off, writing
+  on/off, back to factory, forget everything. Nothing it does is invisible and
+  nothing it does is irreversible.
+- **[docs/BRAIN-ROLLOUT.md](docs/BRAIN-ROLLOUT.md)**, the handover for whoever
+  turns it on: what it is, what "working" looks like, and a button for each way it
+  can go wrong.
+
+### Changed
+
+- **The persona is a registry, not a wall of text.** `LOCKED` layers - identity,
+  truth, the hard bans, the media rules, the transcript rules - are Python
+  constants emitted unconditionally on every render, and a recipe may only choose
+  among the mutable ones. If the recipe store were emptied the prompt would still
+  carry every safety rule.
+
+### Fixed
+
+- **Free mode no longer explores the layered prompt.** A free model is a small
+  model, and spending one turn in ten on 4,600 tokens would have reproduced the
+  exact failure the brain exists to fix. Free mode moves between `tight` and
+  `compact` only; paid keeps the whole ladder.
+- **The control arm stopped starving.** Once the bandit learns the factory recipe
+  is poor it stops choosing it, which is correct - but the factory recipe is what
+  the breaker measures everything against, so the baseline stopped filling and the
+  breaker could no longer judge anything. Half the exploration floor is now
+  reserved for it: measured over twelve seeds, 26-39 baseline samples in 400 turns
+  with the reserve against 8-23 without.
+- **A family name is no longer whatever a model id happened to be.** Ids are
+  discovered from thirteen services, so they are not trusted to be short or to be
+  words: `../../etc/passwd` became a family called `../etc/passwd`, and a
+  400-character id stayed 400 characters. Tidied and capped at 40, without merging
+  models that are genuinely different - `command-r` is not `command-r7b`, and
+  `gemini-flash` is not `gemini-pro`.
+
 ## [2.7.4] - 2026-09-06
 
 ### Fixed
@@ -901,7 +954,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.4...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/hami9/Astolfo/compare/v2.7.4...v2.8.0
 [2.7.4]: https://github.com/hami9/Astolfo/compare/v2.7.3...v2.7.4
 [2.7.3]: https://github.com/hami9/Astolfo/compare/v2.7.2...v2.7.3
 [2.7.2]: https://github.com/hami9/Astolfo/compare/v2.7.1...v2.7.2

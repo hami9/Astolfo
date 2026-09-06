@@ -85,9 +85,16 @@ def test_it_reports_the_switches_that_change_behaviour(loaded) -> None:
     assert "free mode       on" in text
 
 
-def test_a_build_without_a_brain_says_so_rather_than_failing(loaded) -> None:
-    """The same file is written on both branches; one of them has no bandit."""
-    assert "no brain" in diagnostics.report(loaded)
+def test_the_brain_section_reads_on_a_build_with_one_and_on_a_build_without(loaded) -> None:
+    """The same module is written on both branches. Where there is a bandit it
+    reports what it has learned; where there is not it says so rather than
+    raising, because a report that fails whole is worse than one with a gap."""
+    section = diagnostics.report(loaded).split("brain\n" + "=" * 62)[-1]
+
+    if getattr(loaded, "brain", None) is None:
+        assert "no brain" in section
+    else:
+        assert "selecting" in section, section[:200]
 
 
 def test_one_unreadable_table_does_not_cost_the_report(loaded) -> None:

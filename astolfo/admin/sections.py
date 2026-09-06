@@ -82,7 +82,7 @@ def home(ctx) -> View:
             [button("🔌 services", "svc"), button("🧠 models", "mdl")],
             [button("⚙️ settings", "cfg"), button("💬 groups", "chats")],
             [button("👤 people", "ppl"), button("🖥 server", "srv")],
-            [button("🗄 data", "data")],
+            [button("🗄 data", "data"), button("🧩 brain", "brain")],
         ),
     )
 
