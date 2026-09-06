@@ -28,6 +28,14 @@ Nothing yet.
   minutes while its service rested a day, from the same refusal. Both now make
   the same distinction: a 401 is about the key and lasts, a 403 is about this
   request and usually does not.
+- **A blocked request was reported as a refused key.** The panel's key test said
+  `openrouter: the key was refused` while the same screen's refusal line said
+  *"HTTP 403 the request never reached the service"* - the fault reader had it
+  right as an edge block, and `_chat_with` labelled every 401 **and** 403 as an
+  auth failure, so the test translated it into a verdict on the key. A request
+  stopped before it reaches the service says nothing about the key, and this one
+  sent its owner to replace a key that was working. Only a 401 is a claim about
+  the key now; a blocked 403 says so, and still moves to the next service.
 - **The key count hid a key from `.env`.** The column added in v2.8.2 was built
   from the database, and a key set in the environment has no row there - so a
   service holding two keys reported `1/1`, and the one it hid was the one that

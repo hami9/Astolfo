@@ -63,3 +63,35 @@ async def test_a_401_still_rests_it_for_the_day(settings, monkeypatch):
     assert _rest(client) > FORBIDDEN_COOLDOWN * 2
     assert _rest(client) <= AUTH_COOLDOWN + 5
     await client.aclose()
+
+
+async def test_a_403_is_not_reported_as_a_refused_key(settings, monkeypatch):
+    """The panel said "the key was refused" for a key that was working.
+
+    `faults` reads this 403 as blocked - "the request never reached the service"
+    - and the panel's own refusal line said exactly that, while its key test said
+    the opposite. A request stopped at the edge says nothing about the key, and
+    the difference decides whether somebody goes and replaces a good one.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GOOGLE_API_KEY", "k")
+    client = _client(settings, 403, "the request needs to be authenticated")
+
+    ok, said = await client.probe("openrouter")
+
+    assert not ok
+    assert "refused" not in said, f"a blocked request was called a bad key: {said!r}"
+    assert "network" in said or "blocked" in said
+    await client.aclose()
+
+
+async def test_a_401_is_still_reported_as_a_refused_key(settings, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GOOGLE_API_KEY", "k")
+    client = _client(settings, 401, "invalid api key")
+
+    ok, said = await client.probe("openrouter")
+
+    assert not ok
+    assert said == "the key was refused"
+    await client.aclose()
