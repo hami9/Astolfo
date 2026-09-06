@@ -31,10 +31,15 @@ merge.
 
 ## The rollout
 
+0. **Take a backup first**, with **panel → data → send me a backup**. Not a
+   `cp`: the database is WAL, so copying the file by hand on a running bot
+   leaves behind everything since the last checkpoint.
 1. **Update and confirm nothing moved.** Run for an hour on `BRAIN=0`. Take
-   **panel → data → 🩺 diagnostics**. The brain section should read
-   `selecting off` with arms already accumulating — it learns with the switch
-   off, which is why turning it on is not starting from nothing.
+   **panel → data → 🩺 diagnostics** at the *end* of that hour. The brain section
+   should read `selecting off` with arms accumulating — it learns with the switch
+   off, which is why turning it on is not starting from nothing. Nothing is
+   stored until traffic has flowed, so an empty brain section at the start of the
+   hour is expected rather than a fault.
 2. **Turn it on** in **panel → 🧩 brain → selecting on**. Stored, so it survives
    a restart.
 3. **Watch for a day.** Two screens tell you everything: **panel → 🧩 brain**
@@ -49,6 +54,13 @@ merge.
   factory recipe, because that is what the breaker measures everything against.
 - `command-r7b` picking `tight` over `compact` would be the hypothesis
   confirmed. `tight` losing would be it refuted, which is just as useful.
+
+**Read it within one model, never across two.** The **prompt weight** section of
+the diagnostics does this for you: it folds each model's rows together across
+days and modes, and refuses a verdict until both weights have cleared the
+thirty-sample floor. `gemini-flash-lite` on `tight` against `command-r` on
+`compact` measures the models, not the weights — that comparison is the one
+mistake this section exists to stop.
 
 ## What "going wrong" looks like, and the button for it
 

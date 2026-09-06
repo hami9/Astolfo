@@ -161,9 +161,16 @@ panel; the bot works without them and simply hides those buttons.
 - **Health check.** `GET /` on `PORT` returns 200 while the process is alive.
 - **Backups.** `data/astolfo.db` is the whole state — chats, people, settings, encrypted
   keys and the audit trail — and `data/secret.key` is what decrypts the keys in it.
-  `data/usage.json` holds the cost history. **panel → data** downloads the database
-  without an SSH session; keep the copy private, and keep `secret.key` out of it if you
-  would rather the copy be useless on its own.
+  `data/usage.json` holds the cost history. **panel → data → send me a backup** takes a
+  consistent snapshot and sends it, which is the way to do this on a running bot; keep the
+  copy private, and keep `secret.key` out of it if you would rather the copy be useless on
+  its own.
+
+  **Do not `cp` the database while the bot is running.** It is in WAL mode, so a commit
+  lands in `astolfo.db-wal` and reaches `astolfo.db` only at a checkpoint: a plain copy is
+  silently missing everything since the last one, and on a fresh database it has no tables
+  at all. Either use the panel button, or stop the service and take all three files
+  (`astolfo.db`, `-wal`, `-shm`), or `sqlite3 data/astolfo.db ".backup out.db"`.
 - **Rotating a provider key.** Revoke it at the provider, then set the new one from
   **panel → services**. It takes effect on the next message: no file to edit, no restart,
   and the running conversations are not disturbed.

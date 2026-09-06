@@ -159,3 +159,60 @@ def test_the_button_is_on_the_data_screen(loaded) -> None:
     ]
 
     assert any(str(t).endswith(":data:diag") for t in targets), targets
+
+
+def _outcome(db, *, model, variant, day, calls, broken, mode="fast"):
+    db.execute(
+        "INSERT INTO outcomes (day, service, model, variant, mode, calls, answered,"
+        " repaired, broken) VALUES (?, 'openrouter', ?, ?, ?, ?, ?, 0, ?)",
+        (day, model, variant, mode, calls, calls - broken, broken),
+    )
+
+
+def test_prompt_weight_folds_a_model_together_across_days_and_modes(rt):
+    _outcome(rt.db, model="command-r", variant="compact", day="2026-09-05", calls=60, broken=18)
+    _outcome(rt.db, model="command-r", variant="compact", day="2026-09-06", calls=40, broken=12)
+    _outcome(
+        rt.db, model="command-r", variant="compact", day="2026-09-06",
+        calls=10, broken=3, mode="think",
+    )
+
+    rows = rt.db.outcomes_by_variant()
+
+    assert len(rows) == 1, "one model on one weight is one row, whatever the day or mode"
+    assert rows[0]["calls"] == 110 and rows[0]["broken"] == 33
+
+
+def test_prompt_weight_refuses_a_verdict_below_the_sample_floor(rt):
+    from astolfo.brain import ENOUGH
+
+    _outcome(rt.db, model="command-r", variant="compact", day="2026-09-05", calls=108, broken=33)
+    _outcome(rt.db, model="command-r", variant="tight", day="2026-09-06", calls=7, broken=3)
+
+    text = diagnostics.report(rt)
+
+    assert "not a comparison yet" in text
+    assert f"tight has 7 of {ENOUGH}" in text
+    assert "beats" not in text.split("prompt weight")[1]
+
+
+def test_prompt_weight_names_the_winner_once_both_arms_have_evidence(rt):
+    _outcome(rt.db, model="command-r", variant="compact", day="2026-09-05", calls=100, broken=30)
+    _outcome(rt.db, model="command-r", variant="tight", day="2026-09-06", calls=100, broken=10)
+
+    text = diagnostics.report(rt)
+
+    assert "tight beats compact by 20 points" in text
+
+
+def test_prompt_weight_never_compares_two_different_models(rt):
+    """The trap: gemini on tight against command-r on compact measures the models."""
+    _outcome(rt.db, model="command-r", variant="compact", day="2026-09-05", calls=100, broken=30)
+    _outcome(
+        rt.db, model="gemini-flash-lite", variant="tight", day="2026-09-06",
+        calls=100, broken=3,
+    )
+
+    text = diagnostics.report(rt)
+
+    assert "beats" not in text, "each model had only one weight, so there is nothing to compare"

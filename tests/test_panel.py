@@ -251,7 +251,10 @@ async def test_people_can_be_found_by_name(owned):
 async def test_the_database_can_be_downloaded(owned):
     bot = FakeBot()
     await _press(owned, "ap:data:backup", bot=bot)
-    assert bot.documents == ["astolfo.db"]
+    # A snapshot, named for the day it was taken - never the live file, which in
+    # WAL mode is missing everything since the last checkpoint.
+    assert bot.documents and bot.documents[0].startswith("astolfo-backup-")
+    assert bot.documents[0].endswith(".db")
 
 
 async def test_every_change_lands_in_the_audit_trail(owned):

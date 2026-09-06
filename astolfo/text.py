@@ -496,6 +496,55 @@ def echoes_back(reply: str, asked: str, heard: Sequence[str] = ()) -> bool:
     return bool(_ASKS.search(reply.strip())) and borrowed == len(here) and bool(there)
 
 
+# A clause the reply says over and over inside itself. Three is the bar because
+# two is a rhetorical device - "خیلی خفن! خیلی خفن!" is emphasis - and three is a
+# model that has stopped being able to stop.
+LOOP_REPEATS = 3
+# Below this a clause is too short to mean anything on its own: "آره؟" three
+# times is a tic, not the failure this is looking for.
+LOOP_MIN_WORDS = 3
+# How much of a long reply may be the same few words before it is not a reply.
+LOOP_VARIETY = 0.35
+LOOP_MIN_WORDS_TOTAL = 25
+
+_CLAUSE = re.compile(r"[.!?؟…\n]+|، ")
+
+
+def loops_internally(reply: str) -> bool:
+    """Whether a reply has got stuck repeating itself inside one message.
+
+    Every other repetition check compares this reply against earlier ones, so a
+    model that loops within a single message passed all of them and reached the
+    chat:
+
+        ولی ددی کاپیتانو خیلی خفن بود، آره؟ خیلی خفن! ولی ماوویکا مید هم خیلی
+        قوی بود، آره؟ خیلی قوی! ولی ددی کاپیتانو خیلی خفن بود، آره؟ ...
+
+    until the token ceiling cut it off. That is the shape people call nonsense,
+    and it is one of the commonest ways a small model fails.
+    """
+    body = (reply or "").strip()
+    if not body:
+        return False
+
+    seen: dict[str, int] = {}
+    for piece in _CLAUSE.split(body):
+        words = _words(piece)
+        if len(words) < LOOP_MIN_WORDS:
+            continue
+        key = " ".join(words)
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] >= LOOP_REPEATS:
+            return True
+
+    # A loop with no punctuation to split on still says the same few words over
+    # and over, which shows up as a reply with almost no vocabulary in it.
+    words = _words(body)
+    if len(words) >= LOOP_MIN_WORDS_TOTAL:
+        return len(set(words)) / len(words) < LOOP_VARIETY
+    return False
+
+
 def reuses_opening(reply: str, previous: str) -> bool:
     """Whether this reply opens exactly as the last one did.
 
@@ -542,6 +591,9 @@ def looks_broken(
         # small model reads that and answers a Persian question in English
         # anyway, then keeps doing it after being asked twice to stop.
         return "answered a Persian message in English"
+
+    if loops_internally(body):
+        return "got stuck repeating itself"
 
     if (echoes or heard) and echoes_back(body, echoes, heard):
         return "echoed the message"
