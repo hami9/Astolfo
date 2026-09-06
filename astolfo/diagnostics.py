@@ -81,23 +81,33 @@ def _services(rt) -> list[str]:
     """
     now = time.time()
     working: dict[str, float] = {}
+    # keys per service as "usable/total", so "did it take my second key" is
+    # answerable from this file rather than by opening one screen per service.
+    keys: dict[str, list[int]] = {}
     for row in rt.db.credentials():
+        service = row["service"]
+        tally = keys.setdefault(service, [0, 0])
+        tally[1] += 1
         try:
             when = float(row["last_ok"] or 0.0)
+            if row["enabled"] and float(row["rested_until"] or 0.0) <= now:
+                tally[0] += 1
         except (IndexError, KeyError, TypeError, ValueError):
             break  # an older database without the column; the rest still reads
-        working[row["service"]] = max(working.get(row["service"], 0.0), when)
+        working[service] = max(working.get(service, 0.0), when)
     rows = []
     for row in rt.db.services():
         resting = float(row["rested_until"] or 0)
+        tally = keys.get(row["name"], [0, 0])
         rows.append({
             "service": row["name"],
             "on": "yes" if row["enabled"] else "no",
+            "keys": f"{tally[0]}/{tally[1]}",
             "resting": f"{(resting - now) / 60:.0f}m" if resting > now else "-",
             "last ok": _ago(working.get(row["name"])),
-            "why it is out": str(row["last_error"] or "")[:78],
+            "why it is out": str(row["last_error"] or "")[:70],
         })
-    return _table(rows, ("service", "on", "resting", "last ok", "why it is out"))
+    return _table(rows, ("service", "on", "keys", "resting", "last ok", "why it is out"))
 
 
 def _faults(rt) -> list[str]:

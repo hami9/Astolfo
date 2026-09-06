@@ -145,8 +145,11 @@ async def test_when_every_model_is_disowned_it_says_so_rather_than_asking(settin
 async def test_one_account_refusing_everything_rests_the_service(settings):
     """Sixteen models from six vendors do not stop existing in two minutes.
 
-    Past the threshold the fact is about the account, so the service rests and
-    the models are given back rather than being written off one at a time.
+    Past the threshold the fact is about the account, so the service rests. What
+    each model taught is kept: handing the whole pool back a minute later just
+    had it refused again, which on the live box was ninety-nine disowned
+    warnings against thirty-three resets. One model is released as a probe, so
+    the way back costs one call rather than the pool.
     """
     client = _client(settings)
     pool = await _load(client)
@@ -160,5 +163,8 @@ async def test_one_account_refusing_everything_rests_the_service(settings):
 
     provider = client.providers[0]
     assert provider.paused_until > 0, "the service should be resting, not the models"
-    assert client._unknown == set(), "the models were given back"
+
+    still_out = {m for service, m in client._unknown if service == "openrouter"}
+    assert still_out, "resting the service must not erase what each model taught"
+    assert len(still_out) == ACCOUNT_DISOWNS - 1, "exactly one model is released to probe with"
     await client.aclose()

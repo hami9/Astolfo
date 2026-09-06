@@ -32,6 +32,7 @@ class FakeLLM:
         self.json_result: dict | None = None
         self.providers = [SimpleNamespace(name="openrouter")]
         self.reachable = True
+        self.rested: list[str] = []
 
     def resolve(self, model: str, *, vision: bool = False, audio: bool = False) -> str:
         return model
@@ -43,6 +44,12 @@ class FakeLLM:
         # The real client answers this from the live pool. A fake with an endless
         # supply of models is never down to its last one.
         return False
+
+    def mark_unusable(self, model: str, seconds: float | None = None) -> None:
+        # The retry path rests a model that answered badly. Recorded rather than
+        # ignored: a double that quietly swallows a call the real client depends
+        # on is how a broken path looks tested.
+        self.rested.append(model)
 
     def usable_now(self) -> bool:
         # A failing model is not the same as an unreachable service; a test that

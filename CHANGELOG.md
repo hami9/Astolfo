@@ -11,6 +11,54 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.2] - 2026-09-06
+
+### Fixed
+
+- **It was sending Google's model ids to OpenRouter.** OpenRouter takes a list of
+  alternatives alongside the model, to try when the first is rate limited. That
+  list was built from the global free pool - and since every service's catalog is
+  read, the global pool holds Google's, Cohere's and Mistral's ids. OpenRouter
+  rejected the whole request naming the foreign id:
+
+  > openrouter does not serve minimax/minimax-m3:free
+  > error.message = models/gemini-2.5-flash is not a valid model ID
+
+  The code read "is not a valid model ID", blamed the model in the `model` field,
+  and retired it. Every model in the pool was condemned in turn for a defect in a
+  field none of them appeared in: **99 disowned warnings, 34 turns with no
+  completion, and 3 answered turns in three hours.** The alternatives are now
+  scoped to the service they are sent to, and every id in the chain is checked
+  against what that service actually listed. The v2.6.9 comment warning that "an
+  unfiltered pool would offer OpenRouter one of Google's ids" was acted on in one
+  place and missed here; nothing tested it, and now something does.
+- **A refusal that names another model no longer condemns the one in hand.** A
+  400 says *a* model was rejected, not *which*. When the body names an id that is
+  not the one asked for, the model is left in the pool and the log says whose
+  name was actually in the refusal.
+- **Resting a service stopped erasing what its models taught.** The threshold
+  added in v2.8.1 cleared every disowned entry and rested the service for a
+  minute, so the whole pool came back to be refused again - 99 disowns against 33
+  resets, exactly three per cycle, for three hours. The evidence is kept and one
+  model is released as a probe, so the way back costs one call rather than the
+  pool.
+- **One service no longer waits behind another at the pacer.** The clock is per
+  service; the lock was shared, and held across the sleep, so a turn bound for an
+  idle service paid a busy one's whole gap. Measured at a full 7.5-second gap owed
+  by a service that owed nothing. Tested in v2.8.1 and wrongly called disproved:
+  that test had both services due a full gap, which is the one arrangement where
+  the second one's wait has already elapsed, and so the one arrangement that hides
+  it.
+- **The route log names the reply that was actually sent.** It was written before
+  the quality check, so when a reply was rejected and a second model produced the
+  one that shipped, the log still named the first.
+
+### Added
+
+- **The diagnostics services table shows keys per service**, as usable/total, so
+  "did it take my second key" is answerable from the report rather than by opening
+  one screen per service.
+
 ## [2.8.1] - 2026-09-06
 
 ### Fixed
@@ -1005,7 +1053,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.1...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/hami9/Astolfo/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/hami9/Astolfo/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/hami9/Astolfo/compare/v2.7.4...v2.8.0
 [2.7.4]: https://github.com/hami9/Astolfo/compare/v2.7.3...v2.7.4
