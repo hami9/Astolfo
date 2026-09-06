@@ -159,12 +159,17 @@ def test_forgetting_everything_is_asked_twice(panel_ctx) -> None:
     assert not brain.breaker.families
 
 
-def test_writing_cannot_be_switched_on_before_selecting(panel_ctx) -> None:
-    """Two switches, in order: selection gets trusted before anything writes."""
+def test_writing_says_it_is_not_built_rather_than_storing_a_setting(panel_ctx) -> None:
+    """Nothing reads `brain_writes`: the writer is the one step never built.
+
+    Storing it made every screen report "writing on" for a capability the bot
+    does not have - a production diagnostics read exactly that.
+    """
     view = brain_screen.switch(panel_ctx, "brain_writes", True)
 
-    assert "selecting on first" in view.alert
+    assert "not built yet" in view.alert
     assert not panel_ctx.rt.settings.brain_writes
+    assert "brain_writes" not in panel_ctx.rt.db.overrides()
 
 
 def test_the_switch_is_stored_so_it_survives_a_restart(panel_ctx) -> None:

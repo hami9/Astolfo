@@ -11,6 +11,37 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.3] - 2026-09-06
+
+### Fixed
+
+- **Turning the brain on did nothing until a restart.** One production report
+  said both of these at once:
+
+  > settings:  brain           on (writing on)
+  > brain:     selecting  off
+
+  `brain.on` was assigned in exactly one place - `__post_init__` - and
+  `reconfigure` rebuilt the client, the store, the router, the budget, the
+  strings, the cache and the attention window without touching it. So pressing
+  the panel switch stored the setting, and every screen read the setting back and
+  reported "on", while the one place that decides read `brain.on`, found it false
+  and went on returning the factory recipe. A reload now carries the switch; the
+  counters are kept, because it is a switch and not a reset.
+- **"Cannot send a request, as the client has been closed" came back**, thirty-
+  three seconds after a settings reload. The drain added in v2.5.3 works for the
+  case it was written for, but it was held around the request rather than the
+  turn: between two attempts of one turn the in-flight count was zero, so a
+  retiring client stopped waiting, closed its pools, and the retry posted into
+  them. The window is a turn that already failed once and is backing off - which
+  is the turn that most needs the client to outlive the press. It is now held for
+  the whole turn, across the backoff, the failover and the second key.
+- **The writing switch offered something that does not exist.** Nothing reads
+  `brain_writes`: the reflective writer is the one step of the brain that was
+  never built. Pressing it stored a setting and every screen then reported
+  "writing on" for a capability the bot does not have. The screen says
+  `not built yet` and stores nothing.
+
 ## [2.8.2] - 2026-09-06
 
 ### Fixed
@@ -1053,7 +1084,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.2...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.3...HEAD
+[2.8.3]: https://github.com/hami9/Astolfo/compare/v2.8.2...v2.8.3
 [2.8.2]: https://github.com/hami9/Astolfo/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/hami9/Astolfo/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/hami9/Astolfo/compare/v2.7.4...v2.8.0
