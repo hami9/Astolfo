@@ -7,6 +7,7 @@ import contextlib
 import json
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -188,7 +189,11 @@ class LLMClient:
         # the worst-behaved model back at the front with a clean sheet.
         self._strikes: dict[str, int] = {}
         self._restore_strikes()
-        self._pace_lock = asyncio.Lock()
+        # One lock per service, because the clock is per service. A single lock
+        # held across the sleep made a turn bound for an idle service wait out a
+        # busy one's whole gap - measured at a full gap owed by a provider that
+        # owed nothing.
+        self._pace_locks: dict[str, asyncio.Lock] = {}
         # Requests using these connection pools right now, so a client being
         # retired can wait for them instead of closing under them.
         self._inflight = 0
@@ -430,7 +435,8 @@ class LLMClient:
         if not self._s.free_mode or rpm <= 0:
             return
         gap = 60.0 / rpm
-        async with self._pace_lock:
+        lock = self._pace_locks.setdefault(provider.name, asyncio.Lock())
+        async with lock:
             wait = provider.last_request + gap - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
@@ -700,13 +706,30 @@ class LLMClient:
         disowned = {m for service, m in self._unknown if service == provider.name}
         if len(disowned) < ACCOUNT_DISOWNS:
             return False
-        self._unknown -= {(provider.name, m) for m in disowned}
+        # Rest the service, but keep what each model taught. Clearing the set here
+        # handed the whole pool back a minute later to be refused again: ninety-nine
+        # disowned warnings against thirty-three resets, exactly three per cycle,
+        # for three hours. A pause is not an amnesty.
         self._pause_provider(provider, ACCOUNT_PAUSE, why[:200])
+        # One model is let out of the set, so the way back is a single probe rather
+        # than the whole pool at once. If the account really is the problem, that
+        # costs one call a minute instead of three.
+        probe = sorted(disowned)[0]
+        self._unknown.discard((provider.name, probe))
         log.warning(
-            "%s refused %d of its own models; that is the account, not the models",
-            provider.name, len(disowned),
+            "%s refused %d of its own models; resting it and probing with %s when it wakes",
+            provider.name, len(disowned), probe,
         )
         return True
+
+    def _listed_by(self, service: str) -> set[str]:
+        """Every id this service put its own name to.
+
+        A model id is a string from a third party, and the payload is the last
+        place to take one on trust: a configured `fallback_models` list is not
+        filtered by service at all, so this is checked rather than assumed.
+        """
+        return {m.id for m in self._models if m.service == service}
 
     def _served(self, models: list[str]) -> list[str]:
         """The same, for a pool whose caller did not name a service.
@@ -947,9 +970,20 @@ class LLMClient:
             # OpenRouter tries these in order when the first is rate limited or
             # errors, which is what keeps a rationed free model usable. The API
             # rejects more than MAX_FALLBACKS entries, counting the primary.
-            alternatives = self.free_pool() if self._s.free_mode else self._s.fallback_models
-            if alternatives:
-                chain = [model] + [m for m in alternatives if m != model]
+            #
+            # Scoped to this service. The global pool holds every service's ids
+            # now that every catalog is read, and one of Google's inside
+            # OpenRouter's `models` array had it reject the whole request naming
+            # that id - which the code then blamed on the model in the `model`
+            # field, condemning the pool one innocent model at a time.
+            alternatives = (
+                self.free_pool(service=provider.name)
+                if self._s.free_mode
+                else self._s.fallback_models
+            )
+            mine = self._listed_by(provider.name)
+            chain = [model] + [m for m in alternatives if m != model and m in mine]
+            if len(chain) > 1:
                 payload["models"] = chain[:MAX_FALLBACKS]
         if reasoning:
             payload["reasoning"] = reasoning
@@ -1163,6 +1197,21 @@ class LLMClient:
                         web = False
                         continue
                     if _about_the_model(lowered):
+                        blamed = _names_another_model(body, model)
+                        if blamed:
+                            # The refusal is about an id we did not ask for, so the
+                            # model in hand is innocent. Retiring it here is how a
+                            # single malformed field condemned a whole pool one
+                            # blameless model at a time.
+                            log.error(
+                                "%s rejected %r, which is not the model asked for (%s); "
+                                "leaving it in the pool: %s",
+                                provider.name, blamed, model, body[:200],
+                            )
+                            return ChatResult(
+                                error=f"HTTP 400: {provider.name} rejected {blamed}",
+                                error_kind="rejected",
+                            )
                         # A durable fact about (service, model), not about this
                         # turn: OpenRouter was asked for a Google-shaped id seven
                         # times in forty-five seconds and rejected every one,
@@ -1360,6 +1409,31 @@ _NOT_A_MODEL = (
 
 def _about_the_model(body: str) -> bool:
     return any(phrase in body for phrase in _NOT_A_MODEL)
+
+
+# The id a refusal is actually about. Services quote it back, in a few shapes:
+#   "models/gemini-2.5-flash is not a valid model ID"
+#   "`meta/llama-4` is not a valid model"
+#   "model not found: some/thing"
+_BLAMED = re.compile(
+    r"[\"'`]?([\w./:-]{3,80})[\"'`]?\s+is\s+not\s+a\s+valid\s+model"
+    r"|model\s+not\s+found:?\s+[\"'`]?([\w./:-]{3,80})",
+    re.I,
+)
+
+
+def _names_another_model(body: str, asked: str) -> str:
+    """The id a refusal blames, when that is not the one we asked for.
+
+    OpenRouter takes a list of alternatives alongside the model, so a refusal can
+    be about an entry in that list rather than about the model itself - and
+    reading it as the latter is how one bad entry retired every model in a pool.
+    """
+    match = _BLAMED.search(body or "")
+    if not match:
+        return ""
+    blamed = (match.group(1) or match.group(2) or "").strip("\"'`")
+    return blamed if blamed and blamed != (asked or "") else ""
 
 
 def _about_images(body: str) -> bool:

@@ -553,6 +553,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                           repaired=shaped.repaired, broken=fault)
                 _teach(rt, result, params, recipe, shaped, fault)
                 reply = shaped.text
+                # The first answer was rejected, so the line written for it named
+                # a model whose reply nobody saw. This one is the one that ships.
+                _log_answer(chat.id, sender, decision, result, wanted=effective)
                 if fault:
                     rt.llm.mark_unusable(result.model)
                     reply = ""
