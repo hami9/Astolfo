@@ -1301,7 +1301,18 @@ class LLMClient:
                         if len(self.providers) > 1:
                             # With nothing else to fall back on, keep trying: a lone
                             # service silenced for a day is worse than a wasted call.
-                            self._pause_provider(provider, AUTH_COOLDOWN, detail)
+                            #
+                            # And the same distinction the credential gets, because it
+                            # is the same claim: a 401 is about the key and lasts, a
+                            # 403 is about this request and usually does not. Resting
+                            # the key ten minutes and the service twenty-four hours on
+                            # one 403 is what benched OpenRouter for a day twenty-four
+                            # minutes after it last answered.
+                            self._pause_provider(
+                                provider,
+                                AUTH_COOLDOWN if refused else FORBIDDEN_COOLDOWN,
+                                detail,
+                            )
                         log.error("check %s or set a key from the panel", provider.key_env)
                         return ChatResult(error=detail, error_kind="auth")
 

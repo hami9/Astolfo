@@ -57,8 +57,12 @@ def _settings(rt) -> list[str]:
         f"version         {_version()}",
         f"free mode       {'on' if s.free_mode else 'off'}",
         f"prompt weight   {getattr(s, 'prompt_tier', 'auto')}",
+        # Not `brain_writes`: nothing reads it, because the writer is the one
+        # step of the brain that was never built. A stored 1 from before the
+        # switch was retired had this line reporting "writing on" for a
+        # capability the bot does not have.
         f"brain           {'on' if getattr(s, 'brain', False) else 'off'}"
-        f" (writing {'on' if getattr(s, 'brain_writes', False) else 'off'})",
+        " (writing not built yet)",
         f"heavy lifting   {'on' if s.heavy_lifting else 'off'}",
         f"reply mode      {s.reply_mode}",
         f"providers       {', '.join(p.name for p in rt.llm.providers) or 'none'}",
