@@ -11,6 +11,41 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.4] - 2026-09-06
+
+### Fixed
+
+- **One 403 benched a service for a day.** From a live report, on the service
+  that had just started working again:
+
+  > openrouter   yes  1/1   1429m    24m ago   ... HTTP 403 the request n...
+
+  Twenty-three hours and forty-nine minutes of rest, earned by one 403, on a
+  service that had answered twenty-four minutes earlier. `FORBIDDEN_COOLDOWN`
+  exists for exactly this and says so in its own comment - *"a 403 says not right
+  now... and the same key often works minutes later"* - and it was applied to the
+  credential and not to the provider on the line below it. The key rested ten
+  minutes while its service rested a day, from the same refusal. Both now make
+  the same distinction: a 401 is about the key and lasts, a 403 is about this
+  request and usually does not.
+- **A blocked request was reported as a refused key.** The panel's key test said
+  `openrouter: the key was refused` while the same screen's refusal line said
+  *"HTTP 403 the request never reached the service"* - the fault reader had it
+  right as an edge block, and `_chat_with` labelled every 401 **and** 403 as an
+  auth failure, so the test translated it into a verdict on the key. A request
+  stopped before it reaches the service says nothing about the key, and this one
+  sent its owner to replace a key that was working. Only a 401 is a claim about
+  the key now; a blocked 403 says so, and still moves to the next service.
+- **The key count hid a key from `.env`.** The column added in v2.8.2 was built
+  from the database, and a key set in the environment has no row there - so a
+  service holding two keys reported `1/1`, and the one it hid was the one that
+  could be serving the traffic. That is the exact question the column was added
+  to answer. It is now counted off the live services.
+- **The diagnostics stopped claiming a writer that does not exist.** v2.8.3
+  retired the switch but the report still read `brain_writes` back, so a value
+  stored before then kept it printing "writing on" for the one step of the brain
+  that was never built.
+
 ## [2.8.3] - 2026-09-06
 
 ### Fixed
@@ -1084,7 +1119,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.3...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.4...HEAD
+[2.8.4]: https://github.com/hami9/Astolfo/compare/v2.8.3...v2.8.4
 [2.8.3]: https://github.com/hami9/Astolfo/compare/v2.8.2...v2.8.3
 [2.8.2]: https://github.com/hami9/Astolfo/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/hami9/Astolfo/compare/v2.8.0...v2.8.1

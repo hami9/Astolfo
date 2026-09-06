@@ -408,6 +408,9 @@ class LLMClient:
             return True, f"answered by {result.model}"
         if result.error_kind == "auth":
             return False, "the key was refused"
+        if result.error_kind == "blocked":
+            # The service never saw the request, so it says nothing about the key.
+            return False, "blocked before it reached the service - the network, not the key"
         if result.error_kind == "payment":
             return True, "the key works but has no credit or quota left"
         if result.error_kind == "throttled":
@@ -1084,7 +1087,7 @@ class LLMClient:
                         provider, QUOTA_COOLDOWN if spent else ACCOUNT_PAUSE
                     )
                 continue  # a spent service says nothing about the next one
-            if last.error_kind in ("rejected", "auth") and len(live) > 1:
+            if last.error_kind in ("rejected", "auth", "blocked") and len(live) > 1:
                 # One service disliking the request, or the key for it, says
                 # nothing about the next one in line.
                 log.info("trying the next service after %s declined", provider.name)
@@ -1301,9 +1304,27 @@ class LLMClient:
                         if len(self.providers) > 1:
                             # With nothing else to fall back on, keep trying: a lone
                             # service silenced for a day is worse than a wasted call.
-                            self._pause_provider(provider, AUTH_COOLDOWN, detail)
+                            #
+                            # And the same distinction the credential gets, because it
+                            # is the same claim: a 401 is about the key and lasts, a
+                            # 403 is about this request and usually does not. Resting
+                            # the key ten minutes and the service twenty-four hours on
+                            # one 403 is what benched OpenRouter for a day twenty-four
+                            # minutes after it last answered.
+                            self._pause_provider(
+                                provider,
+                                AUTH_COOLDOWN if refused else FORBIDDEN_COOLDOWN,
+                                detail,
+                            )
                         log.error("check %s or set a key from the panel", provider.key_env)
-                        return ChatResult(error=detail, error_kind="auth")
+                        # Only a 401 is a claim about the key. A 403 that never
+                        # reached the auth layer is an edge block, and calling it
+                        # "auth" had the panel report "the key was refused" for a
+                        # key that was working - which is a whole afternoon spent
+                        # replacing the wrong thing.
+                        return ChatResult(
+                            error=detail, error_kind="auth" if refused else "blocked"
+                        )
 
                     if resp.status_code == 404:
                         # Model ids differ between services and change over time, so

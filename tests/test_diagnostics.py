@@ -216,3 +216,30 @@ def test_prompt_weight_never_compares_two_different_models(rt):
     text = diagnostics.report(rt)
 
     assert "beats" not in text, "each model had only one weight, so there is nothing to compare"
+
+
+def test_the_key_count_includes_one_that_came_from_the_env(rt) -> None:
+    """A key in `.env` has no database row.
+
+    Counting only rows reported "openrouter 1/1" for a service holding two, and
+    the one it hid was the one serving the traffic - which is the exact question
+    this column was added to answer.
+    """
+    from types import SimpleNamespace
+
+    from astolfo.providers import Credential
+
+    rt.llm.providers = [
+        SimpleNamespace(
+            name="openrouter",
+            credentials=[
+                Credential(value="stored", id=1),
+                Credential(value="from-the-env", label="from .env"),
+            ],
+        )
+    ]
+    rt.db.save_service("openrouter", enabled=1)
+
+    text = diagnostics.report(rt)
+
+    assert "2/2" in text, "the key from .env was not counted"

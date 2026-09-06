@@ -57,8 +57,12 @@ def _settings(rt) -> list[str]:
         f"version         {_version()}",
         f"free mode       {'on' if s.free_mode else 'off'}",
         f"prompt weight   {getattr(s, 'prompt_tier', 'auto')}",
+        # Not `brain_writes`: nothing reads it, because the writer is the one
+        # step of the brain that was never built. A stored 1 from before the
+        # switch was retired had this line reporting "writing on" for a
+        # capability the bot does not have.
         f"brain           {'on' if getattr(s, 'brain', False) else 'off'}"
-        f" (writing {'on' if getattr(s, 'brain_writes', False) else 'off'})",
+        " (writing not built yet)",
         f"heavy lifting   {'on' if s.heavy_lifting else 'off'}",
         f"reply mode      {s.reply_mode}",
         f"providers       {', '.join(p.name for p in rt.llm.providers) or 'none'}",
@@ -86,15 +90,21 @@ def _services(rt) -> list[str]:
     keys: dict[str, list[int]] = {}
     for row in rt.db.credentials():
         service = row["service"]
-        tally = keys.setdefault(service, [0, 0])
-        tally[1] += 1
         try:
             when = float(row["last_ok"] or 0.0)
-            if row["enabled"] and float(row["rested_until"] or 0.0) <= now:
-                tally[0] += 1
         except (IndexError, KeyError, TypeError, ValueError):
             break  # an older database without the column; the rest still reads
         working[service] = max(working.get(service, 0.0), when)
+    # Counted off the live providers, not off the database: a key in `.env` has
+    # no row, and counting only rows reported "1/1" for a service that had two -
+    # hiding the one actually serving traffic, which is the question this column
+    # was added to answer.
+    for provider in getattr(rt.llm, "providers", []):
+        tally = keys.setdefault(provider.name, [0, 0])
+        for credential in provider.credentials:
+            tally[1] += 1
+            if credential.usable(now):
+                tally[0] += 1
     rows = []
     for row in rt.db.services():
         resting = float(row["rested_until"] or 0)
