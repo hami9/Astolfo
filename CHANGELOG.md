@@ -11,6 +11,61 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.7.4] - 2026-09-06
+
+### Fixed
+
+- **`/unmute` said "I'm baaack!" and stayed silent.** Muted and switched off are
+  two separate flags and only one of them had a command, so somebody whose chat
+  had been switched off got a cheerful message about a thing that had not
+  happened - the bot saying something untrue about itself, which is worse than
+  doing nothing. Whoever may unmute a chat may switch it back on, so `/unmute`
+  now clears both.
+- **`/status` says when a chat is switched off**, and how to bring it back.
+  Nothing anywhere said so before: a chat in that state answers commands and
+  nothing else, which reads as the bot being broken rather than as a switch
+  somebody could find.
+
+## [2.7.3] - 2026-09-05
+
+### Fixed
+
+- **It went quiet in private chats while its commands kept working.** The live
+  database had `dormant = 1` on the owner's own chat, and nobody had pressed
+  anything: `send_reply` switches a chat off when Telegram refuses a message with
+  "not enough rights", and that rule - written for a group the bot may not post
+  in - was being applied to private chats too. A private chat has no permission
+  to grant, so there was nothing for anybody to fix and turn back on, and the
+  symptom is close to invisible because commands have their own handler and keep
+  answering. It now only ever switches off a group.
+- If it has already happened, the way back is **panel → groups → that chat →
+  on**; private chats are listed there under the person's name.
+
+## [2.7.2] - 2026-09-05
+
+### Fixed
+
+- **The diagnostics report lost its most useful section on the first real
+  database.** `services` came back as "(this section could not be read: No item
+  with that key)" - it read `last_ok` off the services table, and that column
+  belongs to credentials. Every other section says what happened; only this one
+  says which services could have answered at all. The test fixture that missed it
+  had no service and no credential rows, so the section rendered "(nothing yet)"
+  and the bad line never ran; it has both now, and stubbing the bug back in fails
+  the test.
+- **A free daily quota was being read as an empty wallet.** Google answers an
+  exhausted free-tier quota with "you exceeded your current quota, please check
+  your plan and billing details", and the word *billing* was enough to class it
+  as out of credit and rest the service for six hours. An empty wallet says
+  something about the balance itself - insufficient balance, no credits
+  remaining, a payment method required, depleted your included credits - and that
+  is what is matched now. All eight of the messages the live services actually
+  returned are in the tests.
+- A quota that does not name its window now rests fifteen minutes rather than
+  ten, and is called a quota rather than an account pause. Google's per-minute
+  ceiling arrives with a structured violation naming it, so an unnamed one that
+  reaches the text reader is wider than a minute.
+
 ## [2.7.1] - 2026-09-05
 
 ### Added
@@ -846,7 +901,10 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.7.4...HEAD
+[2.7.4]: https://github.com/hami9/Astolfo/compare/v2.7.3...v2.7.4
+[2.7.3]: https://github.com/hami9/Astolfo/compare/v2.7.2...v2.7.3
+[2.7.2]: https://github.com/hami9/Astolfo/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/hami9/Astolfo/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/hami9/Astolfo/compare/v2.6.9...v2.7.0
 [2.6.9]: https://github.com/hami9/Astolfo/compare/v2.6.8...v2.6.9

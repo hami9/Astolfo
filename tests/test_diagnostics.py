@@ -24,8 +24,18 @@ SECRET = "sk-or-v1-000000000000abcd"
 
 @pytest.fixture
 def loaded(rt):
-    """A runtime with something in every table worth reporting."""
+    """A runtime with something in every table worth reporting.
+
+    Every table, on purpose. The first version of this fixture left `services`
+    and `credentials` empty, so the services section rendered "(nothing yet)"
+    and the line that read a column off the wrong table was never executed -
+    it took a real database to find it.
+    """
     db = rt.db
+    db.save_service("cohere", enabled=1)
+    db.save_service("google", enabled=1, rested_until=time.time() + 6 * 3600,
+                    last_error="google/gemini-flash-latest: HTTP 429 the allowance is spent")
+    db.add_credential("cohere", b"ciphertext", label="from .env")
     db.note_strike("command-r7b-12-2024")
     db.add_outcome("2026-09-05", service="cohere", model="command-r7b-12-2024",
                    variant="compact", mode="fast", calls=49, broken=21, repaired=4)
@@ -39,6 +49,17 @@ def loaded(rt):
     )]
     rt.llm.recent_faults = lambda service="": kept
     return rt
+
+
+def test_the_services_section_says_which_are_out_and_why(loaded) -> None:
+    """This section crashed on its first real database, which is exactly the one
+    a diagnosis needs: every other table says what happened, only this one says
+    which services could have answered at all."""
+    text = diagnostics.report(loaded)
+
+    assert "could not be read" not in text
+    assert "google" in text and "the allowance is spent" in text
+    assert "why it is out" in text
 
 
 def test_it_reports_what_each_model_actually_produced(loaded) -> None:
