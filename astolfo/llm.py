@@ -49,6 +49,13 @@ FORBIDDEN_COOLDOWN = 600.0
 # only useful response is for the whole bot to stop knocking for a while.
 ACCOUNT_PAUSE = 60.0
 
+# How many models one service may disown before the fact is about the account
+# rather than the models. Sixteen ids from six vendors did not stop existing in
+# the two minutes it took to ask them: a new key that cannot reach the free tier
+# is refused for every one of them, and writing that down sixteen times empties
+# a pool that was never the problem.
+ACCOUNT_DISOWNS = 3
+
 # Windows too wide to retry in place. A per-minute ceiling is worth sitting out
 # with a backoff; a daily or monthly one is not, whether or not free mode is on.
 SLOW = (faults.DAY, faults.MONTH)
@@ -649,8 +656,16 @@ class LLMClient:
     def free_pool(
         self, *, vision: bool = False, audio: bool = False, service: str = ""
     ) -> list[str]:
-        """Usable free models, worst-behaved last, skipping any that are resting."""
-        return self._usable(self._all_free(vision=vision, audio=audio, service=service))
+        """Usable free models, worst-behaved last, skipping any that are resting.
+
+        Models a service has disowned are dropped here rather than at each call
+        site. `_candidates` guarded the first pick and nothing else, so `resolve`
+        and every failover step kept handing back an id the service had already
+        refused - which is how "it will not be asked again" was logged twice in
+        two minutes about the same model.
+        """
+        pool = self._served(self._all_free(vision=vision, audio=audio, service=service))
+        return self._usable(pool)
 
     def supports_free_vision(self) -> bool:
         return bool(self._all_free(vision=True))
@@ -673,6 +688,38 @@ class LLMClient:
     def _known(self, service: str, models: list[str]) -> list[str]:
         """The ones this service has not already said it does not serve."""
         return [m for m in models if (service, m) not in self._unknown]
+
+    def _disowns_everything(self, provider: providers_mod.Provider, why: str) -> bool:
+        """Whether this service has refused so many ids that the account is the fact.
+
+        Models do not stop existing in batches. A key that cannot reach a free
+        tier is refused for every id on it, and writing that down once per model
+        empties a pool that was never the problem - so past the threshold the
+        service rests instead, and the models are given back.
+        """
+        disowned = {m for service, m in self._unknown if service == provider.name}
+        if len(disowned) < ACCOUNT_DISOWNS:
+            return False
+        self._unknown -= {(provider.name, m) for m in disowned}
+        self._pause_provider(provider, ACCOUNT_PAUSE, why[:200])
+        log.warning(
+            "%s refused %d of its own models; that is the account, not the models",
+            provider.name, len(disowned),
+        )
+        return True
+
+    def _served(self, models: list[str]) -> list[str]:
+        """The same, for a pool whose caller did not name a service.
+
+        `_unknown` is keyed by `(service, model)` and the free pool is often asked
+        for without a service at all, so the key comes from the model itself: the
+        catalog already records who listed each id, which is what keeps one
+        service from being offered another's.
+        """
+        if not self._unknown:
+            return models
+        owner = {m.id: m.service for m in self._models}
+        return [m for m in models if (owner.get(m, ""), m) not in self._unknown]
 
     def _sighted(self, service: str, models: list[str]) -> list[str]:
         """The ones this service has not already refused an image on."""
@@ -1121,10 +1168,18 @@ class LLMClient:
                         # times in forty-five seconds and rejected every one,
                         # because nothing remembered the first refusal.
                         self._unknown.add((provider.name, model))
+                        # In the service's own words. This was read into `body` and
+                        # thrown away, so a log full of "does not serve" never said
+                        # whether the models were missing or the account was.
                         log.warning(
-                            "%s does not serve %s; it will not be asked again",
-                            provider.name, model,
+                            "%s does not serve %s; it will not be asked again: %s",
+                            provider.name, model, body[:200],
                         )
+                        if self._disowns_everything(provider, body):
+                            return ChatResult(
+                                error=f"{provider.name} refused every model it lists",
+                                error_kind="rejected",
+                            )
                         alternative = self._next_model(
                             provider, requested, tried=tried, vision=vision, audio=audio
                         )

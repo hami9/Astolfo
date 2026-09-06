@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import shutil
 from dataclasses import dataclass
 
 from telegram import Update
@@ -377,3 +378,8 @@ async def _send_document(view: View, message, context) -> None:
     except Exception as exc:
         log.warning("could not send %s: %s", view.document, exc)
         await message.reply_text(f"could not send the file: {exc}")
+    finally:
+        if view.extras.get("temporary"):
+            # A snapshot of the database carries the encrypted credentials, so it
+            # does not outlive the send - including the send that failed.
+            shutil.rmtree(os.path.dirname(view.document), ignore_errors=True)

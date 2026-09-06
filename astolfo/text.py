@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 
 from telegram import Message, User
@@ -409,6 +410,22 @@ def opens_like_recent(reply: str, recent: Sequence[str]) -> bool:
     return same >= SAME_FIRST_WORD
 
 
+# How much of a reply has to match one it already sent for it to be the same
+# reply. Not exact: the same canned line came back with only its first word
+# changed - "هه، ببخشید..." then "اوه، ببخشید..." - and an exact comparison called
+# them different, so the group got it twice within the minute.
+SAME_REPLY_SHARE = 0.85
+
+
+def _same_reply(reply: str, said: str) -> bool:
+    """Whether two replies are the same one, allowing for a word swapped."""
+    here, there = _words(reply), _words(said)
+    if not here or not there:
+        return False
+    shared = sum((Counter(here) & Counter(there)).values())
+    return shared / max(len(here), len(there)) >= SAME_REPLY_SHARE
+
+
 def repeats_recent(reply: str, recent: Sequence[str]) -> bool:
     """Whether this reply is one the bot already sent a few turns ago.
 
@@ -416,8 +433,9 @@ def repeats_recent(reply: str, recent: Sequence[str]) -> bool:
     twenty-first and twenty-third reply of one evening, and a check that holds
     a single previous reply cannot see that.
     """
-    folded = _folded(reply)
-    return bool(folded) and any(folded == _folded(said) for said in recent[:RECENT_REPLIES])
+    if not _folded(reply):
+        return False
+    return any(_same_reply(reply, said) for said in recent[:RECENT_REPLIES])
 
 
 def _folded(text: str) -> str:
@@ -496,6 +514,55 @@ def echoes_back(reply: str, asked: str, heard: Sequence[str] = ()) -> bool:
     return bool(_ASKS.search(reply.strip())) and borrowed == len(here) and bool(there)
 
 
+# A clause the reply says over and over inside itself. Three is the bar because
+# two is a rhetorical device - "خیلی خفن! خیلی خفن!" is emphasis - and three is a
+# model that has stopped being able to stop.
+LOOP_REPEATS = 3
+# Below this a clause is too short to mean anything on its own: "آره؟" three
+# times is a tic, not the failure this is looking for.
+LOOP_MIN_WORDS = 3
+# How much of a long reply may be the same few words before it is not a reply.
+LOOP_VARIETY = 0.35
+LOOP_MIN_WORDS_TOTAL = 25
+
+_CLAUSE = re.compile(r"[.!?؟…\n]+|، ")
+
+
+def loops_internally(reply: str) -> bool:
+    """Whether a reply has got stuck repeating itself inside one message.
+
+    Every other repetition check compares this reply against earlier ones, so a
+    model that loops within a single message passed all of them and reached the
+    chat:
+
+        ولی ددی کاپیتانو خیلی خفن بود، آره؟ خیلی خفن! ولی ماوویکا مید هم خیلی
+        قوی بود، آره؟ خیلی قوی! ولی ددی کاپیتانو خیلی خفن بود، آره؟ ...
+
+    until the token ceiling cut it off. That is the shape people call nonsense,
+    and it is one of the commonest ways a small model fails.
+    """
+    body = (reply or "").strip()
+    if not body:
+        return False
+
+    seen: dict[str, int] = {}
+    for piece in _CLAUSE.split(body):
+        words = _words(piece)
+        if len(words) < LOOP_MIN_WORDS:
+            continue
+        key = " ".join(words)
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] >= LOOP_REPEATS:
+            return True
+
+    # A loop with no punctuation to split on still says the same few words over
+    # and over, which shows up as a reply with almost no vocabulary in it.
+    words = _words(body)
+    if len(words) >= LOOP_MIN_WORDS_TOTAL:
+        return len(set(words)) / len(words) < LOOP_VARIETY
+    return False
+
+
 def reuses_opening(reply: str, previous: str) -> bool:
     """Whether this reply opens exactly as the last one did.
 
@@ -542,6 +609,9 @@ def looks_broken(
         # small model reads that and answers a Persian question in English
         # anyway, then keeps doing it after being asked twice to stop.
         return "answered a Persian message in English"
+
+    if loops_internally(body):
+        return "got stuck repeating itself"
 
     if (echoes or heard) and echoes_back(body, echoes, heard):
         return "echoed the message"

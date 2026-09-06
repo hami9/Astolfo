@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
+from datetime import date
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -650,10 +652,17 @@ def vacuum(ctx) -> View:
 
 
 def backup(ctx) -> View:
-    """Hand the owner the database file itself, so a backup is one press."""
+    """Hand the owner a copy of the database, so a backup is one press.
+
+    A copy, not the file: the database is WAL, so the live file is missing
+    everything since the last checkpoint - which is how this button spent every
+    release handing over a backup that was quietly behind.
+    """
     ctx.rt.save(force=True)
     audit(ctx.rt, ctx.user, "backup")
     view = data(ctx)
-    view.document = ctx.rt.db.path
+    name = f"astolfo-backup-{date.today().isoformat()}.db"
+    view.document = ctx.rt.db.snapshot(os.path.join(tempfile.mkdtemp(), name))
+    view.extras["temporary"] = True
     view.alert = "sending the database"
     return view

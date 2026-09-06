@@ -432,6 +432,26 @@ class Database:
         with self._lock:
             self._db.execute("VACUUM")
 
+    def snapshot(self, dest: str) -> str:
+        """Write a complete, consistent copy of the database to `dest`.
+
+        Not a file copy. In WAL mode a commit lands in `astolfo.db-wal` and only
+        reaches the main file at a checkpoint, so copying `self.path` on its own
+        hands over a database missing everything since the last one - on a fresh
+        database, that is every table. The backup API reads through the log and
+        writes one file that needs no sidecars, under the lock so it cannot
+        interleave with a write.
+        """
+        copy = sqlite3.connect(dest)
+        try:
+            with self._lock:
+                self._db.backup(copy)
+        finally:
+            copy.close()
+        # It carries the encrypted credentials, so it is born as tight as the original.
+        _restrict(dest, 0o600)
+        return dest
+
     # -- chats ------------------------------------------------------------
     def seen_chat(
         self, chat_id: int, *, kind: str = "", title: str = "", username: str = ""
@@ -905,6 +925,22 @@ class Database:
             )
         return self.query(
             "SELECT * FROM outcomes WHERE day = ? ORDER BY calls DESC LIMIT ?", (day, limit)
+        )
+
+    def outcomes_by_variant(self) -> list[sqlite3.Row]:
+        """Each model's record per prompt weight, summed across days and modes.
+
+        `outcomes` is keyed by day and mode as well, so one model on one weight
+        is spread over several rows and the comparison the weights exist to
+        settle cannot be read off the table. The question is about the weight, so
+        the day and the mode are what gets folded away.
+        """
+        return self.query(
+            "SELECT model, variant,"
+            " SUM(calls) AS calls, SUM(answered) AS answered,"
+            " SUM(repaired) AS repaired, SUM(broken) AS broken"
+            " FROM outcomes WHERE variant != ''"
+            " GROUP BY model, variant ORDER BY model, calls DESC"
         )
 
     # -- what the services have offered before -----------------------------

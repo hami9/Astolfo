@@ -11,6 +11,57 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.1] - 2026-09-06
+
+### Fixed
+
+- **It stopped being able to answer at all.** The log walked sixteen models in
+  two minutes, one every seven seconds, and the first and last line named the
+  same one: "it will not be asked again" was not true. The memory of what a
+  service has disowned was read when the first model was picked and on no other
+  path, so `resolve` and every failover step kept handing back an id the service
+  had already refused. The filter moved into `free_pool`, which all three paths
+  read, so a model that is out stays out - and "try them all again rather than go
+  silent", which is right for a model that is resting, no longer resurrects one
+  that is not served at all.
+- **One account is no longer read as sixteen broken models.** Models do not stop
+  existing in batches: a new key that cannot reach a service's free tier is
+  refused for every id on it, and writing that down once per model emptied a pool
+  that was never the problem. Past three refusals the service rests for a minute
+  and the models are given back.
+- **A refusal now says what the service said.** The body of the 400 was read and
+  thrown away, so a log full of "does not serve" could not tell a missing model
+  from a missing entitlement - the one question the log existed to answer.
+- **A reply that got stuck repeating itself reached the chat.** Every repetition
+  check compared a reply against *earlier* replies, so a model looping inside a
+  single message passed all of them:
+
+  > ولی ددی کاپیتانو خیلی خفن بود، آره؟ خیلی خفن! ولی ماوویکا مید هم خیلی قوی
+  > بود، آره؟ خیلی قوی! ولی ددی کاپیتانو خیلی خفن بود، آره؟ ...
+
+  until the token ceiling cut it off. That is the commonest way a small model
+  fails and the shape people call nonsense, and it is now caught before it is
+  sent.
+- **The same canned line came back a minute later.** A reply was compared with
+  earlier replies for an exact match, so the identical sentence with only its
+  first word swapped - "هه، ببخشید..." then "اوه، ببخشید..." - counted as a new
+  one and the group got it twice inside a minute. It now allows for a word
+  changed.
+- **The backup button never made a backup.** The database is WAL, so a commit
+  lands in `astolfo.db-wal` and reaches the main file only at a checkpoint - and
+  the button handed over the main file. Every backup taken from the panel was
+  silently missing everything since the last checkpoint; on a fresh database it
+  had no tables at all. It now sends a real snapshot, taken through SQLite's
+  backup API, deleted as soon as it has been sent. No test covered the button,
+  which is how it survived.
+
+### Added
+
+- **panel → data → 🩺 diagnostics gains a prompt-weight section.** Each model
+  against itself, folded across days and modes, with a verdict only once both
+  weights have thirty samples - and never a comparison between two different
+  models, which measures the models rather than the weight.
+
 ## [2.8.0] - 2026-09-06
 
 ### Added
@@ -954,7 +1005,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/hami9/Astolfo/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/hami9/Astolfo/compare/v2.7.4...v2.8.0
 [2.7.4]: https://github.com/hami9/Astolfo/compare/v2.7.3...v2.7.4
 [2.7.3]: https://github.com/hami9/Astolfo/compare/v2.7.2...v2.7.3

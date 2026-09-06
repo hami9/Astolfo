@@ -146,6 +146,54 @@ def _outcomes(rt) -> list[str]:
     )
 
 
+def _weights(rt) -> list[str]:
+    """Each model against itself on a different prompt weight.
+
+    The table above is keyed by day and by mode, so this comparison had to be
+    summed by hand - and a model's older rows fall off the sixty-row cap while
+    its newer ones stay, which shows a partial comparison that looks whole.
+
+    Only ever within one model. `gemini-flash-lite` on `tight` against
+    `command-r` on `compact` measures the models, not the weights, and reading
+    it the other way is the mistake this section exists to stop.
+    """
+    from .brain import ENOUGH
+
+    rows: list[dict] = []
+    per_model: dict[str, list] = {}
+    for row in rt.db.outcomes_by_variant():
+        calls = int(row["calls"] or 0)
+        broken = int(row["broken"] or 0)
+        rows.append({
+            "model": str(row["model"])[:38],
+            "weight": row["variant"],
+            "calls": calls,
+            "broken": f"{broken} ({broken * 100 // calls}%)" if calls else "0",
+            "answered": row["answered"],
+        })
+        per_model.setdefault(str(row["model"]), []).append((row["variant"], calls, broken))
+
+    if not rows:
+        return ["(nothing yet)"]
+
+    out = _table(rows[:MAX_ROWS], ("model", "weight", "calls", "broken", "answered"))
+    out.append("")
+    for model, arms in sorted(per_model.items()):
+        if len(arms) < 2:
+            continue
+        short = [f"{name} has {calls} of {ENOUGH}" for name, calls, _ in arms if calls < ENOUGH]
+        if short:
+            out.append(f"{model}: not a comparison yet, {'; '.join(short)}")
+            continue
+        best = min(arms, key=lambda arm: arm[2] / arm[1])
+        worst = max(arms, key=lambda arm: arm[2] / arm[1])
+        gap = (worst[2] / worst[1] - best[2] / best[1]) * 100
+        out.append(
+            f"{model}: {best[0]} beats {worst[0]} by {gap:.0f} points of broken replies"
+        )
+    return out
+
+
 def _health(rt) -> list[str]:
     strikes = rt.db.model_strikes()
     if not strikes:
@@ -200,6 +248,7 @@ def report(rt) -> str:
         ("last refusals, in each service's own words", _faults),
         ("today's usage", _usage),
         ("what each model produced", _outcomes),
+        ("prompt weight, each model against itself", _weights),
         ("model health", _health),
         ("brain", _brain),
         ("database", _database),
