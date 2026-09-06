@@ -151,6 +151,16 @@ class Runtime:
         self.strings = Strings(settings.locale)
         self.responses = TTLCache(maxsize=512, ttl=settings.response_cache_ttl)
         self.attention.configure(settings.attention_hold)
+        # A switch, not a reset: the counters are kept, exactly as they are across
+        # a restart. This line is what the panel's brain switch reaches - without
+        # it, `settings.brain` said on, every screen said on, and `Brain.choose`
+        # read `self.on`, found it false, and went on returning the factory
+        # recipe until somebody restarted the service.
+        #
+        # Anything else derived from settings here has to be derived in
+        # `__post_init__` too, and the other way round: they are two paths to the
+        # same state, and this was the one field only one of them set.
+        self.brain.on = bool(settings.brain)
         await self.llm.load_catalog()
         # Not awaited, and not closed outright. A reply already in flight still
         # holds the old client, and closing it under them is what let every panel

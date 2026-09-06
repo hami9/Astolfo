@@ -37,13 +37,12 @@ def overview(ctx) -> View:
     rt = ctx.rt
     brain = rt.brain
     on = bool(rt.settings.brain)
-    writes = bool(rt.settings.brain_writes)
 
     lines = [
         "🧩 Brain\n",
         "It learns which prompt weight each model family answers to, and nothing else.",
         f"\nselecting: {'on' if on else 'off'}",
-        f"writing: {'on' if writes else 'off'}",
+        "writing: not built yet",
     ]
     if not on:
         lines.append(
@@ -70,9 +69,10 @@ def overview(ctx) -> View:
     select = button(
         "⏻ selecting off" if on else "⏻ selecting on", "brain", "on", "0" if on else "1"
     )
-    write = button(
-        "✍️ writing off" if writes else "✍️ writing on", "brain", "w", "0" if writes else "1"
-    )
+    # The part that writes a layer of its own is the last unbuilt step of the
+    # plan. The switch stored a setting nothing reads, and every screen reported
+    # it back as though something had happened - so it says what is true instead.
+    write = button("✍️ writing — not built yet", "brain", "w", "1")
     return View(
         "\n".join(lines),
         keyboard(
@@ -86,15 +86,18 @@ def overview(ctx) -> View:
 
 
 def switch(ctx, field: str, on: bool) -> View:
-    """Turn selecting or writing on or off. Stored, so it survives a restart."""
-    if field == "brain_writes" and on and not ctx.rt.settings.brain:
+    """Turn selecting on or off. Stored, so it survives a restart."""
+    if field == "brain_writes":
+        # Nothing reads `brain_writes`: the writer is the one step of the brain
+        # that was never built. Storing the setting made the screen claim a
+        # capability the bot does not have.
         view = overview(ctx)
-        view.alert = "turn selecting on first; writing rides on it"
+        view.alert = "the writer is not built yet; there is nothing to switch on"
         return view
     settings_store.set_override(ctx.rt.db, field, "1" if on else "0", by=ctx.user.id)
     audit(ctx.rt, ctx.user, f"{field}_{'on' if on else 'off'}")
     view = overview(ctx)
-    view.alert = f"{'selecting' if field == 'brain' else 'writing'} is {'on' if on else 'off'}"
+    view.alert = f"selecting is {'on' if on else 'off'}"
     view.extras["reload"] = True
     return view
 

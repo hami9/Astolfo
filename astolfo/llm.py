@@ -1137,98 +1137,179 @@ class LLMClient:
                 error=f"{provider.name} has no usable key right now", error_kind="auth"
             )
 
-        for attempt in range(1, retries + 1):
-            tried.add(model)
-            await self._pace(provider)
-            payload = self._payload(
-                provider=provider,
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                reasoning=reasoning,
-                web=web,
-                response_format=response_format,
-                fallbacks=fallbacks,
-            )
-            try:
-                started = time.monotonic()
-                async with self._in_flight():
+        # Held for the whole turn, not for each request. `_in_flight` used to
+        # wrap only the POST, so between two attempts of one turn the count was
+        # zero: a reload landing in that gap let the drain stop waiting, close
+        # the pools, and the retry post to a closed client. The window is a turn
+        # that already failed once and is backing off - the turn that most needs
+        # the client to outlive the press.
+        async with self._in_flight():
+            for attempt in range(1, retries + 1):
+                tried.add(model)
+                await self._pace(provider)
+                payload = self._payload(
+                    provider=provider,
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning=reasoning,
+                    web=web,
+                    response_format=response_format,
+                    fallbacks=fallbacks,
+                )
+                try:
+                    started = time.monotonic()
                     resp = await client.post(
                         provider.chat_url, json=payload, headers=self._auth(credential)
                     )
 
-                if resp.status_code == 429 or resp.status_code >= 500:
-                    fault = self._note_fault(resp, provider, model)
-                    last_error = fault.summary
-                    if resp.status_code == 429 and (self._s.free_mode or fault.scope in SLOW):
-                        # The allowance belongs to this account, so every model
-                        # behind it is equally limited; the caller moves on to the
-                        # next service rather than touring this one's models.
-                        #
-                        # And the rest is now the one the service asked for. A
-                        # trial key's twenty-a-minute and a spent monthly credit
-                        # both arrive as 429, and resting sixty seconds for both
-                        # is what "limit, back in a minute, limit again" was.
-                        self._pause_provider(
-                            provider, fault.wait or ACCOUNT_PAUSE, fault.summary
-                        )
-                        return ChatResult(
-                            error=fault.summary,
-                            error_kind="payment" if fault.kind == faults.CREDIT else "throttled",
-                        )
-                    wait = _retry_after(resp, delay)
-                    log.warning(
-                        "%s (attempt %d/%d), waiting %.1fs", last_error, attempt, retries, wait
-                    )
-                    await asyncio.sleep(wait)
-                    delay = min(delay * 2, 20.0)
-                    continue
-
-                if resp.status_code == 400:
-                    body = resp.text[:600]
-                    lowered = body.lower()
-                    if reasoning and "reasoning" in lowered:
-                        log.warning("model %s rejected reasoning params, retrying without", model)
-                        reasoning = None
-                        continue
-                    if web and ("plugin" in lowered or "web" in lowered):
-                        log.warning("web plugin rejected, retrying without search")
-                        web = False
-                        continue
-                    if _about_the_model(lowered):
-                        blamed = _names_another_model(body, model)
-                        if blamed:
-                            # The refusal is about an id we did not ask for, so the
-                            # model in hand is innocent. Retiring it here is how a
-                            # single malformed field condemned a whole pool one
-                            # blameless model at a time.
-                            log.error(
-                                "%s rejected %r, which is not the model asked for (%s); "
-                                "leaving it in the pool: %s",
-                                provider.name, blamed, model, body[:200],
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        fault = self._note_fault(resp, provider, model)
+                        last_error = fault.summary
+                        if resp.status_code == 429 and (self._s.free_mode or fault.scope in SLOW):
+                            # The allowance belongs to this account, so every model
+                            # behind it is equally limited; the caller moves on to the
+                            # next service rather than touring this one's models.
+                            #
+                            # And the rest is now the one the service asked for. A
+                            # trial key's twenty-a-minute and a spent monthly credit
+                            # both arrive as 429, and resting sixty seconds for both
+                            # is what "limit, back in a minute, limit again" was.
+                            self._pause_provider(
+                                provider, fault.wait or ACCOUNT_PAUSE, fault.summary
                             )
+                            spent = fault.kind == faults.CREDIT
                             return ChatResult(
-                                error=f"HTTP 400: {provider.name} rejected {blamed}",
-                                error_kind="rejected",
+                                error=fault.summary,
+                                error_kind="payment" if spent else "throttled",
                             )
-                        # A durable fact about (service, model), not about this
-                        # turn: OpenRouter was asked for a Google-shaped id seven
-                        # times in forty-five seconds and rejected every one,
-                        # because nothing remembered the first refusal.
-                        self._unknown.add((provider.name, model))
-                        # In the service's own words. This was read into `body` and
-                        # thrown away, so a log full of "does not serve" never said
-                        # whether the models were missing or the account was.
+                        wait = _retry_after(resp, delay)
                         log.warning(
-                            "%s does not serve %s; it will not be asked again: %s",
-                            provider.name, model, body[:200],
+                            "%s (attempt %d/%d), waiting %.1fs", last_error, attempt, retries, wait
                         )
-                        if self._disowns_everything(provider, body):
+                        await asyncio.sleep(wait)
+                        delay = min(delay * 2, 20.0)
+                        continue
+
+                    if resp.status_code == 400:
+                        body = resp.text[:600]
+                        lowered = body.lower()
+                        if reasoning and "reasoning" in lowered:
+                            log.warning(
+                                "model %s rejected reasoning params, retrying without", model
+                            )
+                            reasoning = None
+                            continue
+                        if web and ("plugin" in lowered or "web" in lowered):
+                            log.warning("web plugin rejected, retrying without search")
+                            web = False
+                            continue
+                        if _about_the_model(lowered):
+                            blamed = _names_another_model(body, model)
+                            if blamed:
+                                # The refusal is about an id we did not ask for, so the
+                                # model in hand is innocent. Retiring it here is how a
+                                # single malformed field condemned a whole pool one
+                                # blameless model at a time.
+                                log.error(
+                                    "%s rejected %r, which is not the model asked for (%s); "
+                                    "leaving it in the pool: %s",
+                                    provider.name, blamed, model, body[:200],
+                                )
+                                return ChatResult(
+                                    error=f"HTTP 400: {provider.name} rejected {blamed}",
+                                    error_kind="rejected",
+                                )
+                            # A durable fact about (service, model), not about this
+                            # turn: OpenRouter was asked for a Google-shaped id seven
+                            # times in forty-five seconds and rejected every one,
+                            # because nothing remembered the first refusal.
+                            self._unknown.add((provider.name, model))
+                            # In the service's own words. This was read into `body` and
+                            # thrown away, so a log full of "does not serve" never said
+                            # whether the models were missing or the account was.
+                            log.warning(
+                                "%s does not serve %s; it will not be asked again: %s",
+                                provider.name, model, body[:200],
+                            )
+                            if self._disowns_everything(provider, body):
+                                return ChatResult(
+                                    error=f"{provider.name} refused every model it lists",
+                                    error_kind="rejected",
+                                )
+                            alternative = self._next_model(
+                                provider, requested, tried=tried, vision=vision, audio=audio
+                            )
+                            if alternative:
+                                model = alternative
+                                continue
                             return ChatResult(
-                                error=f"{provider.name} refused every model it lists",
+                                error=f"HTTP 400: {provider.name} serves none of these models",
                                 error_kind="rejected",
                             )
+                        if vision and _about_images(lowered):
+                            # Learned once and remembered for the life of the process,
+                            # so every later photo skips this model instead of spending
+                            # a call to be told the same thing. Its service keeps its
+                            # other models: the two are not the same fact.
+                            self._text_only.add((provider.name, model))
+                            log.info("%s cannot take images on %s; it will be skipped "
+                                     "for media from now on", provider.name, model)
+                        log.error("%s rejected the request: %s", provider.name, body)
+                        return ChatResult(error=f"HTTP 400: {body[:200]}", error_kind="rejected")
+
+                    if resp.status_code == 402:
+                        fault = self._note_fault(resp, provider, model)
+                        if self._s.free_mode and provider.discovers_free_models:
+                            # One model's free allowance is spent; the account is fine.
+                            self._rest(model, fault.wait or QUOTA_COOLDOWN)
+                            alternative = self._next_free(tried=tried, vision=vision, audio=audio)
+                            if alternative:
+                                log.info("%s is out of free quota, switching to %s",
+                                         model, alternative)
+                                model = alternative
+                                continue
+                            log.error("every free model is out of quota for now")
+                            return ChatResult(error=fault.summary, error_kind="payment")
+                        # On paid models this is terminal: retrying cannot conjure credit.
+                        self._pause_provider(provider, fault.wait or QUOTA_COOLDOWN, fault.summary)
+                        return ChatResult(error=fault.summary, error_kind="payment")
+
+                    if resp.status_code in (401, 403):
+                        # 401 is a claim about the key; 403 is a claim about this
+                        # request, and a 403 that never reached the auth layer is an
+                        # edge block rather than a bad key - which the reader says.
+                        fault = self._note_fault(resp, provider, model)
+                        refused = fault.kind == faults.AUTH
+                        detail = fault.summary
+                        log.error(
+                            "%s turned a request away%s",
+                            provider.name,
+                            f" [{credential.label}]" if credential.label else "",
+                        )
+                        self._rest_credential(
+                            credential, AUTH_COOLDOWN if refused else FORBIDDEN_COOLDOWN, detail
+                        )
+
+                        spare = provider.next_key(credential, time.time())
+                        if spare is not None:
+                            log.info("%s: trying the next key", provider.name)
+                            credential = spare
+                            continue
+
+                        if len(self.providers) > 1:
+                            # With nothing else to fall back on, keep trying: a lone
+                            # service silenced for a day is worse than a wasted call.
+                            self._pause_provider(provider, AUTH_COOLDOWN, detail)
+                        log.error("check %s or set a key from the panel", provider.key_env)
+                        return ChatResult(error=detail, error_kind="auth")
+
+                    if resp.status_code == 404:
+                        # Model ids differ between services and change over time, so
+                        # the list is walked before the service is written off.
+                        body = resp.text[:300]
+                        log.error("%s does not serve %s: %s", provider.name, model, body)
                         alternative = self._next_model(
                             provider, requested, tried=tried, vision=vision, audio=audio
                         )
@@ -1236,145 +1317,73 @@ class LLMClient:
                             model = alternative
                             continue
                         return ChatResult(
-                            error=f"HTTP 400: {provider.name} serves none of these models",
+                            error=f"HTTP 404: {provider.name} serves none of the configured models",
                             error_kind="rejected",
                         )
-                    if vision and _about_images(lowered):
-                        # Learned once and remembered for the life of the process,
-                        # so every later photo skips this model instead of spending
-                        # a call to be told the same thing. Its service keeps its
-                        # other models: the two are not the same fact.
-                        self._text_only.add((provider.name, model))
-                        log.info("%s cannot take images on %s; it will be skipped "
-                                 "for media from now on", provider.name, model)
-                    log.error("%s rejected the request: %s", provider.name, body)
-                    return ChatResult(error=f"HTTP 400: {body[:200]}", error_kind="rejected")
 
-                if resp.status_code == 402:
-                    fault = self._note_fault(resp, provider, model)
+                    if resp.status_code >= 400:
+                        # The status alone never says which field or model the service
+                        # objected to; the reader keeps what it did say.
+                        fault = self._note_fault(resp, provider, model)
+                        return ChatResult(error=fault.summary, error_kind="rejected")
+
+                    data = resp.json()
+
+                    if data.get("error") and not data.get("choices"):
+                        last_error = str(data["error"].get("message", data["error"]))[:200]
+                        log.warning("provider error: %s", last_error)
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, 20.0)
+                        continue
+
+                    result = self._parse(data)
+                    if result.ok:
+                        result.service = provider.name
+                        # A bare service often echoes no model name, and the one asked
+                        # for is not the one that ran once free mode has walked on.
+                        result.model = result.model or model
+                        result.latency_ms = int((time.monotonic() - started) * 1000)
+                        self._note_result(provider, credential, result)
+                        self._scores[model] = min(self._scores.get(model, 0) + 1, 3)
+                        if self._s.free_mode and attempt > 1:
+                            log.info("answered by %s after %d attempts", model, attempt)
+                        return result
+
+                    last_error = result.error or "empty completion"
+                    log.warning("empty completion from %s (attempt %d)", model, attempt)
+
+                    # Some models answer an unsupported parameter with silence rather
+                    # than an error, so drop the optional one before blaming the model.
+                    if reasoning:
+                        log.info("retrying %s without reasoning parameters", model)
+                        reasoning = None
+                        continue
+
+                    # A model that keeps returning nothing is unusable for this turn,
+                    # and waiting will not change that: move to the next one.
                     if self._s.free_mode and provider.discovers_free_models:
-                        # One model's free allowance is spent; the account is fine.
-                        self._rest(model, fault.wait or QUOTA_COOLDOWN)
+                        self.mark_unusable(model)
                         alternative = self._next_free(tried=tried, vision=vision, audio=audio)
                         if alternative:
-                            log.info("%s is out of free quota, switching to %s",
-                                     model, alternative)
+                            log.info("%s returned nothing, switching to %s", model, alternative)
                             model = alternative
                             continue
-                        log.error("every free model is out of quota for now")
-                        return ChatResult(error=fault.summary, error_kind="payment")
-                    # On paid models this is terminal: retrying cannot conjure credit.
-                    self._pause_provider(provider, fault.wait or QUOTA_COOLDOWN, fault.summary)
-                    return ChatResult(error=fault.summary, error_kind="payment")
 
-                if resp.status_code in (401, 403):
-                    # 401 is a claim about the key; 403 is a claim about this
-                    # request, and a 403 that never reached the auth layer is an
-                    # edge block rather than a bad key - which the reader says.
-                    fault = self._note_fault(resp, provider, model)
-                    refused = fault.kind == faults.AUTH
-                    detail = fault.summary
-                    log.error(
-                        "%s turned a request away%s",
-                        provider.name,
-                        f" [{credential.label}]" if credential.label else "",
-                    )
-                    self._rest_credential(
-                        credential, AUTH_COOLDOWN if refused else FORBIDDEN_COOLDOWN, detail
-                    )
-
-                    spare = provider.next_key(credential, time.time())
-                    if spare is not None:
-                        log.info("%s: trying the next key", provider.name)
-                        credential = spare
-                        continue
-
-                    if len(self.providers) > 1:
-                        # With nothing else to fall back on, keep trying: a lone
-                        # service silenced for a day is worse than a wasted call.
-                        self._pause_provider(provider, AUTH_COOLDOWN, detail)
-                    log.error("check %s or set a key from the panel", provider.key_env)
-                    return ChatResult(error=detail, error_kind="auth")
-
-                if resp.status_code == 404:
-                    # Model ids differ between services and change over time, so
-                    # the list is walked before the service is written off.
-                    body = resp.text[:300]
-                    log.error("%s does not serve %s: %s", provider.name, model, body)
-                    alternative = self._next_model(
-                        provider, requested, tried=tried, vision=vision, audio=audio
-                    )
-                    if alternative:
-                        model = alternative
-                        continue
-                    return ChatResult(
-                        error=f"HTTP 404: {provider.name} serves none of the configured models",
-                        error_kind="rejected",
-                    )
-
-                if resp.status_code >= 400:
-                    # The status alone never says which field or model the service
-                    # objected to; the reader keeps what it did say.
-                    fault = self._note_fault(resp, provider, model)
-                    return ChatResult(error=fault.summary, error_kind="rejected")
-
-                data = resp.json()
-
-                if data.get("error") and not data.get("choices"):
-                    last_error = str(data["error"].get("message", data["error"]))[:200]
-                    log.warning("provider error: %s", last_error)
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 20.0)
-                    continue
 
-                result = self._parse(data)
-                if result.ok:
-                    result.service = provider.name
-                    # A bare service often echoes no model name, and the one asked
-                    # for is not the one that ran once free mode has walked on.
-                    result.model = result.model or model
-                    result.latency_ms = int((time.monotonic() - started) * 1000)
-                    self._note_result(provider, credential, result)
-                    self._scores[model] = min(self._scores.get(model, 0) + 1, 3)
-                    if self._s.free_mode and attempt > 1:
-                        log.info("answered by %s after %d attempts", model, attempt)
-                    return result
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    last_error = f"network: {exc}"
+                    log.warning("network error (attempt %d/%d): %s", attempt, retries, exc)
+                    # noqa below: retry jitter, nothing to guess
+                    await asyncio.sleep(delay + random.uniform(0, 0.8))  # noqa: S311
+                    delay = min(delay * 2, 20.0)
+                except Exception as exc:
+                    log.exception("unexpected error calling the model")
+                    return ChatResult(error=str(exc))
 
-                last_error = result.error or "empty completion"
-                log.warning("empty completion from %s (attempt %d)", model, attempt)
-
-                # Some models answer an unsupported parameter with silence rather
-                # than an error, so drop the optional one before blaming the model.
-                if reasoning:
-                    log.info("retrying %s without reasoning parameters", model)
-                    reasoning = None
-                    continue
-
-                # A model that keeps returning nothing is unusable for this turn,
-                # and waiting will not change that: move to the next one.
-                if self._s.free_mode and provider.discovers_free_models:
-                    self.mark_unusable(model)
-                    alternative = self._next_free(tried=tried, vision=vision, audio=audio)
-                    if alternative:
-                        log.info("%s returned nothing, switching to %s", model, alternative)
-                        model = alternative
-                        continue
-
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 20.0)
-
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_error = f"network: {exc}"
-                log.warning("network error (attempt %d/%d): %s", attempt, retries, exc)
-                # noqa below: retry jitter, nothing to guess
-                await asyncio.sleep(delay + random.uniform(0, 0.8))  # noqa: S311
-                delay = min(delay * 2, 20.0)
-            except Exception as exc:
-                log.exception("unexpected error calling the model")
-                return ChatResult(error=str(exc))
-
-        log.error("no completion after %d attempts (%s)", retries, last_error)
-        return ChatResult(error=last_error)
+            log.error("no completion after %d attempts (%s)", retries, last_error)
+            return ChatResult(error=last_error)
 
     async def json_chat(
         self,
