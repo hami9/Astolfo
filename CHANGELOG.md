@@ -11,6 +11,28 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.5] - 2026-09-06
+
+### Fixed
+
+- **"Cannot send a request, as the client has been closed" survived v2.8.3**, on
+  the box that release shipped to:
+
+  > 14:48:30 | no completion for chat …: Cannot send a request, as the client has been closed.
+
+  v2.8.3 widened the in-flight marker from the request to the attempt loop, and
+  the real defect was in `aclose`: it waited on the idle event **once** and
+  closed as soon as it was woken, without re-checking. A turn hands over between
+  two services by releasing the marker and taking it again on the next line - the
+  release wakes the waiter, and because the handover is synchronous nothing else
+  runs in between, so waking was enough to close the pools under a turn that had
+  already taken the marker back. It now re-checks until the count is genuinely
+  zero, still bounded by `DRAIN_TIMEOUT`.
+- **"Every provider is resting" quoted the longest wait.** One service resting a
+  day had the bot report that nothing would answer for a day, while another was
+  sixty seconds away - `min` rather than `max`, matching `throttled_for` four
+  lines below, which had it right all along.
+
 ## [2.8.4] - 2026-09-06
 
 ### Fixed
@@ -1119,7 +1141,8 @@ download; the link below goes to the last commit it covers.
 - One-command VPS setup with swap for small servers, a virtualenv launcher, Docker and
   Replit support, and the test suite on Python 3.10, 3.12 and 3.13.
 
-[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.4...HEAD
+[Unreleased]: https://github.com/hami9/Astolfo/compare/v2.8.5...HEAD
+[2.8.5]: https://github.com/hami9/Astolfo/compare/v2.8.4...v2.8.5
 [2.8.4]: https://github.com/hami9/Astolfo/compare/v2.8.3...v2.8.4
 [2.8.3]: https://github.com/hami9/Astolfo/compare/v2.8.2...v2.8.3
 [2.8.2]: https://github.com/hami9/Astolfo/compare/v2.8.1...v2.8.2

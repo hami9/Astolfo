@@ -128,3 +128,83 @@ async def test_a_turn_sleeping_before_its_retry_survives_a_reload(settings, monk
     assert result.ok, f"the retry died with the client closed under it: {result.error}"
     assert attempts >= 2, "the turn should have retried"
     await asyncio.wait_for(closing, timeout=30.0)
+
+
+async def test_the_drain_does_not_close_in_the_handover_between_services(settings, monkeypatch):
+    """The gap v2.8.3 left, still failing on the box it shipped to.
+
+        14:48:30 | no completion for chat ...: Cannot send a request, as the
+                   client has been closed.
+
+    `chat` walks the provider list calling `_chat_with` once per service, so the
+    marker is taken and released *per service*. When the first one releases,
+    `_idle` is set and `aclose`'s waiter is woken; `chat` then continues
+    synchronously into the next service and takes the marker again - but `aclose`
+    waits on the event once and never re-checks, so it closes the pools under a
+    turn that is still running.
+
+    Driven at the marker, and asserted on the count at the moment the pools are
+    closed. Racing a real request against the close instead - post after the
+    turn and see whether it fails - is what the first two versions of this test
+    did, and it decides nothing: the mock transport never yields, so whether the
+    post or the close runs first is scheduling luck. It passed on 3.11 and
+    failed on 3.13 for that reason alone. The invariant is not "a request
+    happened to survive"; it is that the pools are not closed while the count is
+    above zero.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    client = LLMClient(
+        _settings(settings),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
+        ),
+    )
+
+    still_running: list[int] = []
+    for pool in client._clients.values():
+        async def record(_close=pool.aclose) -> None:
+            still_running.append(client._inflight)
+            await _close()
+
+        pool.aclose = record
+
+    async def turn() -> None:
+        async with client._in_flight():          # the first service
+            await asyncio.sleep(0.05)
+        async with client._in_flight():          # and straight on to the next
+            await asyncio.sleep(0.05)
+
+    running = asyncio.create_task(turn())
+    await asyncio.sleep(0.01)
+    closing = asyncio.create_task(client.aclose())
+    await asyncio.wait_for(running, timeout=10.0)
+    await asyncio.wait_for(closing, timeout=10.0)
+
+    assert still_running, "the pools were never closed"
+    assert not any(still_running), (
+        f"the pools were closed with {max(still_running)} request(s) still running"
+    )
+
+
+# -- 3. and what it says when there is genuinely nothing left --------------
+async def test_the_resting_message_names_the_soonest_return(settings, monkeypatch):
+    """It reported the longest wait, so one service resting a day made the bot
+    say nothing would answer for a day - while another was a minute away."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GOOGLE_API_KEY", "k")
+    client = LLMClient(
+        settings.replace(providers=["openrouter", "google"], free_mode=True),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": []})
+        ),
+    )
+    now = __import__("time").monotonic()
+    client.providers[0].paused_until = now + 86400  # a day, from a 403
+    client.providers[1].paused_until = now + 60     # a minute, from a 429
+
+    result = await client.chat([{"role": "user", "content": "hi"}], model="m")
+
+    assert not result.ok
+    assert "86" not in (result.error or ""), f"it quoted the longest wait: {result.error}"
+    assert "60s" in (result.error or "") or "59s" in (result.error or "")
+    await client.aclose()

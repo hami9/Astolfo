@@ -356,15 +356,25 @@ class LLMClient:
         and retires this one, and any turn already awaiting a response still
         holds it.
         """
-        if self._inflight:
+        # Re-checked rather than waited on once. A turn hands over between two
+        # services by releasing the marker and taking it again on the next line:
+        # the release sets `_idle` and wakes this, the handover is synchronous so
+        # nothing else can run in between, and waking was enough to close the
+        # pools under a turn that had already taken the marker back.
+        deadline = time.monotonic() + DRAIN_TIMEOUT
+        while self._inflight:
             log.info("waiting for %d request(s) before closing", self._inflight)
-            try:
-                await asyncio.wait_for(self._idle.wait(), timeout=DRAIN_TIMEOUT)
-            except (TimeoutError, asyncio.TimeoutError):
+            left = deadline - time.monotonic()
+            if left <= 0:
                 log.warning(
                     "%d request(s) still running after %.0fs; closing anyway",
                     self._inflight, DRAIN_TIMEOUT,
                 )
+                break
+            try:
+                await asyncio.wait_for(self._idle.wait(), timeout=left)
+            except (TimeoutError, asyncio.TimeoutError):
+                continue  # the deadline check above decides whether to give up
         for client in self._clients.values():
             await client.aclose()
 
@@ -1046,9 +1056,13 @@ class LLMClient:
 
         live = self._live_providers()
         if not live:
+            # The soonest one back, not the last: one service resting a day had
+            # this say nothing would answer for a day while another was sixty
+            # seconds away, which is a different decision for whoever reads it.
+            # `throttled_for` below has always taken the minimum.
             waits = [p.paused_until - time.monotonic() for p in self.providers]
             return ChatResult(
-                error=f"every provider is resting for another {max(waits):.0f}s",
+                error=f"every provider is resting for another {min(waits):.0f}s",
                 error_kind="throttled",
             )
 
