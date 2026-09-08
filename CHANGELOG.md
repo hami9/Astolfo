@@ -11,6 +11,38 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.6] - 2026-09-08
+
+### Fixed
+
+- **A 403 that names the model was charged to the key**, which took the bot off
+  the air with a working key in hand. OpenRouter gates some free endpoints:
+
+  > thinkingmachines/inkling-small:free is only available on agentic harnesses.
+
+  The key reached that gate to be told so - it authenticated - and the refusal
+  rested the key and then the service, while nothing at all was written against
+  the model. So the model stayed at the head of the free pool, was picked again
+  on the next turn, was refused again, and rested the next key. Three keys later
+  the service had none left and every turn ended in "no usable key right now".
+
+  A refusal that quotes back the model asked for is now read as being about that
+  model: it takes a strike and an escalating rest, exactly as an unusable reply
+  does, and the turn goes on with the next model on the same key. A 403 that does
+  not name a model is still the edge block v2.8.4 made it - the key rests ten
+  minutes, the model is untouched.
+- **"Every key is resting" was reported as "the key was refused".** When every
+  credential is mid-rest there is no request to refuse, but the panel's key test
+  said there had been - which is the second time this release series has sent an
+  owner to replace a key that works. It now says the keys are resting and when
+  the first one is back, quoting the soonest, not the longest.
+- **The services screen counted a `.env` key as ready no matter what.** It added
+  the keyless-row credential unconditionally, so the panel read "1 key(s) ready"
+  beside a diagnostics reading `0/3` off the same three credentials. Both now
+  count the same way, off the live credentials.
+- **"check OPENROUTER_API_KEY" was logged after a 403**, naming the one thing
+  that was not wrong. Only a 401 says that now.
+
 ## [2.8.5] - 2026-09-06
 
 ### Fixed
