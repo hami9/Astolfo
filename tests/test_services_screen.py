@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -294,3 +295,46 @@ async def test_the_ranking_costs_no_api_calls(owned):
     _busy(owned, "google", ok=12)
     await _press(owned, "ap:svc:ranking")
     assert probes == []
+
+
+# -- what the screen says a key is, against what the bot thinks it is ------
+def _state_of(rt, name: str) -> tuple[str, str]:
+    from astolfo.admin import services as services_screen
+
+    return services_screen._state(SimpleNamespace(rt=rt), name)
+
+
+def _openrouter(rt):
+    return next(p for p in rt.llm.providers if p.name == "openrouter")
+
+
+async def test_a_resting_env_key_is_not_counted_ready(owned):
+    """The panel and the diagnostics disagreed about the same three keys.
+
+        panel:        ✅ openrouter — 1 key(s) ready
+        diagnostics:  openrouter   yes  0/3   -   10m ago
+
+    The count was rows from the database plus the `.env` key added
+    unconditionally, so the one key that never has a row was always "ready" -
+    including while it was serving out a rest from a 401. The screen the owner
+    presses to decide whether to replace a key was the one that could not see it.
+    """
+    provider = _openrouter(owned)
+    for credential in provider.credentials:
+        credential.rested_until = time.time() + 600
+
+    mark, detail = _state_of(owned, "openrouter")
+
+    assert detail == "no usable key", f"a resting key was called ready: {detail!r}"
+    assert mark != "✅"
+
+
+async def test_a_working_env_key_is_still_counted_ready(owned):
+    """The count has to keep counting: a key with no row is a real key."""
+    provider = _openrouter(owned)
+    assert any(c.id is None for c in provider.credentials), "expected an .env key"
+
+    mark, detail = _state_of(owned, "openrouter")
+
+    assert mark == "✅"
+    assert detail == "1 key(s) ready"

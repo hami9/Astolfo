@@ -36,7 +36,6 @@ def _known(ctx) -> list[str]:
 def _state(ctx, name: str) -> tuple[str, str]:
     """The mark and the words for a service's current condition."""
     row = ctx.rt.db.service(name)
-    keys = ctx.rt.db.credentials(name)
     live = next((p for p in ctx.rt.llm.providers if p.name == name), None)
 
     if row is not None and not row["enabled"]:
@@ -52,8 +51,12 @@ def _state(ctx, name: str) -> tuple[str, str]:
             detail += f" — {trim(row['last_error'], 40)}"
         return RESTING, detail
 
-    usable = sum(1 for key in keys if key["enabled"] and key["rested_until"] <= time.time())
-    usable += len([c for c in live.credentials if c.id is None])
+    # Counted off the live credentials, which is where the .env key and every
+    # stored one meet and where `usable` is decided. Counting rows and then
+    # adding the .env key unconditionally said "1 key(s) ready" beside a
+    # diagnostics reading 0/3 off the same credentials - the .env key was
+    # resting, and only one of the two screens knew.
+    usable = sum(1 for c in live.credentials if c.usable(time.time()))
     return (WORKING, f"{usable} key(s) ready") if usable else (NO_KEY, "no usable key")
 
 

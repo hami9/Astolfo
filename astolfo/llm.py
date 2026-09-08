@@ -107,7 +107,7 @@ class ChatResult:
     citations: list[Citation] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     error: str | None = None
-    error_kind: str | None = None  # "payment" | "auth" | None
+    error_kind: str | None = None  # "payment" | "auth" | "resting" | ... | None
 
     @property
     def ok(self) -> bool:
@@ -416,6 +416,12 @@ class LLMClient:
         if result.ok:
             self._revive(provider, force=was_paused > time.monotonic())
             return True, f"answered by {result.model}"
+        if result.error_kind == "resting":
+            # Every key here is mid-rest. Nothing was refused just now, and the
+            # panel saying otherwise is what sent this key to be replaced twice.
+            wait = provider.rest_left(time.time())
+            when = f", the first back in {wait / 60:.0f}m" if wait > 0 else ""
+            return False, f"every key is resting{when} - not refused"
         if result.error_kind == "auth":
             return False, "the key was refused"
         if result.error_kind == "blocked":
@@ -1101,7 +1107,10 @@ class LLMClient:
                         provider, QUOTA_COOLDOWN if spent else ACCOUNT_PAUSE
                     )
                 continue  # a spent service says nothing about the next one
-            if last.error_kind in ("rejected", "auth", "blocked") and len(live) > 1:
+            if (
+                last.error_kind in ("rejected", "auth", "blocked", "resting")
+                and len(live) > 1
+            ):
                 # One service disliking the request, or the key for it, says
                 # nothing about the next one in line.
                 log.info("trying the next service after %s declined", provider.name)
@@ -1150,8 +1159,12 @@ class LLMClient:
 
         credential = provider.pick(time.time())
         if credential is None:
+            # Not "auth". Every key here is serving out a rest, which is a
+            # different claim from "the key was refused" - and reported as the
+            # latter it sends the owner to replace a key that works.
             return ChatResult(
-                error=f"{provider.name} has no usable key right now", error_kind="auth"
+                error=f"{provider.name} has no usable key right now",
+                error_kind="resting",
             )
 
         # Held for the whole turn, not for each request. `_in_flight` used to
@@ -1300,6 +1313,31 @@ class LLMClient:
                         fault = self._note_fault(resp, provider, model)
                         refused = fault.kind == faults.AUTH
                         detail = fault.summary
+
+                        if (
+                            not refused
+                            and self._s.free_mode
+                            and provider.discovers_free_models
+                            and _names_the_asked_model(resp.text[:600], model)
+                        ):
+                            # The service named the model, so the model is what it
+                            # declined - the key reached the gate to be told so.
+                            # Read as a key problem this rested a working key and
+                            # left the model first in the pool, which is a loop:
+                            # picked, refused, key rested, picked again.
+                            self.mark_unusable(model)
+                            alternative = self._next_free(
+                                tried=tried, vision=vision, audio=audio
+                            )
+                            if alternative:
+                                log.info(
+                                    "%s will not serve %s, switching to %s",
+                                    provider.name, model, alternative,
+                                )
+                                model = alternative
+                                continue
+                            return ChatResult(error=fault.summary, error_kind="rejected")
+
                         log.error(
                             "%s turned a request away%s",
                             provider.name,
@@ -1330,7 +1368,12 @@ class LLMClient:
                                 AUTH_COOLDOWN if refused else FORBIDDEN_COOLDOWN,
                                 detail,
                             )
-                        log.error("check %s or set a key from the panel", provider.key_env)
+                        if refused:
+                            # Only on a 401. Printed after a 403 it names the one
+                            # thing that is not wrong.
+                            log.error(
+                                "check %s or set a key from the panel", provider.key_env
+                            )
                         # Only a 401 is a claim about the key. A 403 that never
                         # reached the auth layer is an edge block, and calling it
                         # "auth" had the panel report "the key was refused" for a
@@ -1453,6 +1496,20 @@ _NOT_A_MODEL = (
 
 def _about_the_model(body: str) -> bool:
     return any(phrase in body for phrase in _NOT_A_MODEL)
+
+
+def _names_the_asked_model(body: str, asked: str) -> bool:
+    """Whether a refusal quotes back the model we asked for.
+
+    A 403 naming the model is the service declining that model, not the key.
+    OpenRouter gates some free endpoints and answers "<id> is only available on
+    agentic harnesses"; charged to the key, that rests a key which had just
+    authenticated fine and leaves the model at the head of the pool, to be picked
+    again on the next turn and refused again. The bot went silent for hours on a
+    working key that way.
+    """
+    asked = (asked or "").strip().lower()
+    return bool(asked) and asked in (body or "").lower()
 
 
 # The id a refusal is actually about. Services quote it back, in a few shapes:

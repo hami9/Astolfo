@@ -234,6 +234,21 @@ class Provider:
             (c for c in self.credentials if c is not after and c.usable(now)), None
         )
 
+    def rest_left(self, now: float) -> float:
+        """Seconds until the first key here is usable again, 0 if one already is.
+
+        The soonest, not the longest: a key resting a day beside one resting a
+        minute means this service is a minute away, and reporting the day is how
+        the sibling message about services told the chat nothing would answer for
+        twenty-four hours.
+        """
+        waits = [
+            c.rested_until - now
+            for c in self.credentials
+            if c.enabled and c.value and c.rested_until > now
+        ]
+        return min(waits) if waits and not self.pick(now) else 0.0
+
 
 def _env(name: str, default: str = "") -> str:
     return (os.getenv(name) or default).strip()
