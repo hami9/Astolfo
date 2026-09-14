@@ -57,6 +57,13 @@ ACCOUNT_PAUSE = 60.0
 # a pool that was never the problem.
 ACCOUNT_DISOWNS = 3
 
+# How many models one turn may find limited on their own before the limit is
+# taken to be the account's after all. OpenRouter answers "<model> is temporarily
+# rate-limited upstream" when the free capacity behind one model is gone, and a
+# limit on the account names no model - but should one ever quote back every id it
+# is asked for, the turn still stops here rather than touring the whole free pool.
+UPSTREAM_SWITCHES = 3
+
 # Windows too wide to retry in place. A per-minute ceiling is worth sitting out
 # with a backoff; a daily or monthly one is not, whether or not free mode is on.
 SLOW = (faults.DAY, faults.MONTH)
@@ -804,6 +811,11 @@ class LLMClient:
             retry_after=asked,
         )
         log.warning("%s", fault.summary)
+        if self._registry:
+            # A call that did not answer. Only answers were ever written to the
+            # day's usage, so the panel read "1 calls" beside seventeen refusals
+            # and the ranking judged every service on its successes alone.
+            self._registry.record_call(provider.name, failed=True)
         kept = self._faults.setdefault(provider.name, [])
         kept.append((time.time(), fault))
         del kept[:-FAULTS_KEPT]
@@ -1154,6 +1166,9 @@ class LLMClient:
         # Every key at this service is worth an attempt of its own.
         retries = max(retries, len(provider.credentials))
         tried: set[str] = set()
+        # Models this turn has seen limited on their own, counted against
+        # UPSTREAM_SWITCHES.
+        limited_alone = 0
         delay = 1.5
         last_error = "unknown"
 
@@ -1198,6 +1213,29 @@ class LLMClient:
                         fault = self._note_fault(resp, provider, model)
                         last_error = fault.summary
                         if resp.status_code == 429 and (self._s.free_mode or fault.scope in SLOW):
+                            if (
+                                fault.kind != faults.CREDIT
+                                and limited_alone < UPSTREAM_SWITCHES
+                                and _names_the_asked_model(resp.text[:600], model)
+                            ):
+                                # Not the account's: the service quoted back the model,
+                                # "<id> is temporarily rate-limited upstream". Read as
+                                # the account's, the service sat out a minute and the
+                                # model stayed first in the pool, so every turn for
+                                # three days asked it again and was refused again.
+                                # A rest rather than a strike: busy is not broken.
+                                limited_alone += 1
+                                self._rest(model, max(fault.wait, RATE_LIMIT_COOLDOWN))
+                                alternative = self._next_model(
+                                    provider, requested, tried=tried, vision=vision, audio=audio
+                                )
+                                if alternative:
+                                    log.info(
+                                        "%s is limited on %s alone, switching to %s",
+                                        provider.name, model, alternative,
+                                    )
+                                    model = alternative
+                                    continue
                             # The allowance belongs to this account, so every model
                             # behind it is equally limited; the caller moves on to the
                             # next service rather than touring this one's models.

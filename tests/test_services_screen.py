@@ -92,6 +92,18 @@ async def test_opening_the_list_costs_no_api_calls(owned):
     assert probes == []
 
 
+async def test_the_list_counts_the_calls_that_failed(owned):
+    """"openrouter · 1 calls" was printed beside sixteen 429s and a 401 that day:
+    only answers were ever counted, so the refusals never reached the number."""
+    owned.registry.record_call("openrouter")
+    owned.registry.record_call("openrouter", failed=True)
+    owned.registry.record_call("openrouter", failed=True)
+
+    query, _ = await _press(owned, "ap:svc")
+
+    assert "3 calls, 2 failed" in query.edits[0], query.edits[0]
+
+
 # -- custom services ------------------------------------------------------
 async def test_a_service_the_code_never_heard_of_can_be_added(owned):
     _query, context = await _press(owned, "ap:svc:new")
