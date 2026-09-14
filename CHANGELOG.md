@@ -11,6 +11,38 @@ truth: it names the package, and a release tag that disagrees with it fails CI.
 
 Nothing yet.
 
+## [2.8.7] - 2026-09-14
+
+### Fixed
+
+- **A 429 that names the model rested the whole service, and never the model.**
+  From the box, every few minutes for three days, on a key that worked:
+
+  > openrouter/google/gemma-4-26b-a4b-it:free: HTTP 429 too many requests per minute, resting 1m - "Provider returned error 429 google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits…"
+  >
+  > openrouter is out of allowance, resting it for 60s; nothing left to try
+
+  That is OpenRouter saying the free capacity behind one model is gone. In free
+  mode every 429 was read as a limit on the account: the service sat out a
+  minute, nothing was written against the model, and the next turn picked the
+  same model from the head of the pool to be refused the same way. With the
+  service pinned nothing else was tried either, and 99 turns went unanswered
+  between the restart on the 11th and the report on the 14th.
+
+  A 429 that quotes back the model asked for now rests that model for ten
+  minutes and the turn goes on with the next one on the same key. It is not a
+  strike: a model that is only busy is not sunk for good. A 429 that names no
+  model is still the account's and pauses the service as before, an empty wallet
+  still does, and once three models in one turn have been refused this way the
+  limit is taken to be the account's after all, so a turn never walks the whole
+  pool.
+- **The services screen never counted a failure.** Only answers were written to
+  the day's usage, so the list read `openrouter · 1 calls` beside sixteen 429s
+  and a 401 that same day, and **which is doing best** judged reliability on
+  answers alone - by that record no service had ever failed. Every refusal the
+  bot reads is now counted, and the list shows every call with the failed ones
+  beside it.
+
 ## [2.8.6] - 2026-09-08
 
 ### Fixed

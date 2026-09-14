@@ -71,7 +71,9 @@ def overview(ctx) -> View:
         today = usage.get(name)
         counted = ""
         if today:
-            counted = f" · {today['requests']} calls"
+            # Every call, not only the answered ones: `requests` counts the answers
+            # and `failures` the refusals beside them.
+            counted = f" · {today['requests'] + today['failures']} calls"
             if today["failures"]:
                 counted += f", {today['failures']} failed"
         preset = providers_mod.PRESETS.get(name)
